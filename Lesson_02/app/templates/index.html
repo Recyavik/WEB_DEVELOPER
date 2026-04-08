@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+
+{% block title %}Главная — {{ project_name }}{% endblock %}
+
+{% block content %}
+<h1 style="color: #2E1065; margin-bottom: 1rem;">
+    Добро пожаловать, {{ name }}!
+</h1>
+<p style="font-size: 1.1rem; line-height: 1.6;">
+    Это ваш первый HTML-шаблон на FastAPI + Jinja2.
+    Сервер подставил ваше имя прямо в HTML.
+</p>
+
+<div style="margin-top: 2rem; padding: 1rem;
+            background: #EDE9FE; border-radius: 8px;
+            border-left: 4px solid #7C3AED;">
+    <strong>Текущий проект:</strong> {{ project_name }}<br>
+    <strong>Версия Python:</strong> {{ python_version }}
+</div>
+{% endblock %}

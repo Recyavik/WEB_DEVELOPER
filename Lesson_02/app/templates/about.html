@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+
+{% block title %}О проекте{% endblock %}
+
+{% block content %}
+<h1 style="color: #2E1065; margin-bottom: 1.5rem;">О проекте</h1>
+
+<ul style="line-height: 2; padding-left: 1.5rem;">
+    {% for item in stack %}
+    <li>{{ item }}</li>
+    {% endfor %}
+</ul>
+
+<p style="margin-top: 1.5rem; color: #555;">
+    Занятие {{ lesson_number }} из курса Python Web Developer.
+</p>
+{% endblock %}
