@@ -43,6 +43,7 @@ def about(request: Request):
         }
     )
 
+
 # Роут с параметром — имя из URL подставляется в шаблон
 @app.get("/hello/{name}", response_class=HTMLResponse)
 def hello(request: Request, name: str):
@@ -56,28 +57,5 @@ def hello(request: Request, name: str):
         }
     )
 
-
-# pip install fastapi jinja2 --user
 # cd M:\WEB_DEVELOPER\Lesson_02
 # docker compose up --build
-
-# docker compose down
-# docker compose up --build
-
-# Самостоятельная работа
-@app.get("/skills", response_class=HTMLResponse)
-def skills(request: Request):
-    return templates.TemplateResponse(
-        request=request,
-        name="skills.html",
-        context={
-            "lesson_number": 2,
-            "stack": [
-                "Навык работы с классом Request",
-                "Навык создания сервера, который отдаёт HTML",
-                "Навык работы с Jinja2",
-                "Навык работы со стилями, разметкой",
-                "Навык наследования стилей от базовой страницы",
-            ]
-        }
-    )
