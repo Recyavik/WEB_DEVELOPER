@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+ 
+{% block title %}Результат регистрации{% endblock %}
+ 
+{% block content %}
+<div style="max-width: 480px; padding: 2rem;
+            background: #EDE9FE; border-radius: 12px;
+            border-left: 6px solid #7C3AED;">
+ 
+  <!-- {{ username }} — переменная из Python, подставляется Jinja2 -->
+  <h1>Добро пожаловать, {{ username }}!</h1>
+ 
+  <p><strong>Имя:</strong> {{ username }}</p>
+  <p><strong>Почта:</strong> {{ email }}</p>
+  <p><strong>Возраст:</strong> {{ age }} лет</p>
+ 
+  <!-- ссылка назад на форму -->
+  <a href="/">← Вернуться к форме</a>
+</div>
+{% endblock %}

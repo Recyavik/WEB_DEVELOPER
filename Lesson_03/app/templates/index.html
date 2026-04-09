@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+
+{% block title %}Форма регистрации{% endblock %}
+
+{% block content %}
+<h1 style="color: #2E1065; margin-bottom: 1.5rem;">Регистрация</h1>
+
+<!-- action — куда отправить данные, method — способ отправки -->
+<form action="/submit" method="post"
+      style="max-width: 480px; display: flex; flex-direction: column; gap: 1rem;">
+
+  <label style="font-weight: bold;">Имя</label>
+  <!-- name="username" — это ключ, по которому FastAPI получит значение -->
+  <input type="text" name="username" placeholder="Введите имя"
+         required
+         style="padding: 0.6rem; border: 1px solid #ccc; border-radius: 6px; font-size: 1rem;">
+
+  <label style="font-weight: bold;">Электронная почта</label>
+  <input type="email" name="email" placeholder="example@mail.ru"
+         required
+         style="padding: 0.6rem; border: 1px solid #ccc; border-radius: 6px; font-size: 1rem;">
+
+  <label style="font-weight: bold;">Возраст</label>
+  <input type="number" name="age" placeholder="18" min="1" max="120"
+         required
+         style="padding: 0.6rem; border: 1px solid #ccc; border-radius: 6px; font-size: 1rem;">
+
+  <button type="submit"
+          style="padding: 0.75rem; background: #7C3AED; color: white;
+                 border: none; border-radius: 6px; font-size: 1rem;
+                 cursor: pointer; font-weight: bold;">
+    Зарегистрироваться
+  </button>
+
+</form> 
+
+{% endblock %}  
