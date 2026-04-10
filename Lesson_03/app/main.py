@@ -38,4 +38,7 @@ def submit(
             "email": email,
             "age": age,
         }
-    )
+    ) 
+
+# docker compose down
+# docker compose up --build
