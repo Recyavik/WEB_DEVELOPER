@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+
+{% block title %}Главная{% endblock %}
+
+{% block content %}
+
+<img src="{{ url_for('static', path='images/logo.png') }}"
+     alt="Логотип проекта"
+     class="hero-image"> 
+
+<h1>Главная страница с логотипом</h1>
+
+<div class="card">
+    <h2>CSS</h2>
+    <p>CSS — это язык стилей, который задаёт внешний вид веб-страницы: 
+       цвета, шрифты, отступы, размеры, расположение элементов и адаптацию под разные экраны.</p>
+</div>
+
+{% endblock %}

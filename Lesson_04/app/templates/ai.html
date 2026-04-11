@@ -1,0 +1,16 @@
+<!-- Самостоятельная работа: шаблон для страницы /ai -->
+{% extends "base.html" %}
+
+{% block title %}Искусственный интеллект{% endblock %}
+
+{% block content %}
+<h1>Интересные факты об ИИ</h1>
+
+<!-- Самостоятельная работа: цикл по фактам -->
+{% for fact in facts %}
+<div class="card">
+    <h2>{{ fact.title }}</h2>
+    <p>{{ fact.text }}</p>
+</div>
+{% endfor %}
+{% endblock %}

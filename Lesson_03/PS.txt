@@ -1,0 +1,10 @@
+cd M:\WEB_DEVELOPER
+mkdir Lesson_03
+cd Lesson_03
+mkdir app
+mkdir app\templates
+ni app\__init__.py
+ni app\main.py
+ni app\templates\base.html
+ni app\templates\index.html
+ni app\templates\result.html

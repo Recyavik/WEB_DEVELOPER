@@ -1,0 +1,15 @@
+cd M:\WEB_DEVELOPER
+mkdir Lesson_04
+cd Lesson_04
+mkdir app
+mkdir app\templates
+mkdir app\static
+mkdir app\static\css
+mkdir app\static\images
+ni app\__init__.py
+ni app\main4.py
+ni app\static\css\style.css
+ni app\templates\base.html
+ni app\templates\index.html
+ni app\templates\about.html
+

@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+
+{% block title %}О проекте{% endblock %}
+
+{% block content %}
+<h1>О проекте</h1>
+
+<div class="card">
+    <h2>Технологии</h2>
+    <ul style="padding-left: 1.5rem; line-height: 2;">
+        {% for item in stack %}
+        <li>{{ item }}</li>
+        {% endfor %}
+    </ul>
+</div>
+
+<div class="card alert-success">
+    <strong>Занятие {{ lesson_number }}</strong> — статические файлы, CSS и изображения.
+</div>
+
+{% endblock %}

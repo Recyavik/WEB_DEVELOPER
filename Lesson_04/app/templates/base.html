@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Мой сайт{% endblock %}</title>
+
+    <!--
+      url_for('static', path='css/style.css') — Jinja2 генерирует
+      правильный URL к статическому файлу.
+      'static' — это имя, которое мы дали при монтировании в main4.py
+    -->
+    <link rel="stylesheet" href="{{ url_for('static', path='css/style.css') }}">
+</head> 
+
+<body>
+    <nav>
+        <a href="/">Главная</a>
+        <a href="/about">О проекте</a>
+        <!-- Самостоятельная работа: ссылка на страницу /ai -->
+        <a href="/ai">ИИ факты</a>
+    </nav>
+
+    <main>
+        {% block content %}
+        {% endblock %}
+    </main>
+
+    <footer>
+        Python Web Developer · FastAPI + Jinja2 + Static Files
+    </footer>
+</body>
+</html>
