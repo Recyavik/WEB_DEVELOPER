@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+{# Наследуем базовый шаблон — берём шапку, навигацию, подвал из base.html. #}
+
+{% block content %}
+{# Заполняем блок content нашим содержимым. #}
+
+{# ===============================================================
+   Jinja2-логика: определяем CSS-классы и текст по значению status.
+   Переменная status пришла из Python: main5_hw.py → result.html.
+   {% set %} — создаём переменную внутри шаблона (только для HTML, не Python!).
+   =============================================================== #}
+
+{% if status == "Норма" %}
+{# {% if %} — условие в Jinja2 (как if в Python, но в HTML). #}
+
+    {% set result_class = "result-norm" %}
+    {# result_class — имя CSS-класса для цветного блока результата.
+       result-norm → зелёный фон (style.css: .result-norm { background: #ECFDF5; color: ... }) #}
+
+    {% set badge_class = "badge-norm" %}
+    {# badge_class — класс бейджа (маленькой плашки со статусом). #}
+
+    {% set emoji = "✅" %}
+    {# emoji — иконка, соответствующая статусу. #}
+
+    {% set description = "Температура в норме. Сервер работает в штатном режиме." %}
+    {# description — текстовое описание статуса. #}
+
+{% elif status == "Предупреждение" %}
+{# elif — "иначе если" (else if). Проверяем следующее условие. #}
+
+    {% set result_class = "result-warning" %}
+    {% set badge_class = "badge-warning" %}
+    {% set emoji = "⚠️" %}
+    {% set description = "Температура повышена. Рекомендуется проверить систему охлаждения." %}
+
+{% elif status == "Критично" %}
+
+    {% set result_class = "result-critical" %}
+    {% set badge_class = "badge-critical" %}
+    {% set emoji = "🔴" %}
+    {% set description = "Критическая температура! Необходимо срочное вмешательство — замена кулеров или выключение сервера." %}
+
+{% endif %}
+{# {% endif %} — обязательно закрываем блок if. #}
+
+
+{# ===== Карточка с результатом ===== #}
+<div class="card">
+
+    {# Большой цветной блок с числом температуры. Класс меняет цвет (зелёный/жёлтый/красный). #}
+    <div class="bmi-result {{ result_class }}">
+    {# {{ result_class }} — вывод переменной Jinja2. Браузер увидит, например: class="bmi-result result-norm". #}
+
+        <div style="font-size: 2rem; margin-bottom: 0.5rem;">{{ emoji }}</div>
+        {# style="..." — инлайновый стиль (прямо в теге, не в CSS-файле).
+           Используем для одноразовых стилей, которые не нужно выносить в style.css. #}
+
+        <div class="bmi-value">{{ temperature }}°C</div>
+        {# {{ temperature }} — значение температуры из Python (например: 65.5). #}
+
+        <div class="bmi-category">{{ status }}</div>
+        {# {{ status }} — статус (Норма / Предупреждение / Критично). #}
+
+        <div class="bmi-details">{{ description }}</div>
+        {# {{ description }} — текстовое описание, которое мы задали выше через {% set %}. #}
+    </div>
+
+    {# ===== Сетка с параметрами замера (2 карточки в ряд) ===== #}
+    <div class="stats-grid" style="grid-template-columns: repeat(2, 1fr);">
+    {# stats-grid — CSS Grid (сетка). По умолчанию 3 колонки, но здесь переопределяем inline:
+       grid-template-columns: repeat(2, 1fr) → 2 колонки одинаковой ширины. #}
+
+        <div class="stat-card">
+            <div class="stat-value">{{ server_name }}</div>
+            {# stat-value — крупный текст (имя сервера). #}
+            <div class="stat-label">Имя сервера</div>
+            {# stat-label — маленькая серая подпись. #}
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-value">{{ temperature }}°C</div>
+            <div class="stat-label">Температура</div>
+        </div>
+    </div>
+
+    {# ===== Зелёная информационная плашка "Сохранено в PostgreSQL" ===== #}
+    <div style="background: #F0FDF4; border-left: 4px solid #10B981; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1.5rem;">
+    {# Инлайновые стили:
+       background: #F0FDF4 — очень светлый зелёный фон.
+       border-left: 4px solid #10B981 — зелёная полоса слева (4px = 4 пикселя, solid = сплошная).
+       Это распространённый дизайн-паттерн для блоков-уведомлений. #}
+
+        <strong style="color: #065F46;">💾 Сохранено в PostgreSQL</strong>
+        {# <strong> — жирный текст (семантически важный, в отличие от font-weight: bold). #}
+
+        <p style="color: #047857; font-size: 0.9rem; margin-top: 0.25rem;">
+            Показание записано в таблицу <code>temperature_logs</code>. Вы можете посмотреть историю всех замеров.
+            {# <code> — тег для отображения кода (моноширинный шрифт, как в терминале). #}
+        </p>
+    </div>
+
+    {# ===== Кнопки навигации ===== #}
+    <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+    {# flex-wrap: wrap — если кнопки не помещаются в ряд, они переносятся на следующую строку. #}
+
+        <a href="/" class="btn">← Новый замер</a>
+        {# <a> оформленная как кнопка (class="btn").
+           href="/" — ссылка на главную (форму ввода). #}
+
+        <a href="/logs" class="btn btn-secondary">📋 История замеров</a>
+        {# btn btn-secondary — два класса одновременно: base стили + контурный вид. #}
+    </div>
+</div>
+
+
+{# ===== Карточка с таблицей-расшифровкой шкалы ===== #}
+<div class="card">
+    <h2>Шкала температур</h2>
+
+    {# Цветная полоска-шкала (такая же, как на главной странице) #}
+    <div class="bmi-scale">
+        <div class="scale-norm"></div>
+        <div class="scale-warning"></div>
+        <div class="scale-critical"></div>
+    </div>
+    <div class="scale-labels">
+        <span>Норма (&lt;60°C)</span>
+        <span>Предупреждение (60–80°C)</span>
+        <span>Критично (&gt;80°C)</span>
+    </div>
+
+    {# Таблица с диапазонами и отметкой "← Вы здесь" #}
+    <div style="margin-top: 1.5rem;">
+        <table style="width: 100%; font-size: 0.9rem; border-collapse: collapse;">
+        {# Инлайновая таблица без отдельного CSS-класса (достаточно простая). #}
+
+            <tr>
+            {# <tr> — table row (строка таблицы). #}
+                <th style="padding: 0.5rem; text-align: left; color: #6B7280;">Статус</th>
+                {# <th> — table header (заголовок столбца, жирный по умолчанию). #}
+                <th style="padding: 0.5rem; text-align: left; color: #6B7280;">Диапазон</th>
+                <th style="padding: 0.5rem; text-align: left; color: #6B7280;">Ваш замер</th>
+            </tr>
+
+            <tr>
+                <td style="padding: 0.5rem;">
+                {# <td> — table data (обычная ячейка). #}
+                    <span class="badge badge-norm">Норма</span>
+                    {# badge badge-norm — два класса: базовые стили бейджа + зелёный цвет. #}
+                </td>
+                <td style="padding: 0.5rem;">&lt; 60°C</td>
+                <td style="padding: 0.5rem;">
+                    {% if status == "Норма" %}← Вы здесь{% endif %}
+                    {# Показываем стрелку только если текущий статус совпадает с этой строкой. #}
+                </td>
+            </tr>
+
+            <tr style="background: #F9FAFB;">
+            {# Чередуем фон строк (zebra-стиль) — каждая чётная строка чуть светлее. #}
+                <td style="padding: 0.5rem;"><span class="badge badge-warning">Предупреждение</span></td>
+                <td style="padding: 0.5rem;">60 — 80°C</td>
+                <td style="padding: 0.5rem;">
+                    {% if status == "Предупреждение" %}← Вы здесь{% endif %}
+                </td>
+            </tr>
+
+            <tr>
+                <td style="padding: 0.5rem;"><span class="badge badge-critical">Критично</span></td>
+                <td style="padding: 0.5rem;">&gt; 80°C</td>
+                <td style="padding: 0.5rem;">
+                    {% if status == "Критично" %}← Вы здесь{% endif %}
+                </td>
+            </tr>
+        </table>
+    </div>
+</div>
+
+{% endblock %}

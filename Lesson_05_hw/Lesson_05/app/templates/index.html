@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<div class="card">
+    <h1>⚖️ Калькулятор ИМТ</h1>
+    <h2>Индекс массы тела по формуле ВОЗ</h2>
+    <p>
+        Введите свой вес и рост — мы вычислим ИМТ и сохраним результат
+        в базу данных PostgreSQL.
+    </p>
+
+    {# Шкала ИМТ для наглядности #}
+    <div class="bmi-scale">
+        <div class="scale-deficit"></div>
+        <div class="scale-norm"></div>
+        <div class="scale-over"></div>
+        <div class="scale-obese"></div>
+    </div>
+    <div class="scale-labels">
+        <span>Дефицит (&lt;18.5)</span>
+        <span>Норма (18.5–25)</span>
+        <span>Избыток (25–30)</span>
+        <span>Ожирение (&gt;30)</span>
+    </div>
+</div>
+
+<div class="card">
+    {# Форма отправляется методом POST на маршрут /calculate #}
+    <form method="post" action="/calculate">
+
+        <div class="form-group">
+            <label for="weight">Вес (кг)</label>
+            <input
+                type="number"
+                id="weight"
+                name="weight"
+                step="0.1"
+                min="20"
+                max="300"
+                placeholder="Например: 72.5"
+                required
+            >
+            <div class="form-hint">Введите вес в килограммах (от 20 до 300 кг)</div>
+        </div>
+
+        <div class="form-group">
+            <label for="height">Рост (см)</label>
+            <input
+                type="number"
+                id="height"
+                name="height"
+                step="0.1"
+                min="50"
+                max="250"
+                placeholder="Например: 175"
+                required
+            >
+            <div class="form-hint">Введите рост в сантиметрах (от 50 до 250 см)</div>
+        </div>
+
+        <button type="submit" class="btn">
+            Рассчитать ИМТ →
+        </button>
+    </form>
+</div>
+
+{% endblock %}

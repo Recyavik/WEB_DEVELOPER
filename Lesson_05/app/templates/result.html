@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+{# Определяем CSS-класс и описание в зависимости от категории #}
+{% if category == "Норма" %}
+    {% set result_class = "result-norm" %}
+    {% set badge_class = "badge-norm" %}
+    {% set emoji = "✅" %}
+    {% set description = "Отличный результат! Ваш вес находится в здоровом диапазоне." %}
+{% elif category == "Избыточный вес" %}
+    {% set result_class = "result-over" %}
+    {% set badge_class = "badge-over" %}
+    {% set emoji = "⚠️" %}
+    {% set description = "Немного выше нормы. Рекомендуется умеренная физическая активность." %}
+{% elif category == "Ожирение" %}
+    {% set result_class = "result-obese" %}
+    {% set badge_class = "badge-obese" %}
+    {% set emoji = "🔴" %}
+    {% set description = "Значительно выше нормы. Рекомендуется консультация врача." %}
+{% else %}
+    {% set result_class = "result-deficit" %}
+    {% set badge_class = "badge-deficit" %}
+    {% set emoji = "ℹ️" %}
+    {% set description = "Ниже нормы. Рекомендуется сбалансированное питание." %}
+{% endif %}
+
+<div class="card">
+    {# Блок с результатом, цвет зависит от категории #}
+    <div class="bmi-result {{ result_class }}">
+        <div style="font-size: 2rem; margin-bottom: 0.5rem;">{{ emoji }}</div>
+        <div class="bmi-value">{{ bmi }}</div>
+        <div class="bmi-category">{{ category }}</div>
+        <div class="bmi-details">{{ description }}</div>
+    </div>
+
+    {# Параметры измерения #}
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-value">{{ weight }}</div>
+            <div class="stat-label">кг — вес</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{{ height }}</div>
+            <div class="stat-label">см — рост</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{{ bmi }}</div>
+            <div class="stat-label">ИМТ (ВОЗ)</div>
+        </div>
+    </div>
+
+    {# Сообщение о сохранении в БД #}
+    <div style="background: #F0FDF4; border-left: 4px solid #10B981; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1.5rem;">
+        <strong style="color: #065F46;">💾 Сохранено в PostgreSQL</strong>
+        <p style="color: #047857; font-size: 0.9rem; margin-top: 0.25rem;">
+            Этот результат записан в базу данных. Вы можете посмотреть историю всех измерений.
+        </p>
+    </div>
+
+    {# Кнопки навигации #}
+    <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+        <a href="/" class="btn">← Новый расчёт</a>
+        <a href="/history" class="btn btn-secondary">📋 История измерений</a>
+    </div>
+</div>
+
+{# Шкала ИМТ с текущим значением #}
+<div class="card">
+    <h2>Шкала ИМТ</h2>
+    <div class="bmi-scale">
+        <div class="scale-deficit"></div>
+        <div class="scale-norm"></div>
+        <div class="scale-over"></div>
+        <div class="scale-obese"></div>
+    </div>
+    <div class="scale-labels">
+        <span>Дефицит (&lt;18.5)</span>
+        <span>Норма (18.5–25)</span>
+        <span>Избыток (25–30)</span>
+        <span>Ожирение (&gt;30)</span>
+    </div>
+
+    <div style="margin-top: 1.5rem;">
+        <table style="width: 100%; font-size: 0.9rem; border-collapse: collapse;">
+            <tr>
+                <th style="padding: 0.5rem; text-align: left; color: #6B7280;">Категория</th>
+                <th style="padding: 0.5rem; text-align: left; color: #6B7280;">Диапазон ИМТ</th>
+                <th style="padding: 0.5rem; text-align: left; color: #6B7280;">Ваш результат</th>
+            </tr>
+            <tr>
+                <td style="padding: 0.5rem;"><span class="badge badge-deficit">Дефицит массы</span></td>
+                <td style="padding: 0.5rem;">&lt; 18.5</td>
+                <td style="padding: 0.5rem;">{% if category == "Дефицит массы" %}← Вы здесь{% endif %}</td>
+            </tr>
+            <tr style="background: #F9FAFB;">
+                <td style="padding: 0.5rem;"><span class="badge badge-norm">Норма</span></td>
+                <td style="padding: 0.5rem;">18.5 — 24.9</td>
+                <td style="padding: 0.5rem;">{% if category == "Норма" %}← Вы здесь{% endif %}</td>
+            </tr>
+            <tr>
+                <td style="padding: 0.5rem;"><span class="badge badge-over">Избыточный вес</span></td>
+                <td style="padding: 0.5rem;">25.0 — 29.9</td>
+                <td style="padding: 0.5rem;">{% if category == "Избыточный вес" %}← Вы здесь{% endif %}</td>
+            </tr>
+            <tr style="background: #F9FAFB;">
+                <td style="padding: 0.5rem;"><span class="badge badge-obese">Ожирение</span></td>
+                <td style="padding: 0.5rem;">≥ 30.0</td>
+                <td style="padding: 0.5rem;">{% if category == "Ожирение" %}← Вы здесь{% endif %}</td>
+            </tr>
+        </table>
+    </div>
+</div>
+
+{% endblock %}

@@ -1,0 +1,37 @@
+version: "3.9"
+
+services:
+  # База данных PostgreSQL
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: bmi_db           # имя базы данных
+      POSTGRES_USER: student        # имя пользователя
+      POSTGRES_PASSWORD: secret123  # пароль
+    volumes:
+      - pg_data:/var/lib/postgresql/data  # данные хранятся между перезапусками
+    ports:
+      - "5432:5432"                 # открываем порт наружу (для отладки)
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U student -d bmi_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Наше FastAPI-приложение
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy  # ждём пока БД поднимется
+    environment:
+      DB_HOST: db
+      DB_NAME: bmi_db
+      DB_USER: student
+      DB_PASSWORD: secret123
+      DB_PORT: 5432
+
+volumes:
+  pg_data:  # именованный том для хранения данных PostgreSQL

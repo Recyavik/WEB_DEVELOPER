@@ -1,0 +1,326 @@
+/* ===== Переменные цветов палитры Lilac Mist ===== */
+:root {
+    --bg:       #FAF5FF;   /* фон страницы — светло-сиреневый */
+    --accent:   #7C3AED;   /* основной акцент — фиолетовый */
+    --accent2:  #A855F7;   /* вторичный — светло-фиолетовый */
+    --accent3:  #C026D3;   /* третичный — маджента */
+    --pink:     #EC4899;   /* розовый акцент */
+    --dark:     #2E1065;   /* тёмный фиолетовый */
+    --white:    #FFFFFF;
+    --gray:     #6B7280;
+    --light:    #F3E8FF;   /* очень светлый фиолетовый */
+    --success:  #10B981;   /* зелёный — для «Нормы» */
+    --warning:  #F59E0B;   /* жёлтый — для «Избытка» */
+    --danger:   #EF4444;   /* красный — для «Ожирения» */
+    --info:     #3B82F6;   /* синий — для «Дефицита» */
+}
+
+/* ===== Сброс стандартных стилей браузера ===== */
+*, *::before, *::after {
+    box-sizing: border-box;  /* отступы включены в размер блока */
+    margin: 0;
+    padding: 0;
+}
+
+/* ===== Основные стили страницы ===== */
+body {
+    font-family: 'Segoe UI', Arial, sans-serif;  /* системный шрифт без засечек */
+    background: var(--bg);                        /* фон страницы */
+    color: #1F2937;                               /* тёмно-серый текст */
+    min-height: 100vh;                            /* страница минимум на весь экран */
+    display: flex;
+    flex-direction: column;                        /* шапка + контент + подвал */
+}
+
+/* ===== Шапка сайта ===== */
+header {
+    background: var(--dark);                      /* тёмный фиолетовый фон */
+    color: var(--white);
+    padding: 1rem 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);       /* тень под шапкой */
+}
+
+header .logo {
+    font-size: 1.4rem;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+}
+
+header .logo span {
+    color: var(--accent2);   /* часть логотипа другим цветом */
+}
+
+/* ===== Навигация ===== */
+nav {
+    display: flex;
+    gap: 0.5rem;             /* промежуток между ссылками */
+}
+
+nav a {
+    color: #C4B5FD;                         /* светло-фиолетовые ссылки */
+    text-decoration: none;
+    padding: 0.4rem 1rem;
+    border-radius: 6px;
+    transition: background 0.2s;            /* плавный переход при наведении */
+    font-size: 0.9rem;
+}
+
+nav a:hover {
+    background: rgba(255,255,255,0.15);     /* подсветка при наведении */
+    color: var(--white);
+}
+
+nav a.active {
+    background: var(--accent);             /* активная страница — фиолетовая */
+    color: var(--white);
+}
+
+/* ===== Основное содержимое ===== */
+main {
+    flex: 1;                   /* занимает всё доступное место */
+    padding: 2rem;
+    max-width: 900px;          /* ограничиваем ширину для читаемости */
+    margin: 0 auto;            /* центрируем */
+    width: 100%;
+}
+
+/* ===== Карточка (универсальный блок контента) ===== */
+.card {
+    background: var(--white);
+    border-radius: 16px;
+    padding: 2rem;
+    box-shadow: 0 4px 20px rgba(124, 58, 237, 0.08);  /* мягкая фиолетовая тень */
+    margin-bottom: 1.5rem;
+}
+
+.card h1 {
+    color: var(--dark);
+    font-size: 1.6rem;
+    margin-bottom: 0.5rem;
+}
+
+.card h2 {
+    color: var(--accent);
+    font-size: 1.2rem;
+    margin-bottom: 1rem;
+}
+
+.card p {
+    color: var(--gray);
+    line-height: 1.6;
+    margin-bottom: 1rem;
+}
+
+/* ===== Форма ввода ===== */
+.form-group {
+    margin-bottom: 1.2rem;
+}
+
+.form-group label {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 0.4rem;
+    color: var(--dark);
+    font-size: 0.95rem;
+}
+
+.form-group input {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    border: 2px solid #E9D5FF;               /* светло-фиолетовая рамка */
+    border-radius: 10px;
+    font-size: 1rem;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    outline: none;
+    background: var(--white);
+}
+
+.form-group input:focus {
+    border-color: var(--accent);             /* фиолетовая рамка при фокусе */
+    box-shadow: 0 0 0 3px rgba(124,58,237,0.12);
+}
+
+.form-hint {
+    font-size: 0.8rem;
+    color: var(--gray);
+    margin-top: 0.25rem;
+}
+
+/* ===== Кнопка ===== */
+.btn {
+    display: inline-block;
+    background: var(--accent);               /* фиолетовый фон */
+    color: var(--white);
+    padding: 0.75rem 2rem;
+    border: none;
+    border-radius: 10px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: none;
+    transition: background 0.2s, transform 0.1s;
+}
+
+.btn:hover {
+    background: var(--dark);                 /* темнее при наведении */
+}
+
+.btn:active {
+    transform: scale(0.98);                  /* лёгкое нажатие */
+}
+
+.btn-secondary {
+    background: transparent;
+    color: var(--accent);
+    border: 2px solid var(--accent);
+}
+
+.btn-secondary:hover {
+    background: var(--light);
+    color: var(--dark);
+}
+
+/* ===== Блок результата ИМТ ===== */
+.bmi-result {
+    text-align: center;
+    padding: 2rem;
+    border-radius: 16px;
+    margin-bottom: 1.5rem;
+}
+
+.bmi-value {
+    font-size: 4rem;
+    font-weight: 800;
+    line-height: 1;
+    margin-bottom: 0.5rem;
+}
+
+.bmi-category {
+    font-size: 1.4rem;
+    font-weight: 600;
+    margin-bottom: 1rem;
+}
+
+.bmi-details {
+    font-size: 0.95rem;
+    opacity: 0.8;
+}
+
+/* Цвета результата в зависимости от категории */
+.result-norm    { background: #ECFDF5; color: var(--success); }
+.result-over    { background: #FFFBEB; color: var(--warning); }
+.result-obese   { background: #FEF2F2; color: var(--danger); }
+.result-deficit { background: #EFF6FF; color: var(--info); }
+
+/* ===== Таблица истории ===== */
+.history-table {
+    width: 100%;
+    border-collapse: collapse;     /* убираем зазор между ячейками */
+    font-size: 0.95rem;
+}
+
+.history-table th {
+    background: var(--dark);
+    color: var(--white);
+    padding: 0.75rem 1rem;
+    text-align: left;
+    font-weight: 600;
+}
+
+.history-table th:first-child { border-radius: 8px 0 0 0; }
+.history-table th:last-child  { border-radius: 0 8px 0 0; }
+
+.history-table td {
+    padding: 0.7rem 1rem;
+    border-bottom: 1px solid #F3E8FF;     /* тонкая разделительная линия */
+}
+
+.history-table tr:hover td {
+    background: var(--light);             /* подсветка строки при наведении */
+}
+
+/* ===== Бейджи категорий ===== */
+.badge {
+    display: inline-block;
+    padding: 0.2rem 0.75rem;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.badge-norm    { background: #D1FAE5; color: #065F46; }
+.badge-over    { background: #FEF3C7; color: #92400E; }
+.badge-obese   { background: #FEE2E2; color: #991B1B; }
+.badge-deficit { background: #DBEAFE; color: #1E40AF; }
+
+/* ===== Шкала ИМТ ===== */
+.bmi-scale {
+    display: flex;
+    border-radius: 8px;
+    overflow: hidden;
+    height: 12px;
+    margin: 1rem 0 0.4rem;
+}
+
+.scale-deficit { flex: 1.85; background: var(--info); }
+.scale-norm    { flex: 0.65; background: var(--success); }
+.scale-over    { flex: 0.5;  background: var(--warning); }
+.scale-obese   { flex: 1;    background: var(--danger); }
+
+.scale-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.75rem;
+    color: var(--gray);
+}
+
+/* ===== Статистика (сетка) ===== */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.stat-card {
+    background: var(--light);
+    border-radius: 12px;
+    padding: 1rem;
+    text-align: center;
+}
+
+.stat-value {
+    font-size: 1.8rem;
+    font-weight: 700;
+    color: var(--accent);
+}
+
+.stat-label {
+    font-size: 0.8rem;
+    color: var(--gray);
+    margin-top: 0.2rem;
+}
+
+/* ===== Пустое состояние ===== */
+.empty-state {
+    text-align: center;
+    padding: 3rem;
+    color: var(--gray);
+}
+
+.empty-state .icon {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+}
+
+/* ===== Подвал ===== */
+footer {
+    background: var(--dark);
+    color: #C4B5FD;
+    text-align: center;
+    padding: 1rem;
+    font-size: 0.85rem;
+}

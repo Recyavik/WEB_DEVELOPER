@@ -1,0 +1,229 @@
+{% extends "base.html" %}
+{# Наследуем базовый шаблон — шапка, навигация, подвал из base.html. #}
+
+{% block content %}
+{# Заполняем блок content содержимым страницы истории. #}
+
+{# ===== Верхняя карточка: заголовок + форма фильтра ===== #}
+<div class="card">
+    <h1>📋 История показаний температуры</h1>
+    <h2>Последние записи из таблицы temperature_logs</h2>
+    <p>
+        Данные хранятся в таблице
+        <code style="background:#F3E8FF;padding:2px 6px;border-radius:4px;font-family:monospace;">temperature_logs</code>
+        {# <code> — шрифт «как в терминале». Стили inline: светлый фиолетовый фон, скруглённые края. #}
+        базы данных
+        <code style="background:#F3E8FF;padding:2px 6px;border-radius:4px;font-family:monospace;">temperatura_db</code>.
+        Показаны последние 20 записей.
+    </p>
+
+    {# ===== Форма фильтра по имени сервера (GET-запрос) ===== #}
+    <form method="get" action="/logs" style="display: flex; gap: 0.75rem; align-items: flex-end; flex-wrap: wrap;">
+    {# method="get" — данные идут в URL-строке: /logs?server_filter=srv-01.
+       Это правильно для фильтров и поиска (можно поделиться ссылкой!).
+       action="/logs" — отправляем на эту же страницу.
+       align-items: flex-end — поле ввода и кнопка выравниваются по нижнему краю. #}
+
+        <div class="form-group" style="margin-bottom: 0; flex: 1; min-width: 200px;">
+        {# flex: 1 — поле растягивается и занимает всё свободное место.
+           min-width: 200px — поле не сужается меньше 200px (на маленьких экранах). #}
+
+            <label for="server_filter">Фильтр по серверу</label>
+
+            <input
+                type="text"
+                id="server_filter"
+                name="server_filter"
+                {# name="server_filter" — ключ в URL при GET-запросе: ?server_filter=ЗНАЧЕНИЕ.
+                   FastAPI читает это как параметр server_filter: str = "" в функции logs(). #}
+
+                placeholder="Например: srv-01"
+
+                value="{{ server_filter }}"
+                {# value — значение по умолчанию в поле.
+                   {{ server_filter }} — текущий фильтр из Python.
+                   Если пользователь ввёл "srv-01" и нажал кнопку, поле сохранит это значение. #}
+            >
+        </div>
+
+        <button type="submit" class="btn" style="padding: 0.75rem 1.5rem;">Фильтровать</button>
+        {# type="submit" — кнопка отправки формы.
+           Добавляет ?server_filter=ВВЕДЁННОЕ_ЗНАЧЕНИЕ к URL и перезагружает страницу. #}
+
+        {% if server_filter %}
+        {# Показываем кнопку «Сбросить» только если фильтр активен (не пустой). #}
+            <a href="/logs" class="btn btn-secondary" style="padding: 0.75rem 1.5rem;">Сбросить</a>
+            {# Ссылка на /logs без параметров → сбрасывает фильтр. #}
+        {% endif %}
+    </form>
+</div>
+
+
+{# ===== Условие: есть данные или нет? ===== #}
+{% if measurements %}
+{# measurements — список словарей из Python.
+   В Jinja2 {% if список %} истинно, если список НЕ пустой.
+   Если измерений нет → показываем блок {% else %} ниже. #}
+
+    {# ===== Статистика: три мини-карточки ===== #}
+    <div class="stats-grid">
+    {# stats-grid — CSS Grid, 3 колонки (из style.css). #}
+
+        <div class="stat-card">
+            <div class="stat-value">{{ count }}</div>
+            {# {{ count }} — количество записей (len(measurements) из Python). #}
+            <div class="stat-label">записей</div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-value">
+                {{ "%.1f"|format(measurements | map(attribute="temperature") | list | sum / measurements | length) }}°C
+                {# Это сложное выражение Jinja2 для вычисления средней температуры:
+                   measurements              — список всех измерений (словарей)
+                   | map(attribute="temperature") — берём только поле "temperature" из каждого словаря
+                   | list                   — преобразуем в список чисел
+                   | sum                    — суммируем все числа
+                   / measurements | length  — делим на количество измерений
+                   "%.1f"|format(...)       — форматируем число до 1 знака после запятой
+                   Например: [65.5, 45.0, 90.0] → сумма=200.5 → 200.5/3 = 66.8°C #}
+            </div>
+            <div class="stat-label">средняя температура</div>
+        </div>
+
+        <div class="stat-card">
+            <div class="stat-value">
+                {{ measurements | selectattr("status", "equalto", "Критично") | list | length }}
+                {# Подсчёт критичных записей:
+                   measurements                              — все измерения
+                   | selectattr("status", "equalto", "Критично") — оставляем только те,
+                     где поле "status" равно "Критично"
+                   | list                                    — в список
+                   | length                                  — считаем количество #}
+            </div>
+            <div class="stat-label">критичных записей</div>
+        </div>
+    </div>
+
+    {# ===== Таблица с данными из БД ===== #}
+    <div class="card" style="padding: 0; overflow: hidden;">
+    {# padding: 0 — убираем внутренние отступы карточки (таблица сама даёт отступы в ячейках).
+       overflow: hidden — обрезаем углы таблицы (для скругления card). #}
+
+        <table class="history-table">
+        {# history-table — стили таблицы из style.css (тёмные заголовки, линии между строками). #}
+
+            <thead>
+            {# <thead> — секция заголовков таблицы (семантически отделяет шапку от данных). #}
+                <tr>
+                    <th>#</th>
+                    {# # — номер строки (порядковый). #}
+                    <th>Имя сервера</th>
+                    <th>Температура, °C</th>
+                    <th>Статус</th>
+                    <th>Дата и время</th>
+                </tr>
+            </thead>
+
+            <tbody>
+            {# <tbody> — секция данных таблицы. #}
+
+                {% for m in measurements %}
+                {# {% for %} — цикл Jinja2 (как for в Python).
+                   m — переменная для текущего элемента (словарь с одним измерением).
+                   measurements — список всех измерений из Python. #}
+
+                <tr {% if m.status == "Критично" %}style="background: #FEF2F2;"{% endif %}>
+                {# Если статус "Критично" → добавляем красноватый фон строке.
+                   Это «бонусное задание» — подсветка критичных записей. #}
+
+                    <td style="color: #9CA3AF; font-size: 0.85rem;">{{ loop.index }}</td>
+                    {# loop.index — специальная переменная Jinja2 в цикле for.
+                       Автоматически считает итерации: 1, 2, 3, 4...
+                       (loop.index0 считает с нуля: 0, 1, 2...) #}
+
+                    <td><strong>{{ m.server_name }}</strong></td>
+                    {# <strong> — жирный текст (имя сервера выделяем жирным для читаемости).
+                       m.server_name — поле "server_name" текущего словаря m. #}
+
+                    <td>{{ m.temperature }}</td>
+                    {# Числовое значение температуры. #}
+
+                    <td>
+                        {# Отображаем бейдж нужного цвета в зависимости от статуса #}
+                        {% if m.status == "Норма" %}
+                            <span class="badge badge-norm">{{ m.status }}</span>
+                        {% elif m.status == "Предупреждение" %}
+                            <span class="badge badge-warning">{{ m.status }}</span>
+                        {% elif m.status == "Критично" %}
+                            <span class="badge badge-critical">{{ m.status }}</span>
+                        {% endif %}
+                    </td>
+
+                    <td style="color: #6B7280; font-size: 0.85rem;">
+                        {{ m.recorded_at.strftime("%d.%m.%Y  %H:%M") if m.recorded_at else "—" }}
+                        {# strftime() — метод Python для форматирования даты и времени.
+                           "%d.%m.%Y  %H:%M" — шаблон:
+                             %d — день (01–31)
+                             %m — месяц (01–12)
+                             %Y — год (2025)
+                             %H — часы в 24-часовом формате (00–23)
+                             %M — минуты (00–59)
+                           Результат: "14.04.2025  17:30"
+
+                           if m.recorded_at else "—" — тернарный оператор Jinja2:
+                           если recorded_at есть → форматируем, иначе → показываем тире. #}
+                    </td>
+                </tr>
+
+                {% endfor %}
+                {# {% endfor %} — закрываем цикл for. #}
+            </tbody>
+        </table>
+    </div>
+
+{% else %}
+{# {% else %} — выполняется если measurements пустой (нет записей). #}
+
+    {# ===== Пустое состояние ===== #}
+    <div class="card">
+        <div class="empty-state">
+        {# empty-state — стили: text-align: center, padding: 3rem. #}
+
+            <div class="icon">📭</div>
+            {# Большой эмодзи — визуальный сигнал "пусто". #}
+
+            <h2 style="color: #6B7280; margin-bottom: 0.5rem;">
+                {% if server_filter %}
+                    Нет записей для сервера «{{ server_filter }}»
+                    {# Если фильтр активен — говорим, что именно не нашли. #}
+                {% else %}
+                    История пуста
+                    {# Фильтра нет — значит, данных вообще нет в базе. #}
+                {% endif %}
+            </h2>
+
+            <p>
+                {% if server_filter %}
+                    Попробуйте изменить фильтр или <a href="/logs">посмотреть все записи</a>.
+                {% else %}
+                    Вы ещё не делали замеров. Перейдите на главную и запишите первое показание!
+                {% endif %}
+            </p>
+            <br>
+            {# <br> — перенос строки (line break). Добавляем небольшой отступ перед кнопкой. #}
+
+            <a href="/" class="btn">Записать показание →</a>
+        </div>
+    </div>
+
+{% endif %}
+{# {% endif %} — закрываем основное условие {% if measurements %}. #}
+
+
+{# Кнопка "Новый замер" внизу страницы #}
+<div style="margin-top: 1rem;">
+    <a href="/" class="btn btn-secondary">← Новый замер</a>
+</div>
+
+{% endblock %}
+{# endblock — закрываем блок content. #}

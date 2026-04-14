@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<div class="card">
+    <h1>📋 История измерений</h1>
+    <h2>Все записи из базы данных PostgreSQL</h2>
+    <p>
+        Данные хранятся в таблице <code style="background:#F3E8FF;padding:2px 6px;border-radius:4px;font-family:monospace;">measurements</code>
+        базы данных <code style="background:#F3E8FF;padding:2px 6px;border-radius:4px;font-family:monospace;">bmi_db</code>.
+        Показаны последние 20 записей.
+    </p>
+</div>
+
+{% if measurements %}
+
+    {# Статистика по данным из БД #}
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-value">{{ count }}</div>
+            <div class="stat-label">измерений</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">
+                {{ "%.1f"|format(measurements | map(attribute="bmi") | list | sum / measurements | length) }}
+            </div>
+            <div class="stat-label">средний ИМТ</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">
+                {{ measurements | map(attribute="category") | list | unique | list | length }}
+            </div>
+            <div class="stat-label">категорий</div>
+        </div>
+    </div>
+
+    {# Таблица с историей #}
+    <div class="card" style="padding: 0; overflow: hidden;">
+        <table class="history-table">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Вес, кг</th>
+                    <th>Рост, см</th>
+                    <th>ИМТ</th>
+                    <th>Категория</th>
+                    <th>Дата и время</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for m in measurements %}
+                <tr>
+                    <td style="color: #9CA3AF; font-size: 0.85rem;">{{ loop.index }}</td>
+                    <td><strong>{{ m.weight }}</strong></td>
+                    <td>{{ m.height }}</td>
+                    <td><strong>{{ m.bmi }}</strong></td>
+                    <td>
+                        {# Выбираем бейдж по категории #}
+                        {% if m.category == "Норма" %}
+                            <span class="badge badge-norm">{{ m.category }}</span>
+                        {% elif m.category == "Избыточный вес" %}
+                            <span class="badge badge-over">{{ m.category }}</span>
+                        {% elif m.category == "Ожирение" %}
+                            <span class="badge badge-obese">{{ m.category }}</span>
+                        {% else %}
+                            <span class="badge badge-deficit">{{ m.category }}</span>
+                        {% endif %}
+                    </td>
+                    <td style="color: #6B7280; font-size: 0.85rem;">
+                        {# Форматируем дату для удобного чтения #}
+                        {{ m.measured_at.strftime("%d.%m.%Y  %H:%M") if m.measured_at else "—" }}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+{% else %}
+    {# Пустое состояние — данных ещё нет #}
+    <div class="card">
+        <div class="empty-state">
+            <div class="icon">📭</div>
+            <h2 style="color: #6B7280; margin-bottom: 0.5rem;">История пуста</h2>
+            <p>Вы ещё не делали измерений. Перейдите на главную и рассчитайте ИМТ!</p>
+            <br>
+            <a href="/" class="btn">Рассчитать ИМТ →</a>
+        </div>
+    </div>
+{% endif %}
+
+<div style="margin-top: 1rem;">
+    <a href="/" class="btn btn-secondary">← Новый расчёт</a>
+</div>
+
+{% endblock %}
