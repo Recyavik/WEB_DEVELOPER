@@ -403,15 +403,16 @@ main {
        1rem сверху, 0 по бокам, 0.4rem снизу */
 }
 
-/* Три сегмента шкалы (ширина = flex-значение / сумма всех значений) */
-.scale-norm     { flex: 0.6; background: var(--success); }
-/* flex: 0.6 — занимает 0.6/(0.6+0.8+1.0) = 25% ширины шкалы, зелёный */
+.scale-norm     { flex: 3; background: var(--success); }
+/* 3 / (3+1+1) = 60% — норма 0–60 */
 
-.scale-warning  { flex: 0.8; background: var(--warning); }
-/* flex: 0.8 — занимает 0.8/2.4 = 33% ширины шкалы, жёлтый */
+.scale-warning  { flex: 1; background: var(--warning); }
+/* 1 / 5 = 20% — предупреждение 60–80 */
 
-.scale-critical { flex: 1;   background: var(--danger); }
-/* flex: 1.0 — занимает 1.0/2.4 = 42% ширины шкалы, красный */
+.scale-critical { flex: 1; background: var(--danger); }
+/* 1 / 5 = 20% — критично 80–100 */
+
+
 
 .scale-labels {
     display: flex;

@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Все спортсмены — FitnessClub{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Карточки спортсменов</h1>
+    <a href="/create" class="btn">+ Добавить спортсмена</a>
+</div>
+
+{% if athletes %}
+    <div class="athletes-grid">
+        {% for athlete in athletes %}
+        <div class="card athlete-card">
+            <div class="card-level card-level--{{ athlete.level }}">
+                {% if athlete.level == "beginner" %}Начинающий
+                {% elif athlete.level == "intermediate" %}Средний
+                {% else %}Продвинутый
+                {% endif %}
+            </div>
+            <h2 class="athlete-name">{{ athlete.name }}</h2>
+            <p class="athlete-sport">🏅 {{ athlete.sport }}</p>
+            <div class="athlete-stats">
+                <span>👤 {{ athlete.age }} лет</span>
+                <span>⚖️ {{ athlete.weight }} кг</span>
+                <span>📏 {{ athlete.height }} см</span>
+            </div>
+            {% if athlete.goals %}
+            <p class="athlete-goals">🎯 {{ athlete.goals }}</p>
+            {% endif %}
+            <div class="card-actions">
+                <a href="/athlete/{{ athlete.id }}" class="btn btn-sm">Карточка</a>
+                <a href="/edit/{{ athlete.id }}" class="btn btn-sm btn-secondary">Изменить</a>
+                <form method="post" action="/delete/{{ athlete.id }}" style="display:inline"
+                      onsubmit="return confirm('Удалить спортсмена {{ athlete.name }}?')">
+                    <button type="submit" class="btn btn-sm btn-danger">Удалить</button>
+                </form>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+{% else %}
+    <div class="empty-state">
+        <p>Пока нет ни одного спортсмена.</p>
+        <a href="/create" class="btn">Добавить первого</a>
+    </div>
+{% endif %}
+{% endblock %}

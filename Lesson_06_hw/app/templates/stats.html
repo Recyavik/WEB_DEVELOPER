@@ -1,0 +1,113 @@
+{# Наследуемся от base.html #}
+{% extends "base.html" %}
+
+{# Заголовок вкладки для страницы статистики #}
+{% block title %}Статистика парка — RobotCatalog{% endblock %}
+
+{% block content %}
+{# Шапка страницы с кнопкой возврата #}
+<div class="page-header">
+    <h1>Статистика парка роботов</h1>
+    {# Кнопка-ссылка для возврата на главную страницу #}
+    <a href="/" class="btn btn-sec">Назад к каталогу</a>
+</div>
+
+{# Сетка из трёх KPI-карточек (Key Performance Indicators — ключевые показатели) #}
+<div class="kpi-grid">
+    {# Карточка 1: общее количество роботов #}
+    <div class="kpi-card">
+        <div class="kpi-val">{{ total }}</div>       {# большое число #}
+        <div class="kpi-lbl">Всего роботов</div>    {# подпись снизу #}
+    </div>
+    {# Карточка 2: средняя грузоподъёмность #}
+    <div class="kpi-card">
+        <div class="kpi-val">{{ avg_payload }}</div>
+        <div class="kpi-lbl">Средняя нагрузка, кг</div>
+    </div>
+    {# Карточка 3: максимальный радиус действия #}
+    <div class="kpi-card">
+        <div class="kpi-val">{{ max_reach }}</div>
+        <div class="kpi-lbl">Макс. радиус, мм</div>
+    </div>
+</div>
+
+{# Сетка с тремя таблицами статистики #}
+<div class="stats-grid">
+
+    {# Таблица 1: сколько роботов каждого типа #}
+    <div class="card stats-card">
+        <h2>По типам</h2>
+        <table class="stats-table">
+            <thead><tr><th>Тип</th><th>Количество</th></tr></thead>
+            <tbody>
+                {# stats_type — список пар (тип, количество) из main.py #}
+                {% for rtype, count in stats_type %}
+                <tr>
+                    {# Русское название типа, запасной вариант — сам код типа #}
+                    <td>{{ type_labels.get(rtype, rtype) }}</td>
+                    <td>
+                        {# Визуальный прогресс-бар: ширина = процент от общего числа #}
+                        <div class="bar-row">
+                            {# (count / total * 100) — доля в процентах
+                               | round | int — округляем до целого числа
+                               style="width: X%" — задаём ширину полоски #}
+                            <div class="bar" style="width: {{ (count / total * 100) | round | int }}%"></div>
+                            {# Числовое значение рядом с полоской #}
+                            <span>{{ count }}</span>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {# Таблица 2: сколько роботов в каждом статусе #}
+    <div class="card stats-card">
+        <h2>По статусам</h2>
+        <table class="stats-table">
+            <thead><tr><th>Статус</th><th>Количество</th></tr></thead>
+            <tbody>
+                {# stats_status — список пар (статус, количество) #}
+                {% for status, count in stats_status %}
+                <tr>
+                    {# Цветной бейдж статуса #}
+                    <td><span class="status-badge status-{{ status }}">{{ status_labels.get(status, status) }}</span></td>
+                    <td>
+                        <div class="bar-row">
+                            {# bar-{{ status }} — разный цвет полоски для каждого статуса (из CSS) #}
+                            <div class="bar bar-{{ status }}" style="width: {{ (count / total * 100) | round | int }}%"></div>
+                            <span>{{ count }}</span>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {# Таблица 3: сколько роботов у каждого производителя
+       stats-card-wide — CSS-класс, растягивает карточку на всю ширину сетки #}
+    <div class="card stats-card stats-card-wide">
+        <h2>По производителям</h2>
+        <table class="stats-table">
+            <thead><tr><th>Производитель</th><th>Количество</th></tr></thead>
+            <tbody>
+                {# stats_mfr — список пар (производитель, количество), отсортированных по убыванию #}
+                {% for mfr, count in stats_mfr %}
+                <tr>
+                    <td>{{ mfr }}</td>  {# имя производителя #}
+                    <td>
+                        <div class="bar-row">
+                            <div class="bar" style="width: {{ (count / total * 100) | round | int }}%"></div>
+                            <span>{{ count }}</span>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+</div>  {# Конец stats-grid #}
+{% endblock %}

@@ -1,0 +1,106 @@
+{# Наследуемся от base.html #}
+{% extends "base.html" %}
+
+{# Заголовок вкладки: показывает имя редактируемого робота #}
+{% block title %}Редактировать — {{ robot.name }}{% endblock %}
+
+{% block content %}
+<div class="form-page">
+    <h1>Редактировать карточку</h1>
+    {# Показываем имя робота, чтобы пользователь понимал, что именно редактирует #}
+    <p class="page-sub">Робот: <strong>{{ robot.name }}</strong></p>
+
+    {# Форма редактирования — отправляет POST на /edit/{id}
+       Данные формы будут обработаны функцией edit_robot() в main.py #}
+    <form method="post" action="/edit/{{ robot.id }}" class="robot-form card">
+
+        {# Строка с полями: название и производитель
+           value="{{ robot.name }}" — поле уже заполнено текущим значением из базы #}
+        <div class="form-row">
+            <div class="form-group">
+                <label for="name">Название модели</label>
+                {# value="{{ robot.name }}" — предзаполняем поле текущим именем робота #}
+                <input type="text" id="name" name="name" required
+                       value="{{ robot.name }}" class="form-input">
+            </div>
+            <div class="form-group">
+                <label for="manufacturer">Производитель</label>
+                {# value="{{ robot.manufacturer }}" — текущий производитель из базы #}
+                <input type="text" id="manufacturer" name="manufacturer" required
+                       value="{{ robot.manufacturer }}" class="form-input">
+            </div>
+        </div>
+
+        {# Строка с выпадающими списками: тип и статус #}
+        <div class="form-row">
+            <div class="form-group">
+                <label for="robot_type">Тип робота</label>
+                <select id="robot_type" name="robot_type" class="form-input">
+                    {% for t in robot_types %}
+                    {# {% if robot.robot_type == t %}selected{% endif %} —
+                       добавляем атрибут selected к пункту, который сохранён в базе
+                       (чтобы при открытии формы был выбран правильный вариант) #}
+                    <option value="{{ t }}" {% if robot.robot_type == t %}selected{% endif %}>
+                        {{ type_labels[t] }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="status">Статус</label>
+                <select id="status" name="status" class="form-input">
+                    {% for s in statuses %}
+                    {# Аналогично: выделяем текущий статус робота #}
+                    <option value="{{ s }}" {% if robot.status == s %}selected{% endif %}>
+                        {{ status_labels[s] }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+
+        {# Строка с числовыми параметрами #}
+        <div class="form-row form-row-3">
+            <div class="form-group">
+                <label for="payload_kg">Грузоподъёмность (кг)</label>
+                {# value="{{ robot.payload_kg }}" — текущая грузоподъёмность из базы #}
+                <input type="number" id="payload_kg" name="payload_kg" required
+                       step="0.1" min="0.1" max="2000"
+                       value="{{ robot.payload_kg }}" class="form-input">
+            </div>
+            <div class="form-group">
+                <label for="reach_mm">Радиус действия (мм)</label>
+                <input type="number" id="reach_mm" name="reach_mm" required
+                       min="100" max="5000"
+                       value="{{ robot.reach_mm }}" class="form-input">
+            </div>
+            <div class="form-group">
+                <label for="axes">Количество осей</label>
+                <select id="axes" name="axes" class="form-input">
+                    {# [4, 6, 7] — список значений оси прямо в шаблоне
+                       Перебираем числа 4, 6, 7 и выделяем текущее значение #}
+                    {% for n in [4, 6, 7] %}
+                    <option value="{{ n }}" {% if robot.axes == n %}selected{% endif %}>
+                        {{ n }} оси{% if n == 4 %}{% elif n > 4 %}{% endif %}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+
+        {# Поле описания: robot.description or "" — если описание None, показываем пустую строку #}
+        <div class="form-group">
+            <label for="description">Описание и область применения</label>
+            <textarea id="description" name="description" rows="3"
+                      class="form-input">{{ robot.description or "" }}</textarea>
+        </div>
+
+        {# Кнопки: сохранить или отменить #}
+        <div class="form-actions">
+            <button type="submit" class="btn">Сохранить изменения</button>
+            {# Отмена ведёт обратно на карточку этого робота #}
+            <a href="/robot/{{ robot.id }}" class="btn btn-sec">Отмена</a>
+        </div>
+    </form>
+</div>
+{% endblock %}

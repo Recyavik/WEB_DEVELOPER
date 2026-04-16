@@ -1,0 +1,389 @@
+/* ── Сброс стандартных стилей браузера ──────────────────────────────────── */
+/* * — применяется ко ВСЕМ элементам на странице */
+/* box-sizing: border-box — ширина элемента включает padding и border (удобнее считать) */
+/* margin: 0; padding: 0 — убираем стандартные отступы браузера */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* Стили для тега <body> — основной контейнер всего содержимого */
+body {
+    font-family: Arial, sans-serif; /* Шрифт страницы: Arial, запасной — любой без засечек */
+    background: #F8F7FF;            /* Цвет фона страницы — очень светло-фиолетовый */
+    color: #1E0A3C;                 /* Цвет текста по умолчанию — тёмно-фиолетовый */
+    min-height: 100vh;              /* Минимальная высота — 100% высоты экрана (vh = viewport height) */
+}
+
+/* ── Навигационная панель вверху страницы ───────────────────────────────── */
+.navbar {
+    background: #2E1065;                       /* Тёмно-фиолетовый фон панели навигации */
+    padding: 0.75rem 2rem;                     /* Внутренние отступы: 0.75rem сверху/снизу, 2rem слева/справа */
+    display: flex;                             /* Flexbox — элементы выстраиваются в строку */
+    align-items: center;                       /* Вертикальное выравнивание по центру */
+    justify-content: space-between;            /* Распределяем: логотип слева, ссылки справа */
+    box-shadow: 0 2px 8px rgba(46,16,101,0.4); /* Тень под панелью: смещение вниз 2px, размытие 8px */
+}
+/* Логотип/название в навигации */
+.nav-brand {
+    color: #fff;                 /* Белый текст */
+    font-size: 1.2rem;           /* Размер шрифта чуть больше стандартного */
+    font-weight: bold;           /* Жирный текст */
+    display: flex;               /* Flexbox для иконки и текста */
+    align-items: center;         /* Вертикальное выравнивание иконки с текстом */
+    gap: 8px;                    /* Расстояние между иконкой и текстом */
+}
+/* Размер иконки шестерёнки */
+.nav-icon { font-size: 1.3rem; }
+
+/* Ссылки в навигации */
+.nav-links a {
+    color: rgba(255,255,255,0.85); /* Почти белый (85% непрозрачности) */
+    text-decoration: none;         /* Убираем подчёркивание ссылок */
+    margin-left: 1.5rem;           /* Расстояние между ссылками */
+    font-size: 0.95rem;            /* Немного меньше стандартного размера */
+    transition: color .2s;         /* Плавное изменение цвета при наведении (0.2 секунды) */
+}
+/* При наведении мыши ссылки становятся светло-фиолетовыми */
+.nav-links a:hover { color: #C4B5FD; }
+
+/* ── Основной контейнер содержимого страницы ────────────────────────────── */
+.container {
+    max-width: 1200px;     /* Максимальная ширина — контент не растягивается шире 1200px */
+    margin: 0 auto;        /* Автоматические боковые отступы — центрирование */
+    padding: 2rem 1.5rem;  /* Внутренние отступы вокруг содержимого */
+}
+
+/* ── Заголовок страницы (заголовок + кнопка справа) ────────────────────── */
+.page-header {
+    display: flex;                 /* Flexbox */
+    align-items: flex-start;       /* Выравниваем по верхнему краю */
+    justify-content: space-between;/* Заголовок слева, кнопка справа */
+    margin-bottom: 1.5rem;         /* Отступ снизу до следующего блока */
+}
+/* Стиль заголовка h1 внутри page-header */
+.page-header h1 { font-size: 1.75rem; color: #2E1065; }
+/* Мелкий текст-подзаголовок под h1 */
+.page-sub { color: #6B7280; font-size: 0.9rem; margin-top: 4px; }
+
+/* ── Карточка (белый прямоугольник с закруглёнными углами) ──────────────── */
+.card {
+    background: #fff;                              /* Белый фон */
+    border-radius: 12px;                           /* Закруглённые углы 12px */
+    padding: 1.5rem;                               /* Внутренние отступы */
+    box-shadow: 0 2px 12px rgba(124,58,237,0.08);  /* Лёгкая тень */
+    border: 1px solid #EDE9FE;                     /* Тонкая фиолетовая рамка */
+}
+
+/* ── Панель фильтров ────────────────────────────────────────────────────── */
+.filter-bar {
+    display: flex;          /* Кнопки в ряд */
+    align-items: center;    /* Выравнивание по центру */
+    gap: 8px;               /* Расстояние между кнопками */
+    margin-bottom: 1.25rem; /* Отступ снизу */
+    flex-wrap: wrap;        /* Переносить кнопки на новую строку если не помещаются */
+}
+/* Текст "Фильтр по типу:" */
+.filter-label { font-size: 0.85rem; color: #6B7280; font-weight: bold; }
+/* Кнопка-фильтр (неактивная) */
+.filter-btn {
+    padding: 5px 14px;          /* Внутренние отступы */
+    border-radius: 20px;         /* Полностью скруглённые края (таблетка) */
+    border: 1px solid #DDD6FE;   /* Светло-фиолетовая рамка */
+    font-size: 0.82rem;          /* Маленький шрифт */
+    text-decoration: none;       /* Без подчёркивания */
+    color: #7C3AED;              /* Фиолетовый текст */
+    background: #fff;            /* Белый фон */
+    transition: all .2s;         /* Плавные переходы всех свойств */
+}
+/* При наведении — светлый фиолетовый фон */
+.filter-btn:hover { background: #F3F0FF; }
+/* Активная кнопка-фильтр — заполнена фиолетовым */
+.filter-btn.active { background: #7C3AED; color: #fff; border-color: #7C3AED; }
+
+/* ── Таблица роботов ────────────────────────────────────────────────────── */
+/* Обёртка со скроллом на узких экранах */
+.table-wrap { overflow-x: auto; border-radius: 12px; border: 1px solid #EDE9FE; }
+/* Сама таблица */
+.robot-table {
+    width: 100%;              /* Занимает всю доступную ширину */
+    border-collapse: collapse; /* Убираем двойные границы между ячейками */
+    background: #fff;
+}
+/* Заголовки столбцов таблицы */
+.robot-table th {
+    background: #2E1065;   /* Тёмно-фиолетовый фон */
+    color: #fff;            /* Белый текст */
+    text-align: left;       /* Выравнивание текста по левому краю */
+    padding: 10px 14px;     /* Отступы внутри ячейки заголовка */
+    font-size: 0.85rem;
+    font-weight: bold;
+}
+/* Ячейки данных */
+.robot-table td { padding: 10px 14px; border-bottom: 1px solid #F3F0FF; font-size: 0.9rem; }
+/* Убираем нижнюю границу у последней строки */
+.robot-table tr:last-child td { border-bottom: none; }
+/* При наведении строка слегка подсвечивается */
+.robot-table tr:hover td { background: #FAFAFA; }
+/* Ссылка на карточку робота */
+.robot-link { color: #7C3AED; text-decoration: none; font-weight: 500; }
+.robot-link:hover { text-decoration: underline; }
+/* Серый текст (для производителя) */
+.muted { color: #6B7280; }
+/* Числовые ячейки — выравнивание цифр */
+.num { font-variant-numeric: tabular-nums; color: #374151; } /* tabular-nums — цифры одинаковой ширины */
+/* Ячейка с кнопками действий */
+.actions { white-space: nowrap; display: flex; gap: 6px; align-items: center; } /* white-space: nowrap — не переносить кнопки */
+
+/* ── Тег типа робота ────────────────────────────────────────────────────── */
+/* Общий стиль для тегов */
+.tag { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 0.78rem; font-weight: bold; }
+/* Тег типа: светло-фиолетовый фон, тёмно-фиолетовый текст */
+.tag-type { background: #EDE9FE; color: #5B21B6; }
+
+/* ── Бейджи статусов ────────────────────────────────────────────────────── */
+.status-badge {
+    display: inline-block; /* Занимает только нужную ширину */
+    padding: 3px 10px;
+    border-radius: 20px;   /* Форма таблетки */
+    font-size: 0.78rem;
+    font-weight: bold;
+}
+/* Активен — зелёный */
+.status-active      { background: #D1FAE5; color: #065F46; }
+/* На обслуживании — жёлтый */
+.status-maintenance { background: #FEF3C7; color: #92400E; }
+/* Списан — красный */
+.status-retired     { background: #FEE2E2; color: #991B1B; }
+/* Увеличенный бейдж для детальной страницы */
+.status-lg { font-size: 0.9rem; padding: 6px 14px; }
+
+/* ── Кнопки ─────────────────────────────────────────────────────────────── */
+/* Основная кнопка — фиолетовая */
+.btn {
+    display: inline-block;  /* Ведёт себя как блок, но не занимает всю строку */
+    background: #7C3AED;    /* Фиолетовый фон */
+    color: #fff;            /* Белый текст */
+    padding: 8px 20px;      /* Отступы */
+    border-radius: 8px;     /* Закруглённые углы */
+    border: none;           /* Без рамки */
+    font-size: 0.9rem;
+    cursor: pointer;        /* Курсор-указатель при наведении */
+    text-decoration: none;  /* Для ссылок-кнопок: без подчёркивания */
+    transition: background .2s; /* Плавная смена цвета фона */
+}
+.btn:hover { background: #6D28D9; } /* Темнее при наведении */
+/* Вторичная кнопка — светлая */
+.btn-sec {
+    background: #F3F0FF;     /* Светло-фиолетовый фон */
+    color: #7C3AED;          /* Фиолетовый текст */
+    border: 1px solid #DDD6FE; /* Светлая рамка */
+}
+.btn-sec:hover { background: #EDE9FE; }
+/* Опасная кнопка — красная (для удаления) */
+.btn-danger { background: #EF4444; color: #fff; }
+.btn-danger:hover { background: #DC2626; }
+/* Маленькая кнопка (в ячейке таблицы) */
+.btn-sm {
+    display: inline-block;
+    padding: 4px 10px;        /* Меньше отступы */
+    border-radius: 6px;
+    font-size: 0.78rem;       /* Меньше шрифт */
+    cursor: pointer;
+    text-decoration: none;
+    border: 1px solid transparent;
+    transition: all .2s;
+}
+/* Кнопка-иконка (⟳ смена статуса) */
+.btn-icon {
+    background: none;            /* Прозрачный фон */
+    border: 1px solid #DDD6FE;   /* Светлая рамка */
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 1rem;
+    color: #7C3AED;
+    padding: 2px 7px;
+    transition: all .2s;
+}
+.btn-icon:hover { background: #EDE9FE; }
+
+/* ── Статистика по статусам (полоска внизу главной страницы) ────────────── */
+.status-stats {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;       /* Перенос на следующую строку если не помещается */
+    margin-top: 1.25rem;
+    padding: 12px 16px;
+    background: #fff;
+    border-radius: 10px;
+    border: 1px solid #EDE9FE;
+    font-size: 0.85rem;
+}
+.stats-label { color: #6B7280; font-weight: bold; }
+/* Цветная «таблетка» с числом */
+.stat-pill {
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 0.82rem;
+}
+/* Цвета таблеток для каждого статуса */
+.stat-active      { background: #D1FAE5; color: #065F46; }
+.stat-maintenance { background: #FEF3C7; color: #92400E; }
+.stat-retired     { background: #FEE2E2; color: #991B1B; }
+/* Ссылка "Подробная статистика" прижата вправо */
+.stat-link { margin-left: auto; color: #7C3AED; text-decoration: none; font-size: 0.82rem; }
+.stat-link:hover { text-decoration: underline; }
+
+/* ── Детальная карточка робота ──────────────────────────────────────────── */
+.detail-page { max-width: 720px; margin: 0 auto; } /* Ограничиваем ширину и центрируем */
+.detail-card { padding: 2rem; }                     /* Увеличенные внутренние отступы */
+.detail-header {
+    display: flex;
+    justify-content: space-between; /* Информация слева, статус справа */
+    align-items: flex-start;
+    margin-bottom: 1.75rem;
+}
+/* Тип робота над заголовком — маленькие заглавные буквы */
+.detail-type {
+    font-size: 0.82rem; color: #7C3AED; font-weight: bold;
+    text-transform: uppercase; /* Все буквы заглавные */
+    letter-spacing: .05em;     /* Небольшое расстояние между буквами */
+    margin-bottom: 4px;
+}
+.detail-header h1 { font-size: 1.75rem; color: #2E1065; }
+.detail-mfr { color: #6B7280; margin-top: 4px; }
+
+/* Сетка из 4 блоков с характеристиками */
+.spec-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr); /* 4 колонки одинаковой ширины */
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+/* Один блок характеристики */
+.spec-box {
+    background: #F8F7FF;
+    border-radius: 10px;
+    padding: 1rem;
+    text-align: center;
+    border: 1px solid #EDE9FE;
+    display: flex;
+    flex-direction: column; /* Элементы вертикально друг под другом */
+    align-items: center;
+}
+/* Большое число в блоке характеристики */
+.spec-val { font-size: 2rem; font-weight: bold; color: #7C3AED; line-height: 1; }
+/* Единица измерения (кг, мм, осей) */
+.spec-unit { font-size: 0.75rem; color: #A855F7; margin-top: 2px; }
+/* Подпись под числом */
+.spec-lbl { font-size: 0.72rem; color: #9CA3AF; margin-top: 6px; text-align: center; }
+
+/* Блок описания с фиолетовой полосой слева */
+.detail-desc {
+    border-left: 4px solid #A855F7; /* Вертикальная цветная полоса слева */
+    padding: 1rem 1rem 1rem 1.25rem;
+    background: #FAF5FF;
+    border-radius: 0 8px 8px 0; /* Закруглены только правые углы */
+    margin-bottom: 1rem;
+}
+.detail-desc h3 { font-size: 0.85rem; color: #7C3AED; margin-bottom: 6px; }
+/* Дата добавления — серый мелкий текст */
+.detail-date { font-size: 0.8rem; color: #9CA3AF; margin-bottom: 1.5rem; }
+
+/* Кнопки внизу карточки в ряд */
+.card-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding-top: 1rem;
+    border-top: 1px solid #F3F0FF; /* Разделительная линия над кнопками */
+}
+
+/* ── Стили формы ────────────────────────────────────────────────────────── */
+.form-page { max-width: 720px; margin: 0 auto; } /* Ограниченная ширина по центру */
+.form-page h1 { font-size: 1.75rem; margin-bottom: 6px; }
+.robot-form { margin-top: 1.25rem; }
+.form-group { margin-bottom: 1.1rem; flex: 1; } /* flex: 1 — занимает равную долю строки */
+.form-row { display: flex; gap: 1rem; }         /* Поля в одну строку с промежутком */
+.form-row-3 .form-group { min-width: 0; }       /* Предотвращает выход за ширину на узких экранах */
+/* Подпись поля */
+label { display: block; font-size: 0.84rem; font-weight: bold; color: #374151; margin-bottom: 5px; }
+/* Стили для input, select, textarea */
+.form-input {
+    width: 100%;             /* Занимает всю ширину родителя */
+    padding: 8px 12px;       /* Внутренние отступы для удобного ввода */
+    border: 1px solid #D1D5DB; /* Серая рамка */
+    border-radius: 8px;
+    font-size: 0.95rem;
+    color: #111827;
+    background: #fff;
+    transition: border-color .2s; /* Плавная смена цвета рамки */
+}
+/* При фокусе (когда пользователь кликает на поле) — фиолетовая рамка и свечение */
+.form-input:focus {
+    outline: none;                            /* Убираем стандартный браузерный контур */
+    border-color: #7C3AED;                    /* Фиолетовая рамка */
+    box-shadow: 0 0 0 3px rgba(124,58,237,.1); /* Лёгкий фиолетовый ореол */
+}
+/* Кнопки формы в ряд с разделительной линией */
+.form-actions { display: flex; gap: 10px; margin-top: 1.5rem; padding-top: 1.25rem; border-top: 1px solid #F3F0FF; }
+
+/* ── KPI-карточки на странице статистики ────────────────────────────────── */
+/* 3 карточки в ряд */
+.kpi-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-bottom: 1.5rem; }
+/* Одна KPI-карточка */
+.kpi-card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 1.25rem;
+    text-align: center;      /* Всё по центру */
+    border: 1px solid #EDE9FE;
+    box-shadow: 0 2px 8px rgba(124,58,237,.06);
+}
+/* Большое число в KPI */
+.kpi-val { font-size: 2.5rem; font-weight: bold; color: #7C3AED; }
+/* Подпись под числом */
+.kpi-lbl { font-size: 0.85rem; color: #6B7280; margin-top: 4px; }
+
+/* Сетка таблиц статистики: 2 колонки */
+.stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr; /* 2 равные колонки */
+    gap: 1rem;
+}
+.stats-card { }
+/* Широкая карточка — растягивается на обе колонки */
+.stats-card-wide { grid-column: 1 / -1; } /* от первой до последней колонки */
+.stats-card h2 { font-size: 1rem; color: #2E1065; margin-bottom: 1rem; }
+/* Таблица внутри карточки статистики */
+.stats-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+.stats-table th {
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 2px solid #EDE9FE; /* Двойная нижняя граница под заголовком */
+    color: #6B7280;
+    font-size: 0.8rem;
+    text-transform: uppercase;  /* Заглавные буквы */
+    letter-spacing: .04em;      /* Небольшой межбуквенный интервал */
+}
+.stats-table td { padding: 8px 10px; border-bottom: 1px solid #F3F0FF; }
+/* Контейнер для прогресс-бара */
+.bar-row { display: flex; align-items: center; gap: 8px; }
+/* Сам прогресс-бар */
+.bar {
+    height: 10px;         /* Высота полоски */
+    border-radius: 5px;   /* Скруглённые края */
+    background: #7C3AED;  /* Фиолетовый цвет по умолчанию */
+    min-width: 4px;       /* Минимум 4px даже если значение очень маленькое */
+    max-width: 180px;     /* Не шире 180px */
+    transition: width .3s; /* Плавное изменение ширины */
+}
+/* Цвета для разных статусов в прогресс-барах */
+.bar-maintenance { background: #F59E0B; } /* Жёлтый */
+.bar-retired     { background: #EF4444; } /* Красный */
+
+/* ── Пустое состояние (когда нет роботов) ───────────────────────────────── */
+.empty-state {
+    text-align: center;  /* Всё по центру */
+    padding: 4rem 2rem;  /* Большие отступы для красивого расположения */
+    color: #9CA3AF;      /* Серый текст */
+}
+.empty-state p { margin-bottom: 1rem; font-size: 1.05rem; }

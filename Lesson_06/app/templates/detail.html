@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}{{ athlete.name }} — FitnessClub{% endblock %}
+
+{% block content %}
+<div class="detail-page">
+    <div class="card detail-card">
+        <div class="detail-header">
+            <div>
+                <h1>{{ athlete.name }}</h1>
+                <p class="athlete-sport">🏅 {{ athlete.sport }}</p>
+            </div>
+            <div class="card-level card-level--{{ athlete.level }} level-big">
+                {% if athlete.level == "beginner" %}Начинающий
+                {% elif athlete.level == "intermediate" %}Средний
+                {% else %}Продвинутый
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="detail-stats">
+            <div class="stat-box">
+                <span class="stat-value">{{ athlete.age }}</span>
+                <span class="stat-label">лет</span>
+            </div>
+            <div class="stat-box">
+                <span class="stat-value">{{ athlete.weight }}</span>
+                <span class="stat-label">кг</span>
+            </div>
+            <div class="stat-box">
+                <span class="stat-value">{{ athlete.height }}</span>
+                <span class="stat-label">см</span>
+            </div>
+        </div>
+
+        {% if athlete.goals %}
+        <div class="detail-goals">
+            <h3>🎯 Цели тренировок</h3>
+            <p>{{ athlete.goals }}</p>
+        </div>
+        {% endif %}
+
+        <p class="detail-date">Зарегистрирован: {{ athlete.created_at.strftime('%d.%m.%Y') }}</p>
+
+        <div class="card-actions">
+            <a href="/edit/{{ athlete.id }}" class="btn">Редактировать</a>
+            <form method="post" action="/delete/{{ athlete.id }}" style="display:inline"
+                  onsubmit="return confirm('Удалить спортсмена?')">
+                <button type="submit" class="btn btn-danger">Удалить</button>
+            </form>
+            <a href="/" class="btn btn-secondary">Назад к списку</a>
+        </div>
+    </div>
+</div>
+{% endblock %}

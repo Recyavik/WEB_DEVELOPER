@@ -1,0 +1,92 @@
+{# Наследуемся от base.html #}
+{% extends "base.html" %}
+
+{# Заголовок вкладки: имя конкретного робота — "KUKA KR 6 R900 — RobotCatalog" #}
+{% block title %}{{ robot.name }} — RobotCatalog{% endblock %}
+
+{% block content %}
+{# Обёртка со стилем для детальной страницы (ограниченная ширина по центру) #}
+<div class="detail-page">
+    <div class="card detail-card">
+
+        {# Шапка карточки: тип, название, производитель слева; статус справа #}
+        <div class="detail-header">
+            <div>
+                {# Тип робота маленькими заглавными буквами над названием #}
+                <div class="detail-type">{{ type_labels.get(robot.robot_type, robot.robot_type) }}</div>
+                {# Название модели крупным шрифтом #}
+                <h1>{{ robot.name }}</h1>
+                {# Производитель серым цветом под названием #}
+                <p class="detail-mfr">{{ robot.manufacturer }}</p>
+            </div>
+            {# Цветной бейдж статуса справа: status-lg делает его крупнее чем в таблице #}
+            <span class="status-badge status-{{ robot.status }} status-lg">
+                {{ status_labels.get(robot.status, robot.status) }}
+            </span>
+        </div>
+
+        {# Сетка из четырёх блоков с ключевыми характеристиками #}
+        <div class="spec-grid">
+            {# Блок 1: грузоподъёмность #}
+            <div class="spec-box">
+                <span class="spec-val">{{ robot.payload_kg }}</span>  {# большое число #}
+                <span class="spec-unit">кг</span>                     {# единица измерения #}
+                <span class="spec-lbl">Грузоподъёмность</span>        {# подпись снизу #}
+            </div>
+            {# Блок 2: радиус действия #}
+            <div class="spec-box">
+                <span class="spec-val">{{ robot.reach_mm }}</span>
+                <span class="spec-unit">мм</span>
+                <span class="spec-lbl">Радиус действия</span>
+            </div>
+            {# Блок 3: количество осей #}
+            <div class="spec-box">
+                <span class="spec-val">{{ robot.axes }}</span>
+                <span class="spec-unit">осей</span>
+                <span class="spec-lbl">Степени свободы</span>
+            </div>
+            {# Блок 4: нагрузка на одну ось — вычисляемая характеристика #}
+            <div class="spec-box">
+                {# Делим грузоподъёмность на количество осей и округляем до 1 знака
+                   | round(1) — фильтр Jinja2, аналог round() в Python #}
+                <span class="spec-val">{{ (robot.payload_kg / robot.axes) | round(1) }}</span>
+                <span class="spec-unit">кг/ось</span>
+                <span class="spec-lbl">Нагрузка на ось</span>
+            </div>
+        </div>
+
+        {# Блок с описанием показывается только если описание заполнено (не None и не пустая строка) #}
+        {% if robot.description %}
+        <div class="detail-desc">
+            <h3>Описание и применение</h3>
+            <p>{{ robot.description }}</p>
+        </div>
+        {% endif %}
+
+        {# Дата добавления в каталог #}
+        {# robot.added_at — объект datetime из Python
+           .strftime('%d.%m.%Y') — форматируем дату: день.месяц.год (например: 15.04.2026) #}
+        <p class="detail-date">Добавлен в каталог: {{ robot.added_at.strftime('%d.%m.%Y') }}</p>
+
+        {# Кнопки действий внизу карточки #}
+        <div class="card-actions">
+            {# Ссылка на форму редактирования #}
+            <a href="/edit/{{ robot.id }}" class="btn">Редактировать</a>
+
+            {# Форма смены статуса — одна кнопка, отправляет POST #}
+            <form method="post" action="/toggle-status/{{ robot.id }}" style="display:inline">
+                <button type="submit" class="btn btn-sec">Сменить статус</button>
+            </form>
+
+            {# Форма удаления с подтверждением через JavaScript #}
+            <form method="post" action="/delete/{{ robot.id }}" style="display:inline"
+                  onsubmit="return confirm('Удалить робота {{ robot.name }}?')">
+                <button type="submit" class="btn btn-danger">Удалить</button>
+            </form>
+
+            {# Кнопка "Назад" — возвращает на главную страницу #}
+            <a href="/" class="btn btn-sec">Назад</a>
+        </div>
+    </div>
+</div>
+{% endblock %}

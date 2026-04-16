@@ -1,0 +1,133 @@
+{# Наследуемся от base.html — используем его шапку, навигацию и общую структуру #}
+{% extends "base.html" %}
+
+{# Переопределяем заголовок вкладки браузера для этой страницы #}
+{% block title %}Каталог промышленных роботов{% endblock %}
+
+{# Весь уникальный контент главной страницы помещаем в block content #}
+{% block content %}
+
+{# Заголовок страницы с кнопкой добавления #}
+<div class="page-header">
+    <div>
+        <h1>Парк промышленных роботов</h1>
+        <p class="page-sub">Управление оборудованием предприятия</p>
+    </div>
+    {# Кнопка-ссылка для перехода на форму добавления робота #}
+    <a href="/create" class="btn">+ Добавить робота</a>
+</div>
+
+{# Панель фильтрации по типу робота #}
+<div class="filter-bar">
+    <span class="filter-label">Фильтр по типу:</span>
+
+    {# Кнопка "Все" — ссылка на / без параметра type
+       Если current_type пуст (фильтр не выбран) — добавляем класс active (подсветка) #}
+    <a href="/" class="filter-btn {% if not current_type %}active{% endif %}">Все</a>
+
+    {# Перебираем все типы роботов из списка robot_types #}
+    {% for t in robot_types %}
+    {# Для каждого типа создаём ссылку с параметром ?type=... в URL
+       Если этот тип совпадает с выбранным — добавляем класс active #}
+    <a href="/?type={{ t }}" class="filter-btn {% if current_type == t %}active{% endif %}">
+        {{ type_labels[t] }}  {# Русское название типа из словаря type_labels #}
+    </a>
+    {% endfor %}
+</div>
+
+{# Если список роботов не пуст — показываем таблицу #}
+{% if robots %}
+<div class="table-wrap">
+    <table class="robot-table">
+        {# Заголовки столбцов таблицы #}
+        <thead>
+            <tr>
+                <th>Название</th>
+                <th>Производитель</th>
+                <th>Тип</th>
+                <th>Нагрузка, кг</th>
+                <th>Радиус, мм</th>
+                <th>Оси</th>
+                <th>Статус</th>
+                <th>Действия</th>
+            </tr>
+        </thead>
+        <tbody>
+            {# Перебираем каждый объект робота из списка robots, переданного из main.py #}
+            {% for robot in robots %}
+            <tr>
+                <td>
+                    {# Название робота — кликабельная ссылка на его детальную карточку #}
+                    <a href="/robot/{{ robot.id }}" class="robot-link">{{ robot.name }}</a>
+                </td>
+                <td class="muted">{{ robot.manufacturer }}</td>  {# Производитель #}
+                <td>
+                    {# Тег с типом робота; type_labels.get() ищет русское название,
+                       если не найдено — показывает код (robot.robot_type) как запасной вариант #}
+                    <span class="tag tag-type">{{ type_labels.get(robot.robot_type, robot.robot_type) }}</span>
+                </td>
+                <td class="num">{{ robot.payload_kg }}</td>  {# Грузоподъёмность #}
+                <td class="num">{{ robot.reach_mm }}</td>    {# Радиус действия #}
+                <td class="num">{{ robot.axes }}</td>        {# Количество осей #}
+                <td>
+                    {# Цветной бейдж статуса; class status-{{ robot.status }} даёт нужный цвет из CSS #}
+                    <span class="status-badge status-{{ robot.status }}">
+                        {{ status_labels.get(robot.status, robot.status) }}
+                    </span>
+                </td>
+                <td class="actions">
+                    {# Мини-форма для быстрой смены статуса одним нажатием #}
+                    {# method="post" — отправляет POST-запрос (изменение данных)
+                       action — URL, куда отправляется форма #}
+                    <form method="post" action="/toggle-status/{{ robot.id }}" style="display:inline">
+                        {# Кнопка ⟳ — символ "обновить", нажимается без перезагрузки страницы #}
+                        <button type="submit" class="btn-icon" title="Сменить статус">⟳</button>
+                    </form>
+
+                    {# Ссылка-кнопка на форму редактирования #}
+                    <a href="/edit/{{ robot.id }}" class="btn-sm btn-sec">Изменить</a>
+
+                    {# Форма удаления — показывает диалог подтверждения перед удалением #}
+                    <form method="post" action="/delete/{{ robot.id }}" style="display:inline"
+                          onsubmit="return confirm('Удалить робота {{ robot.name }}?')">
+                        {# onsubmit — JavaScript: спрашивает подтверждение; если нажать "Отмена" — форма не отправится #}
+                        <button type="submit" class="btn-sm btn-danger">Удалить</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}  {# Конец цикла по роботам #}
+        </tbody>
+    </table>
+</div>
+
+{# Мини-статистика по статусам внизу страницы #}
+<div class="status-stats">
+    <span class="stats-label">Статистика парка:</span>
+    {# Перебираем пары (статус, количество) из stats_status #}
+    {% for status, count in stats_status %}
+    {# Для каждого статуса показываем цветной бейдж с количеством роботов #}
+    <span class="stat-pill stat-{{ status }}">
+        {{ status_labels.get(status, status) }}: <strong>{{ count }}</strong>
+    </span>
+    {% endfor %}
+    {# Ссылка на страницу подробной статистики #}
+    <a href="/stats" class="stat-link">Подробная статистика →</a>
+</div>
+
+{# else — если список robots пуст (нет роботов или ни один не прошёл фильтр) #}
+{% else %}
+<div class="empty-state">
+    {# Разные сообщения в зависимости от того, активен ли фильтр #}
+    <p>{% if current_type %}Роботов типа «{{ type_labels.get(current_type, current_type) }}» не найдено.
+    {% else %}Каталог пуст. Добавьте первого робота.{% endif %}</p>
+
+    {# Если был применён фильтр — предлагаем сбросить его, иначе — добавить робота #}
+    {% if current_type %}
+    <a href="/" class="btn btn-sec">Показать всех</a>
+    {% else %}
+    <a href="/create" class="btn">Добавить робота</a>
+    {% endif %}
+</div>
+{% endif %}  {# Конец условия if robots #}
+
+{% endblock %}  {# Конец block content #}

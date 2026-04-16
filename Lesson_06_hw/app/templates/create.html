@@ -1,0 +1,106 @@
+{# Наследуемся от base.html — используем общую структуру страницы #}
+{% extends "base.html" %}
+
+{# Заголовок вкладки браузера для страницы создания #}
+{% block title %}Добавить робота — RobotCatalog{% endblock %}
+
+{% block content %}
+{# Обёртка для ограничения ширины формы (через CSS класс form-page) #}
+<div class="form-page">
+    <h1>Добавить робота в каталог</h1>
+
+    {# HTML-форма: метод POST — данные уходят на сервер
+       action="/create" — URL, куда будет отправлена форма (роут @app.post("/create"))
+       class="robot-form card" — CSS-классы для стилизации #}
+    <form method="post" action="/create" class="robot-form card">
+
+        {# Первая строка с двумя полями: название и производитель #}
+        <div class="form-row">
+            <div class="form-group">
+                {# label for="name" — подпись поля; for= связывает подпись с полем через id #}
+                <label for="name">Название модели</label>
+                {# type="text" — обычное текстовое поле
+                   id="name" — уникальный идентификатор (для label)
+                   name="name" — имя параметра, которое придёт в Python как Form(name=...)
+                   required — браузер не позволит отправить форму без заполнения этого поля
+                   placeholder — подсказка, что вводить (исчезает при наборе текста) #}
+                <input type="text" id="name" name="name" required
+                       placeholder="KUKA KR 6 R900" class="form-input">
+            </div>
+            <div class="form-group">
+                <label for="manufacturer">Производитель</label>
+                <input type="text" id="manufacturer" name="manufacturer" required
+                       placeholder="KUKA, ABB, FANUC..." class="form-input">
+            </div>
+        </div>
+
+        {# Вторая строка: тип робота и статус — оба выпадающих списка #}
+        <div class="form-row">
+            <div class="form-group">
+                <label for="robot_type">Тип робота</label>
+                {# select — выпадающий список; name="robot_type" — имя параметра в Python #}
+                <select id="robot_type" name="robot_type" class="form-input">
+                    {# Генерируем пункты списка из переменной robot_types #}
+                    {% for t in robot_types %}
+                    {# value="{{ t }}" — значение, которое будет отправлено на сервер (код типа)
+                       {{ type_labels[t] }} — русское название, которое видит пользователь #}
+                    <option value="{{ t }}">{{ type_labels[t] }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="status">Статус</label>
+                <select id="status" name="status" class="form-input">
+                    {% for s in statuses %}
+                    <option value="{{ s }}">{{ status_labels[s] }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+
+        {# Третья строка: числовые характеристики — нагрузка, радиус, оси #}
+        <div class="form-row form-row-3">
+            <div class="form-group">
+                <label for="payload_kg">Грузоподъёмность (кг)</label>
+                {# type="number" — только числа; step="0.1" — можно вводить десятые доли
+                   min="0.1" — минимально допустимое значение
+                   max="2000" — максимально допустимое значение #}
+                <input type="number" id="payload_kg" name="payload_kg" required
+                       step="0.1" min="0.1" max="2000" class="form-input">
+            </div>
+            <div class="form-group">
+                <label for="reach_mm">Радиус действия (мм)</label>
+                <input type="number" id="reach_mm" name="reach_mm" required
+                       min="100" max="5000" class="form-input">
+            </div>
+            <div class="form-group">
+                <label for="axes">Количество осей</label>
+                <select id="axes" name="axes" class="form-input">
+                    <option value="4">4 оси</option>
+                    {# selected — этот пункт выбран по умолчанию при открытии формы #}
+                    <option value="6" selected>6 осей</option>
+                    <option value="7">7 осей</option>
+                </select>
+            </div>
+        </div>
+
+        {# Поле описания — занимает всю ширину формы, необязательное #}
+        <div class="form-group">
+            <label for="description">Описание и область применения (необязательно)</label>
+            {# textarea — многострочное текстовое поле
+               rows="3" — начальная высота поля (3 строки) #}
+            <textarea id="description" name="description" rows="3"
+                      placeholder="Применяется для точечной сварки кузовов автомобилей..."
+                      class="form-input"></textarea>
+        </div>
+
+        {# Кнопки действий в нижней части формы #}
+        <div class="form-actions">
+            {# type="submit" — кнопка отправки формы #}
+            <button type="submit" class="btn">Сохранить</button>
+            {# Ссылка-кнопка "Отмена" — просто возвращает на главную, форма не отправляется #}
+            <a href="/" class="btn btn-sec">Отмена</a>
+        </div>
+    </form>
+</div>
+{% endblock %}
