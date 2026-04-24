@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Бортовой журнал МКС{% endblock %}
+
+{% block content %}
+<div class="container">
+
+    <div class="hero">
+        <h1>&#128752; Бортовой журнал МКС</h1>
+        <p>Система документирования операций на Международной космической станции</p>
+        <div style="display:flex; gap:1rem; justify-content:center; flex-wrap:wrap;">
+            <a href="/log" class="btn btn-secondary">&#128218; Открыть журнал</a>
+            <a href="/history" class="btn btn-outline" style="border-color:#C4B5FD; color:#C4B5FD;">
+                &#128203; История миграций
+            </a>
+        </div>
+    </div>
+
+    <div class="card mb-3">
+        <h2>&#128736; Что такое Alembic?</h2>
+        <p>
+            <strong>Alembic</strong> — это инструмент для <em>версионирования схемы базы данных</em>.
+            Представьте: ваш сервер уже работает, в базе хранятся сотни записей экипажа МКС.
+            И вам нужно добавить новое поле — например, уровень радиации.
+        </p>
+        <div class="analogy-block">
+            <strong>Аналогия:</strong> Alembic — это журнал технического обслуживания МКС.
+            Каждое изменение конструкции записано: что добавили, когда, кто подписал.
+            Если новый модуль не подошёл — разбираем по инструкции обратно.
+        </div>
+        <p>
+            Без Alembic пришлось бы удалять таблицу вместе с данными.
+            С Alembic — вы просто добавляете новую <em>миграцию</em>, и база обновляется безопасно.
+        </p>
+    </div>
+
+    <div class="card text-center" style="max-width:300px; margin:0 auto;">
+        <div style="font-size:2.5rem; margin-bottom:0.4rem;">&#128221;</div>
+        <div style="font-size:2.4rem; font-weight:700; color:var(--accent);">{{ total }}</div>
+        <div class="text-muted">записей в журнале</div>
+    </div>
+
+</div>
+{% endblock %}

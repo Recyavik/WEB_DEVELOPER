@@ -1,0 +1,194 @@
+{% extends "base.html" %}
+{% block title %}Журнал — Бортовой журнал МКС{% endblock %}
+
+{% block content %}
+<div class="container">
+
+    <!-- ─── Заголовок страницы ───────────────────────────────────────────── -->
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.5rem;">
+        <div>
+            <h1>&#128218; Бортовой журнал</h1>
+            <p class="text-muted">Записи экипажа Международной космической станции</p>
+        </div>
+        <div style="font-size:0.85rem; color:#6B7280; text-align:right;">
+            Записей: <strong style="color:#7C3AED;">{{ entries|length }}</strong>
+        </div>
+    </div>
+
+    <div class="grid-2" style="align-items:start; gap:2rem;">
+
+        <!-- ─── Левая колонка: форма добавления ─────────────────────────── -->
+        <div>
+            <div class="card">
+                <h2 style="margin-bottom:1rem;">&#9998; Новая запись</h2>
+
+                <!-- Форма отправляется методом POST на /log/add -->
+                <!-- action="/log/add" — URL обработчика -->
+                <!-- method="post"     — HTTP-метод -->
+                <form action="/log/add" method="post">
+
+                    <!-- Поле: имя космонавта -->
+                    <div class="form-group">
+                        <label class="form-label" for="author">&#128100; Автор записи</label>
+                        <input
+                            type="text"
+                            id="author"
+                            name="author"
+                            class="form-control"
+                            placeholder="Иванов Александр Николаевич"
+                            required
+                            maxlength="100"
+                        >
+                    </div>
+
+                    <!-- Поле: тип миссии (появилось в миграции 003) -->
+                    <div class="form-group">
+                        <label class="form-label" for="mission_type">&#128301; Тип операции</label>
+                        <select name="mission_type" id="mission_type" class="form-control">
+                            <!-- Перебираем словарь MISSION_TYPES из Python -->
+                            {% for key, label in mission_types.items() %}
+                            <option value="{{ key }}">{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <!-- Поле: уровень радиации (появилось в миграции 002) -->
+                    <div class="form-group">
+                        <label class="form-label" for="radiation_level">
+                            &#9762; Радиация (мкЗв/ч)
+                        </label>
+                        <input
+                            type="number"
+                            id="radiation_level"
+                            name="radiation_level"
+                            class="form-control"
+                            placeholder="0.0"
+                            step="0.1"
+                            min="0"
+                            max="1000"
+                            value="0.0"
+                        >
+                        <small class="text-muted">
+                            Норма на МКС: 5–10 мкЗв/ч (в 10–20 раз выше, чем на Земле)
+                        </small>
+                    </div>
+
+                    <!-- Поле: текст записи -->
+                    <div class="form-group">
+                        <label class="form-label" for="content">&#128221; Запись в журнале</label>
+                        <textarea
+                            id="content"
+                            name="content"
+                            class="form-control"
+                            rows="4"
+                            placeholder="Опишите проведённую операцию, наблюдение или событие..."
+                            required
+                        ></textarea>
+                    </div>
+
+                    <!-- Кнопка отправки -->
+                    <button type="submit" class="btn btn-primary" style="width:100%;">
+                        &#128640; Добавить запись в журнал
+                    </button>
+                </form>
+            </div>
+
+            <!-- Подсказка о радиации -->
+            <div class="info-block tip mt-2">
+                <strong>Норма радиации на МКС:</strong><br>
+                0–5 мкЗв/ч — низкий уровень<br>
+                5–15 мкЗв/ч — нормальный для орбиты<br>
+                15+ мкЗв/ч — повышенный (вспышка, ЮАА)
+            </div>
+        </div>
+
+        <!-- ─── Правая колонка: список записей ──────────────────────────── -->
+        <div>
+
+            <!-- Фильтр по типу миссии -->
+            <div class="filter-bar">
+                <span style="font-size:0.85rem; color:#6B7280; margin-right:0.3rem;">Фильтр:</span>
+                <!-- Ссылка «Все» — без параметра ?mission= -->
+                <a href="/log"
+                   class="filter-btn {% if not current_mission %}active{% endif %}">
+                    Все
+                </a>
+                <!-- Ссылки для каждого типа миссии -->
+                {% for key, label in mission_types.items() %}
+                <a href="/log?mission={{ key }}"
+                   class="filter-btn {% if current_mission == key %}active{% endif %}">
+                    {{ label }}
+                </a>
+                {% endfor %}
+            </div>
+
+            <!-- Список записей журнала -->
+            {% if entries %}
+                {% for entry in entries %}
+                <div class="log-entry">
+                    <div class="log-entry-header">
+                        <!-- Имя автора -->
+                        <span class="log-entry-author">{{ entry.author }}</span>
+
+                        <div class="log-entry-meta">
+                            <!-- Бейдж типа миссии -->
+                            <span class="mission-badge mission-{{ entry.mission_type }}">
+                                {% if entry.mission_type == 'science' %}&#128300; Наука
+                                {% elif entry.mission_type == 'repair' %}&#128736; Ремонт
+                                {% elif entry.mission_type == 'comms' %}&#128225; Связь
+                                {% elif entry.mission_type == 'medical' %}&#10010; Медицина
+                                {% else %}&#128296; Прочее{% endif %}
+                            </span>
+
+                            <!-- Бейдж радиации — цвет зависит от уровня -->
+                            {% if entry.radiation_level is not none %}
+                                {% if entry.radiation_level < 5 %}
+                                    <span class="radiation-badge radiation-low">
+                                        &#9762; {{ "%.1f"|format(entry.radiation_level) }} мкЗв/ч
+                                    </span>
+                                {% elif entry.radiation_level < 15 %}
+                                    <span class="radiation-badge radiation-medium">
+                                        &#9762; {{ "%.1f"|format(entry.radiation_level) }} мкЗв/ч
+                                    </span>
+                                {% else %}
+                                    <span class="radiation-badge radiation-high">
+                                        &#9762; {{ "%.1f"|format(entry.radiation_level) }} мкЗв/ч
+                                    </span>
+                                {% endif %}
+                            {% endif %}
+
+                            <!-- Дата и время -->
+                            <span class="log-entry-date">
+                                {% if entry.created_at %}
+                                    {{ entry.created_at.strftime('%d.%m.%Y %H:%M') }}
+                                {% endif %}
+                            </span>
+                        </div>
+                    </div>
+
+                    <!-- Текст записи -->
+                    <div class="log-entry-content">{{ entry.content }}</div>
+                </div>
+                {% endfor %}
+
+            {% else %}
+                <!-- Пустое состояние — записей нет -->
+                <div class="card text-center" style="padding:3rem;">
+                    <div style="font-size:3rem; margin-bottom:1rem;">&#128203;</div>
+                    <h3>Журнал пуст</h3>
+                    <p class="text-muted">
+                        {% if current_mission %}
+                            Нет записей с типом «{{ mission_types.get(current_mission, current_mission) }}».<br>
+                            <a href="/log">Показать все записи</a>
+                        {% else %}
+                            Экипаж ещё не сделал ни одной записи.<br>
+                            Используйте форму слева, чтобы добавить первую!
+                        {% endif %}
+                    </p>
+                </div>
+            {% endif %}
+
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,35 @@
+services:
+
+  # ─── Сервис базы данных PostgreSQL ───────────────────────────────────────
+  db:
+    image: postgres:15                          # Официальный образ PostgreSQL 15
+    environment:
+      POSTGRES_USER: mks_user                   # Имя пользователя БД
+      POSTGRES_PASSWORD: mks_pass               # Пароль пользователя
+      POSTGRES_DB: mks_db                       # Имя базы данных
+    volumes:
+      - pgdata:/var/lib/postgresql/data         # Том для хранения данных между перезапусками
+    healthcheck:                                # Проверка готовности PostgreSQL
+      test: ["CMD-SHELL", "pg_isready -U mks_user -d mks_db"]
+      interval: 5s                              # Проверять каждые 5 секунд
+      timeout: 5s                               # Таймаут одной проверки
+      retries: 5                                # Количество попыток до признания unhealthy
+
+  # ─── Сервис FastAPI-приложения ────────────────────────────────────────────
+  web:
+    build: .                                    # Собрать образ из Dockerfile в текущей папке
+    ports:
+      - "8000:8000"                             # Пробрасываем порт: хост:контейнер
+    environment:
+      DATABASE_URL: postgresql://mks_user:mks_pass@db:5432/mks_db
+      #                                         # URL подключения к PostgreSQL
+      #                                         # db — имя сервиса (Docker разрешит DNS)
+    depends_on:
+      db:
+        condition: service_healthy              # Ждём, пока PostgreSQL не будет готов
+    volumes:
+      - .:/app                                  # Монтируем код для горячей перезагрузки
+
+# ─── Именованные тома ─────────────────────────────────────────────────────
+volumes:
+  pgdata:                                       # Данные PostgreSQL сохраняются между запусками

@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}История миграций — Бортовой журнал МКС{% endblock %}
+
+{% block content %}
+<div class="container">
+
+    <!-- ─── Заголовок ───────────────────────────────────────────────────── -->
+    <h1>&#128203; История миграций Alembic</h1>
+    <p class="text-muted mb-3">
+        Здесь показаны все изменения схемы базы данных, применённые в этом проекте.
+        Данные получены командами <code>alembic current</code> и <code>alembic history</code>.
+    </p>
+
+    <!-- ─── Текущая версия БД ───────────────────────────────────────────── -->
+    <div class="card mb-3">
+        <h2>&#128204; Текущая версия базы данных</h2>
+        <p class="text-muted mb-1">Результат команды: <code>alembic current</code></p>
+        <div class="code-block">{{ current_version }}</div>
+
+    </div>
+
+    <!-- ─── Полная история ───────────────────────────────────────────────── -->
+    <div class="card mb-3">
+        <h2>&#128196; Полная история версий</h2>
+        <p class="text-muted mb-1">Результат команды: <code>alembic history --verbose</code></p>
+        <div class="code-block">{{ history_text }}</div>
+    </div>
+
+    <!-- ─── Визуальная цепочка версий ───────────────────────────────────── -->
+    <h2 class="section-title">&#128279; Цепочка версий этого проекта</h2>
+
+    <div style="display:flex; flex-direction:column; gap:0; max-width:700px;">
+
+        <!-- Начало: пустая БД -->
+        <div style="
+            padding:0.8rem 1.2rem;
+            background:#F3F4F6;
+            border-radius:8px;
+            color:#6B7280;
+            font-family: 'Courier New', monospace;
+            font-size:0.9rem;
+            margin-bottom:0;
+        ">
+            None — пустая база данных (до первой миграции)
+        </div>
+
+        <!-- Стрелка -->
+        <div style="
+            width:2px; height:30px; background:#7C3AED;
+            margin-left:1.5rem;
+        "></div>
+
+        <!-- Версия 1 -->
+        <div class="version-card" style="max-width:700px;">
+            <div class="version-id">001_init</div>
+            <div style="font-weight:600; margin-bottom:0.3rem;">
+                create log_entries table
+            </div>
+            <div style="font-size:0.87rem; color:#374151; margin-bottom:0.3rem;">
+                Создана таблица <code>log_entries</code> с полями:
+                <code>id</code>, <code>author</code>, <code>content</code>, <code>created_at</code>
+            </div>
+            <div style="font-size:0.82rem; color:#6B7280;">
+                upgrade: op.create_table('log_entries', ...)&nbsp;&nbsp;|&nbsp;&nbsp;
+                downgrade: op.drop_table('log_entries')
+            </div>
+        </div>
+
+        <!-- Стрелка -->
+        <div style="
+            width:2px; height:30px; background:#7C3AED;
+            margin-left:1.5rem;
+        "></div>
+
+        <!-- Версия 2 -->
+        <div class="version-card" style="max-width:700px;">
+            <div class="version-id">002_add_radiation</div>
+            <div style="font-weight:600; margin-bottom:0.3rem;">
+                add radiation_level to log_entries
+            </div>
+            <div style="font-size:0.87rem; color:#374151; margin-bottom:0.3rem;">
+                Добавлено поле <code>radiation_level</code> (Float, nullable=True).
+                Существующие записи получили <code>NULL</code> — данные сохранены!
+            </div>
+            <div style="font-size:0.82rem; color:#6B7280;">
+                upgrade: op.add_column('log_entries', Column('radiation_level', Float(), nullable=True))&nbsp;&nbsp;|&nbsp;&nbsp;
+                downgrade: op.drop_column('log_entries', 'radiation_level')
+            </div>
+        </div>
+
+        <!-- Стрелка -->
+        <div style="
+            width:2px; height:30px; background:#7C3AED;
+            margin-left:1.5rem;
+        "></div>
+
+        <!-- Версия 3 — HEAD -->
+        <div class="version-card current" style="max-width:700px;">
+            <div class="version-label">HEAD (текущая)</div>
+            <div class="version-id">003_add_mission_type</div>
+            <div style="font-weight:600; margin-bottom:0.3rem;">
+                add mission_type to log_entries
+            </div>
+            <div style="font-size:0.87rem; color:#374151; margin-bottom:0.3rem;">
+                Добавлено поле <code>mission_type</code> (String, server_default='other').
+                PostgreSQL сам заполнил старые строки значением 'other'.
+            </div>
+            <div style="font-size:0.82rem; color:#6B7280;">
+                upgrade: op.add_column('log_entries', Column('mission_type', String(20), server_default='other'))&nbsp;&nbsp;|&nbsp;&nbsp;
+                downgrade: op.drop_column('log_entries', 'mission_type')
+            </div>
+        </div>
+
+    </div>
+
+
+</div>
+{% endblock %}

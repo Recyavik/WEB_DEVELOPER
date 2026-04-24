@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Заголовок вкладки — задаётся в дочерних шаблонах через блок title -->
+    <title>{% block title %}Бортовой журнал МКС{% endblock %}</title>
+    <!-- Подключаем наш CSS из папки static/css/ -->
+    <link rel="stylesheet" href="/static/css/style.css?v=2">
+</head>
+<body>
+
+    <!-- ─── Навигационная панель ─────────────────────────────────────────── -->
+    <nav class="navbar">
+        <!-- Логотип / бренд -->
+        <a href="/" class="navbar-brand">
+            <span class="brand-icon">&#128752;</span>
+            <span>Бортовой журнал МКС</span>
+        </a>
+
+        <!-- Ссылки навигации — ТОЛЬКО существующие страницы этого занятия -->
+        <ul class="navbar-nav">
+            <li>
+                <a href="/"
+                   class="{% if request.url.path == '/' %}active{% endif %}">
+                    Главная
+                </a>
+            </li>
+            <li>
+                <a href="/log"
+                   class="{% if request.url.path == '/log' %}active{% endif %}">
+                    Журнал
+                </a>
+            </li>
+            <li>
+                <a href="/history"
+                   class="{% if request.url.path == '/history' %}active{% endif %}">
+                    Миграции
+                </a>
+            </li>
+        </ul>
+    </nav>
+
+    <!-- ─── Основной контент страницы ───────────────────────────────────── -->
+    <!-- Дочерние шаблоны заполняют этот блок через block content -->
+    {% block content %}{% endblock %}
+
+    <!-- ─── Подвал сайта ────────────────────────────────────────────────── -->
+    <footer style="
+        margin-top: 3rem;
+        padding: 1.2rem 2rem;
+        background: #2E1065;
+        color: #A78BFA;
+        text-align: center;
+        font-size: 0.85rem;
+    ">
+        Python Web Developer &mdash; Занятие 7: Alembic &amp; Миграции БД &nbsp;|&nbsp;
+        Проект: Бортовой журнал МКС
+    </footer>
+
+</body>
+</html>
