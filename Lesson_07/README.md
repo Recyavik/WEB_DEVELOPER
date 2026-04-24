@@ -40,7 +40,6 @@ http://localhost:8000
 /          — главная
 /log       — бортовой журнал + форма добавления
 /history   — история миграций Alembic
-/about     — об Alembic (образовательная)
 ```
 
 ---
@@ -87,4 +86,4 @@ docker compose up --build
 - **psycopg2-binary** 2.9.11
 - **python-multipart** 0.0.26
 - **Python** 3.12
-- **Docker Desktop** 4.69
+- **Docker Desktop** 4.70

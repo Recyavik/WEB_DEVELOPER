@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<!-- DOCTYPE — объявляет браузеру: «это HTML5». Без этой строки браузер
+     может перейти в «режим совместимости» и отобразить страницу неправильно. -->
+
+<html lang="ru">
+<!-- html — корневой элемент всего документа.
+     lang="ru" — язык страницы (русский). Используется читалками для слабовидящих
+     и поисковыми системами. -->
+
+<head>
+  <!-- head — невидимая часть страницы: метаданные, подключение стилей, заголовок вкладки. -->
+
+  <meta charset="UTF-8">
+  <!-- charset="UTF-8" — кодировка символов. UTF-8 поддерживает все языки мира,
+       включая кириллицу. Без этой строки русский текст может отобразиться кракозябрами. -->
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- viewport — настройка масштаба для мобильных устройств.
+       width=device-width    — ширина страницы = ширина экрана устройства.
+       initial-scale=1.0     — начальный масштаб 100% (не уменьшать страницу). -->
+
+  <title>{% block title %}Дневник погоды{% endblock %}</title>
+  <!-- title — текст на вкладке браузера.
+       {% block title %}...{% endblock %} — блок Jinja2: дочерние шаблоны могут
+       переопределить этот текст командой {% block title %}Своё название{% endblock %}.
+       Если дочерний шаблон не переопределяет — используется «Дневник погоды». -->
+
+  <style>
+    /* <style> — встроенные CSS-стили. CSS описывает внешний вид HTML-элементов. */
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    /* * — применяется ко ВСЕМ элементам страницы.
+       *::before, *::after — псевдоэлементы (::before и ::after).
+       box-sizing: border-box — padding и border включаются в ширину элемента.
+                                Без этого элемент шириной 100px с padding 10px
+                                занял бы 120px. С border-box — ровно 100px.
+       margin: 0; padding: 0 — убираем стандартные отступы браузера (сброс стилей). */
+
+    :root {
+    /* :root — псевдокласс корневого элемента (<html>). Здесь объявляем CSS-переменные.
+       CSS-переменные (custom properties) — значения, которые используются во всём CSS.
+       Изменив переменную здесь, меняем цвет/размер везде, где она используется.
+       Синтаксис объявления: --имя-переменной: значение;
+       Синтаксис использования: var(--имя-переменной) */
+      --bg:      #f0f7ff;  /* Цвет фона страницы — светло-голубой */
+      --card:    #ffffff;  /* Цвет карточек — белый */
+      --accent:  #1d72b8;  /* Основной акцентный цвет — синий */
+      --dark:    #0a3055;  /* Тёмный цвет — для навбара и заголовков */
+      --muted:   #6b7280;  /* Приглушённый серый — для второстепенного текста */
+      --border:  #d1e3f5;  /* Цвет рамок — светло-голубой */
+      --success: #16a34a;  /* Зелёный (не используется в текущих шаблонах) */
+      --warning: #d97706;  /* Оранжевый (не используется) */
+      --danger:  #dc2626;  /* Красный (не используется) */
+      --radius:  10px;     /* Радиус скругления углов у карточек и кнопок */
+    }
+
+    body {
+      /* body — стили для всего тела страницы (видимая часть). */
+      font-family: 'Segoe UI', sans-serif;
+      /* font-family — шрифт текста. 'Segoe UI' — системный шрифт Windows.
+         sans-serif — запасной вариант: любой шрифт без засечек, если Segoe UI недоступен. */
+      background: var(--bg);
+      /* background — цвет фона. var(--bg) читает CSS-переменную --bg (#f0f7ff). */
+      color: #1f2937;
+      /* color — цвет текста по умолчанию (тёмно-серый). */
+      min-height: 100vh;
+      /* min-height: 100vh — минимальная высота = 100% высоты экрана (viewport height).
+         Это нужно для того, чтобы футер всегда был внизу, даже если контента мало. */
+      display: flex;
+      flex-direction: column;
+      /* display: flex + flex-direction: column — делаем body флекс-контейнером.
+         Элементы внутри (navbar, container, footer) выстраиваются в колонку.
+         Это нужно для «прилипающего» футера: container растягивается на всё свободное место. */
+    }
+
+    /* ── Навигационная панель ── */
+    .navbar {
+      /* .navbar — класс CSS: стили применяются к элементу с class="navbar". */
+      background: var(--dark);     /* Тёмно-синий фон */
+      color: #fff;                 /* Белый текст */
+      padding: 0 2rem;             /* Отступы: 0 сверху/снизу, 2rem (32px) слева/справа */
+      display: flex;               /* Флекс-контейнер: элементы в строку */
+      align-items: center;         /* Выравнивание по центру вертикально */
+      gap: 2rem;                   /* Расстояние между ссылками навбара */
+      height: 56px;                /* Фиксированная высота навбара */
+      position: sticky;            /* Навбар «прилипает» к верху экрана при прокрутке */
+      top: 0;                      /* Прилипает к верхнему краю экрана */
+      z-index: 100;                /* Навбар поверх всех элементов (значение > 0) */
+    }
+    .navbar .brand {
+      /* .navbar .brand — стили для .brand ВНУТРИ .navbar */
+      font-size: 1.25rem;          /* Размер шрифта (1rem = 16px → 1.25rem = 20px) */
+      font-weight: 700;            /* Жирный шрифт */
+      color: #fff;                 /* Белый цвет (чтобы переопределить общий стиль ссылок) */
+      text-decoration: none;       /* Убираем подчёркивание у ссылки */
+    }
+    .navbar a {
+      color: #cbd5e1;              /* Светло-серый цвет ссылок в навбаре */
+      text-decoration: none;       /* Без подчёркивания */
+      font-size: .95rem;           /* Чуть меньше стандартного */
+      transition: color .2s;       /* Плавная смена цвета за 0.2 секунды при наведении */
+    }
+    .navbar a:hover { color: #fff; }
+    /* :hover — применяется при наведении мыши. При наведении ссылка становится белой. */
+
+    /* ── Контейнер страницы ── */
+    .container {
+      max-width: 1100px;           /* Максимальная ширина контента (не растягивается шире) */
+      margin: 0 auto;              /* Горизонтальное центрирование (авто отступы слева и справа) */
+      padding: 2rem 1.5rem;        /* Отступы внутри: 2rem сверху/снизу, 1.5rem по бокам */
+      flex: 1;                     /* Растягивается на всё свободное место между navbar и footer */
+    }
+
+    /* ── Карточка ── */
+    .card {
+      background: var(--card);                    /* Белый фон */
+      border: 1px solid var(--border);            /* Тонкая голубая рамка */
+      border-radius: var(--radius);               /* Скруглённые углы (10px) */
+      padding: 1.5rem;                            /* Внутренние отступы */
+      box-shadow: 0 2px 8px rgba(0,0,0,.06);
+      /* box-shadow — тень карточки.
+         0        — смещение по X (нет)
+         2px      — смещение по Y (тень снизу)
+         8px      — радиус размытия тени
+         rgba(0,0,0,.06) — чёрный цвет с прозрачностью 6% (едва заметная тень) */
+    }
+
+    /* ── Сетка двух колонок ── */
+    .grid-2 {
+      display: grid;                              /* CSS Grid — сетка */
+      grid-template-columns: 1fr 1fr;            /* Две равные колонки (1fr = 1 доля свободного места) */
+      gap: 1.5rem;                               /* Расстояние между колонками */
+    }
+    @media (max-width: 700px) { .grid-2 { grid-template-columns: 1fr; } }
+    /* @media — медиазапрос: стили применяются только при ширине экрана ≤ 700px.
+       На узких экранах (телефоны) две колонки заменяются одной. */
+
+    /* ── Группа поля формы ── */
+    .form-group { margin-bottom: 1rem; }
+    /* Отступ снизу между полями формы */
+
+    .form-group label {
+      display: block;              /* label занимает всю строку (не inline) */
+      font-size: .875rem;          /* 14px */
+      font-weight: 600;            /* Полужирный */
+      margin-bottom: .35rem;       /* Маленький отступ между label и полем */
+      color: var(--dark);          /* Тёмно-синий цвет */
+    }
+    .form-control {
+      /* Общий стиль для <input> и <textarea> */
+      width: 100%;                 /* Занимает всю ширину родителя */
+      padding: .55rem .75rem;      /* Внутренние отступы */
+      border: 1px solid var(--border);  /* Тонкая голубая рамка */
+      border-radius: 6px;          /* Скруглённые углы */
+      font-size: .95rem;           /* Размер текста внутри поля */
+      background: #fff;            /* Белый фон поля */
+      transition: border-color .2s, box-shadow .2s;  /* Анимация при фокусе */
+    }
+    .form-control:focus {
+      /* :focus — стили, когда пользователь кликает в поле (курсор внутри). */
+      outline: none;               /* Убираем стандартный синий контур браузера */
+      border-color: var(--accent); /* Синяя рамка при фокусе */
+      box-shadow: 0 0 0 3px rgba(29,114,184,.15);
+      /* Полупрозрачное синее свечение вокруг поля при фокусе */
+    }
+    textarea.form-control {
+      resize: vertical;            /* Пользователь может изменять размер только по вертикали */
+      min-height: 80px;            /* Минимальная высота textarea */
+    }
+
+    /* ── Кнопки ── */
+    .btn {
+      display: inline-block;       /* Кнопка в строке, но с размерами блока */
+      padding: .55rem 1.25rem;     /* Внутренние отступы */
+      border: none;                /* Убираем рамку по умолчанию */
+      border-radius: 6px;          /* Скруглённые углы */
+      cursor: pointer;             /* Курсор «рука» при наведении */
+      font-size: .95rem;
+      font-weight: 600;
+      text-decoration: none;       /* Без подчёркивания (для <a> styled as button) */
+      transition: opacity .2s;     /* Плавное изменение прозрачности при наведении */
+    }
+    .btn:hover { opacity: .88; }   /* При наведении кнопка становится чуть прозрачнее */
+    .btn-primary { background: var(--accent); color: #fff; }  /* Синяя кнопка */
+    .btn-outline {
+      /* Кнопка-рамка: прозрачный фон, синяя граница */
+      background: transparent;
+      border: 1.5px solid var(--accent);
+      color: var(--accent);
+    }
+
+    /* ── Карточка наблюдения ── */
+    .entry {
+      border-left: 4px solid var(--accent);   /* Синяя полоса слева */
+      padding: .9rem 1rem;
+      background: #f8fbff;                    /* Очень светло-голубой фон */
+      border-radius: 0 var(--radius) var(--radius) 0;
+      /* border-radius: 0 10px 10px 0 — скругляем только правые углы.
+         Порядок: верхний-левый, верхний-правый, нижний-правый, нижний-левый */
+      margin-bottom: .75rem;                  /* Отступ между карточками */
+    }
+    .entry-header {
+      display: flex;
+      justify-content: space-between;         /* Город слева, время справа */
+      align-items: center;
+      margin-bottom: .35rem;
+    }
+    .entry-city  { font-weight: 700; font-size: 1rem; }        /* Жирное название города */
+    .entry-time  { font-size: .8rem; color: var(--muted); }    /* Маленькое серое время */
+    .entry-temp  { font-size: 1.6rem; font-weight: 800; color: var(--accent); }  /* Большая синяя температура */
+    .entry-desc  { margin-top: .4rem; font-size: .9rem; color: #374151; }  /* Описание */
+
+    .temp-badge {
+      /* Бейдж-метка (маленький цветной ярлык) */
+      display: inline-block;
+      padding: .2rem .6rem;
+      border-radius: 20px;                    /* Сильно скруглённые — «таблетка» */
+      font-size: .8rem;
+      font-weight: 600;
+    }
+    .temp-cold { background: #dbeafe; color: #1e40af; }  /* Синий — мороз (< 0°C) */
+    .temp-warm { background: #fef9c3; color: #92400e; }  /* Жёлтый — прохладно (0–20°C) */
+    .temp-hot  { background: #fee2e2; color: #991b1b; }  /* Красный — тепло (> 20°C) */
+
+    h2 { font-size: 1.3rem; color: var(--dark); margin-bottom: 1rem; }   /* Заголовок второго уровня */
+    h3 { font-size: 1.05rem; color: var(--dark); margin-bottom: .6rem; } /* Заголовок третьего уровня */
+
+    /* ── Блок кода ── */
+    .code-block {
+      background: #1e293b;         /* Тёмный фон (как в редакторе кода) */
+      color: #e2e8f0;              /* Светлый текст */
+      padding: 1rem 1.25rem;
+      border-radius: var(--radius);
+      font-family: 'Courier New', monospace;  /* Моноширинный шрифт для кода */
+      font-size: .875rem;
+      line-height: 1.6;
+      overflow-x: auto;            /* Горизонтальная прокрутка, если код длинный */
+      margin: .75rem 0;
+    }
+
+    .empty {
+      /* Стиль для блока «нет данных» */
+      text-align: center;
+      color: var(--muted);
+      padding: 2rem;
+      font-size: .95rem;
+    }
+
+    footer {
+      background: var(--dark);     /* Тёмный фон как у навбара */
+      color: #94a3b8;              /* Серо-голубой текст */
+      text-align: center;
+      padding: 1rem;
+      font-size: .85rem;
+    }
+  </style>
+</head>
+<body>
+
+<nav class="navbar">
+  <!-- nav — семантический тег для навигации. Говорит браузеру и поисковикам:
+       «здесь находятся навигационные ссылки». -->
+
+  <!-- &#9925; — HTML-код символа Unicode ⛅ (солнце за тучей). -->
+  <a class="brand" href="/weather">&#9925; Дневник погоды</a>
+
+  <!-- Ссылка на страницу наблюдений -->
+  <a href="/weather">Наблюдения</a>
+</nav>
+
+<div class="container">
+  <!-- Блок Jinja2: {% block content %}{% endblock %}
+       Это «дырка» в шаблоне — место, куда дочерние шаблоны вставят свой контент.
+       Каждый дочерний шаблон пишет {% block content %}...свой HTML...{% endblock %}.
+       При рендеринге Jinja2 подставит содержимое дочернего блока сюда. -->
+  {% block content %}{% endblock %}
+</div>
+
+<!-- &mdash; — HTML-сущность для символа тире «—» (em dash). -->
+<footer>Weather Diary &mdash; Самостоятельная работа Занятие 7</footer>
+
+</body>
+</html>

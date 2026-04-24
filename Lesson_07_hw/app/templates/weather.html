@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+{# {% extends "base.html" %} — этот шаблон «наследует» base.html.
+   Jinja2 возьмёт base.html как основу и вставит наш контент в блок content.
+   Это как копипаст, но умный: шапка и подвал хранятся в одном месте. #}
+
+{% block title %}Наблюдения за погодой{% endblock %}
+{# Переопределяем блок title из base.html.
+   Вкладка браузера покажет «Наблюдения за погодой» вместо «Дневник погоды». #}
+
+{% block content %}
+{# Всё между {% block content %} и {% endblock %} вставится в <div class="container"> base.html #}
+
+<div class="grid-2">
+{# grid-2 — CSS-класс из base.html: двухколоночная сетка.
+   Слева — форма, справа — список наблюдений. #}
+
+  <!-- ── Левая колонка: форма добавления ── -->
+  <div class="card">
+    <h2>Добавить наблюдение</h2>
+
+    <form method="post" action="/weather/add">
+    {# <form> — HTML-форма.
+       method="post" — данные отправляются методом POST (не видны в URL).
+       action="/weather/add" — куда отправить данные (маршрут в main.py).
+       FastAPI-функция add_weather() обработает этот запрос. #}
+
+      <div class="form-group">
+        {# form-group — обёртка для label + input: добавляет отступ снизу #}
+
+        <label for="city">Город *</label>
+        {# <label> — подпись к полю. for="city" связывает label с input id="city":
+           при клике на подпись — фокус переходит в поле ввода. #}
+
+        <input class="form-control"
+               type="text"
+               id="city"
+               name="city"
+               placeholder="Например: Киев"
+               required
+               maxlength="100">
+        {# <input> — поле ввода.
+           type="text"        — обычный текст.
+           id="city"          — идентификатор (нужен для связи с label).
+           name="city"        — ИМЯ поля при отправке формы. FastAPI прочитает это имя:
+                                city: str = Form(...) → ищет поле с name="city".
+           placeholder        — серый текст-подсказка, пока поле пустое.
+           required           — HTML-валидация: браузер не отправит форму без этого поля.
+           maxlength="100"    — максимум 100 символов (совпадает с String(100) в модели). #}
+      </div>
+
+      <div class="form-group">
+        <label for="temperature">Температура (°C) *</label>
+        {# °C — HTML-сущность для знака градуса: ° = &#176; или &deg; #}
+
+        <input class="form-control"
+               type="number"
+               id="temperature"
+               name="temperature"
+               placeholder="-10.5"
+               step="0.1"
+               required>
+        {# type="number" — поле только для чисел. Браузер показывает стрелки +/-.
+           step="0.1"    — шаг изменения при нажатии стрелок: 0.1 (одна десятая).
+                           Также разрешает ввод дробных чисел (без step — только целые). #}
+      </div>
+
+      <div class="form-group">
+        <label for="description">Описание погоды</label>
+        {# Нет звёздочки * — поле необязательное #}
+
+        <textarea class="form-control"
+                  id="description"
+                  name="description"
+                  placeholder="Например: Облачно с прояснениями, без осадков"></textarea>
+        {# <textarea> — многострочное поле ввода (в отличие от <input>, который однострочный).
+           Нет атрибута required — поле необязательное.
+           FastAPI: description: str = Form(None) → если не заполнено, будет None. #}
+      </div>
+
+      <button class="btn btn-primary" type="submit">Сохранить</button>
+      {# <button type="submit"> — кнопка отправки формы.
+         При клике браузер собирает все поля формы и отправляет POST-запрос на action. #}
+    </form>
+  </div>
+
+  <!-- ── Правая колонка: список наблюдений ── -->
+  <div>
+    <h2>Все наблюдения ({{ records | length }})</h2>
+    {# {{ records | length }} — Jinja2-выражение.
+       records   — переменная из Python (список объектов WeatherRecord).
+       |         — «фильтр» (pipe): передаёт значение в функцию справа.
+       length    — встроенный фильтр Jinja2: возвращает длину списка.
+       Итог: выводит число записей, например: «Все наблюдения (3)» #}
+
+    {% if records %}
+    {# {% if %} — условие Jinja2. Если список records не пустой — показываем записи.
+       Пустой список в Python (и Jinja2) считается False. #}
+
+      {% for r in records %}
+      {# {% for r in records %} — цикл: перебираем все записи.
+         r — текущая запись (объект WeatherRecord), временная переменная цикла.
+         Всё между {% for %} и {% endfor %} повторяется для каждой записи. #}
+
+        {# Определяем CSS-класс бейджа в зависимости от температуры.
+           {% set %} — создаёт локальную переменную внутри шаблона. #}
+
+        {% if r.temperature < 0 %}
+          {% set badge_class = "temp-cold" %}
+          {% set badge_label = "Мороз" %}
+        {% elif r.temperature < 20 %}
+        {# {% elif %} — «иначе если» (else if). Проверяется только если первое условие False. #}
+          {% set badge_class = "temp-warm" %}
+          {% set badge_label = "Прохладно" %}
+        {% else %}
+        {# {% else %} — иначе (если ни одно условие выше не сработало). #}
+          {% set badge_class = "temp-hot" %}
+          {% set badge_label = "Тепло" %}
+        {% endif %}
+        {# {% endif %} — обязательно закрывает блок {% if %}. #}
+
+        <div class="entry">
+
+          <div class="entry-header">
+            <span class="entry-city">{{ r.city }}</span>
+            {# {{ r.city }} — выводит значение поля city объекта r (текущей записи).
+               Jinja2 вызывает str(r.city) и вставляет в HTML. #}
+
+            <span class="entry-time">
+              {% if r.recorded_at %}
+              {# Проверяем, что recorded_at не None, прежде чем форматировать.
+                 Хотя у нас default=datetime.utcnow, лучше перестраховаться. #}
+                {{ r.recorded_at.strftime('%d.%m.%Y %H:%M') }}
+                {# .strftime() — метод datetime: форматирует дату в строку.
+                   '%d' — день (01–31)
+                   '%m' — месяц (01–12)
+                   '%Y' — год четырёхзначный (2026)
+                   '%H' — часы 24-часового формата (00–23)
+                   '%M' — минуты (00–59)
+                   Результат: «24.04.2026 10:30» #}
+              {% endif %}
+            </span>
+          </div>
+
+          <div style="display:flex; align-items:baseline; gap:.75rem;">
+          {# style="..." — встроенные CSS-стили прямо в теге (inline styles).
+             display:flex         — флекс-контейнер: температура и бейдж в одну строку.
+             align-items:baseline — выравнивание по базовой линии текста.
+             gap:.75rem           — расстояние между температурой и бейджем. #}
+
+            <span class="entry-temp">{{ "%.1f" | format(r.temperature) }}°C</span>
+            {# "%.1f" | format(r.temperature) — форматирует число с одним знаком после запятой.
+               "%.1f" — строка-формат: % (форматирование), .1 (одна цифра после точки), f (float).
+               | format(...) — фильтр Jinja2, применяет Python-форматирование строки.
+               Пример: 23.0 → «23.0», -5.333 → «-5.3» #}
+
+            <span class="temp-badge {{ badge_class }}">{{ badge_label }}</span>
+            {# {{ badge_class }} — подставляет CSS-класс (temp-cold/temp-warm/temp-hot).
+               Итог, например: <span class="temp-badge temp-cold">Мороз</span> #}
+          </div>
+
+          {% if r.description %}
+          {# Показываем описание только если оно есть (не None и не пустая строка). #}
+            <div class="entry-desc">{{ r.description }}</div>
+          {% endif %}
+
+        </div>
+        {# Конец карточки одной записи. Далее {% endfor %} вернётся к следующей записи r. #}
+
+      {% endfor %}
+      {# {% endfor %} — закрывает цикл {% for %}. #}
+
+    {% else %}
+    {# Если records пустой список — показываем заглушку. #}
+      <div class="card empty">
+        Наблюдений пока нет.<br>Добавьте первое с помощью формы слева.
+        {# <br> — перенос строки в HTML. #}
+      </div>
+    {% endif %}
+
+  </div>
+  {# Конец правой колонки #}
+
+</div>
+{# Конец grid-2 #}
+
+{% endblock %}
+{# {% endblock %} — закрывает блок content. Всё выше будет вставлено в base.html. #}
