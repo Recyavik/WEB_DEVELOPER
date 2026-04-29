@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install *)",
+      "Bash(python -c \"from morpho import analyze_sentence; print\\(analyze_sentence\\('Красивая кошка спала на диване весь день'\\)\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(docker compose *)",
+      "Bash(sed -i 's|action=\"{{ url_for\\('\\\\''delete_sentence'\\\\'', sid=s.id\\) }}\"|action=\"/teacher/sentences/{{ s.id }}/delete\"|g; *)",
+      "Bash(sed -i 's|<form method=\"POST\" class=\"form-grid\">|<form method=\"POST\" action=\"/teacher/trainers/{{ trainer.id }}/add-sentence\" class=\"form-grid\">|g' templates/teacher/trainer_detail.html)",
+      "Bash(sed -i 's|<form method=\"POST\" class=\"form-grid\">|<form method=\"POST\" action=\"/teacher/trainers/{{ trainer.id }}/update\" class=\"form-grid\">|1' templates/teacher/trainer_detail.html)",
+      "Bash(sed -i 's|href=\"{{ url_for\\('\\\\''teacher_trainer_detail'\\\\'', tid=t.id\\) }}\"|href=\"/teacher/trainers/{{ t.id }}\"|g; *)",
+      "Bash(sed -i 's|action=\"{{ url_for\\('\\\\''upload_book'\\\\''\\) }}\"|action=\"/teacher/book/upload\"|g; *)",
+      "Bash(sed -i 's|'\\\\''/student/submit-exercise'\\\\''|\"/student/submit-exercise\"|g; *)",
+      "Bash(sed -i 's|href=\"{{ url_for\\('\\\\''student_stats'\\\\''\\) }}\"|href=\"/student/stats\"|g; *)",
+      "Bash(docker exec *)"
+    ]
+  }
+}

@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% block title %}Учителя — Администратор{% endblock %}
+{% block content %}
+<header class="hero" style="padding:28px 36px;">
+  <div class="eyebrow" style="background:#fee2e2;color:#dc2626;">Администратор</div>
+  <h1 style="font-size:clamp(24px,4vw,36px);">Управление учителями</h1>
+</header>
+
+<div style="display:grid;grid-template-columns:320px 1fr;gap:24px;align-items:start;">
+
+  <div class="panel">
+    <h3>Добавить учителя</h3>
+    <form method="POST" action="/admin/teachers/add" class="form-grid">
+      <div class="field-group">
+        <label>ФИО</label>
+        <input type="text" name="name" required placeholder="Иванов Иван Иванович">
+      </div>
+      <div class="field-group">
+        <label>Email</label>
+        <input type="email" name="email" required placeholder="teacher@school.ru">
+      </div>
+      <div class="field-group">
+        <label>Пароль</label>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input type="text" name="password" id="new-teacher-pwd" required minlength="6"
+                 style="flex:1;" placeholder="Минимум 6 символов">
+          <button type="button" class="btn btn-secondary btn-sm"
+                  onclick="genPwd('new-teacher-pwd')">Сгенерировать</button>
+        </div>
+      </div>
+      <p style="font-size:13px;color:var(--text-soft);margin:0;">
+        Код учителя будет сгенерирован автоматически.
+      </p>
+      <button type="submit" class="btn btn-primary">Добавить учителя</button>
+    </form>
+  </div>
+
+  <div class="panel">
+    <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px;flex-wrap:wrap;">
+      <h2 style="margin:0;">Список учителей</h2>
+      <input type="text" id="teacher-search" placeholder="Поиск по коду, ФИО или email..."
+             oninput="filterTeachers(this.value)"
+             style="flex:1;min-width:200px;max-width:360px;">
+    </div>
+    {% if not teachers %}
+      <p style="color:var(--text-soft);text-align:center;padding:20px;">Учителя ещё не добавлены.</p>
+    {% else %}
+    <div class="table-wrap">
+      <table id="teachers-table">
+        <thead>
+          <tr><th>Код</th><th>ФИО</th><th>Email</th><th>Статус</th><th>Создан</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for t in teachers %}
+          <tr class="teacher-row"
+              data-tid="{{ t.id }}"
+              data-code="{{ t.code }}"
+              data-name="{{ t.name|lower }}"
+              data-email="{{ t.email|lower }}">
+            <td><span class="badge badge-blue" style="font-size:15px;letter-spacing:2px;">{{ t.code }}</span></td>
+            <td style="font-weight:600;">{{ t.name }}</td>
+            <td style="color:var(--text-soft);font-size:13px;">{{ t.email }}</td>
+            <td>
+              {% if t.is_active %}
+                <span class="badge badge-green">Активен</span>
+              {% else %}
+                <span class="badge" style="background:#fee2e2;color:#dc2626;">Отключён</span>
+              {% endif %}
+            </td>
+            <td style="font-size:13px;color:var(--text-soft);">{{ t.created_at.strftime('%d.%m.%Y') }}</td>
+            <td style="display:flex;gap:6px;flex-wrap:wrap;">
+              <form method="POST" action="/admin/teachers/{{ t.id }}/toggle">
+                <button class="btn btn-secondary btn-sm">
+                  {{ 'Отключить' if t.is_active else 'Активировать' }}
+                </button>
+              </form>
+              <button class="btn btn-secondary btn-sm"
+                      onclick="toggleReset('{{ t.id }}', this)">
+                Сброс пароля
+              </button>
+              <form method="POST" action="/admin/teachers/{{ t.id }}/send-invite"
+                    onsubmit="return confirm('Сгенерировать новый пароль и отправить приглашение на {{ t.email }}?')">
+                <button class="btn btn-secondary btn-sm" style="color:#1d4ed8;">&#9993; Пригласить</button>
+              </form>
+              <form method="POST" action="/admin/teachers/{{ t.id }}/delete"
+                    onsubmit="return confirm('Удалить учителя {{ t.name }} и все его данные?')">
+                <button class="btn btn-danger btn-sm">Удалить</button>
+              </form>
+            </td>
+          </tr>
+          <tr class="reset-row" id="reset-{{ t.id }}" style="display:none;background:#f8fafc;">
+            <td colspan="6" style="padding:12px;">
+              <form method="POST" action="/admin/teachers/{{ t.id }}/reset-password"
+                    style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <input type="text" name="password" placeholder="Новый пароль" required minlength="6"
+                       id="reset-pwd-{{ t.id }}" style="width:200px;min-width:160px;">
+                <button type="button" class="btn btn-secondary btn-sm"
+                        onclick="genPwd('reset-pwd-{{ t.id }}')">Сгенерировать</button>
+                <button class="btn btn-primary btn-sm">Сохранить</button>
+                <button type="button" class="btn btn-secondary btn-sm"
+                        onclick="toggleReset('{{ t.id }}')">Отмена</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <p id="no-results" style="display:none;text-align:center;color:var(--text-soft);padding:20px;">
+        Ничего не найдено.
+      </p>
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+function genPwd(inputId) {
+  const chars = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789!@#$';
+  let pwd = '';
+  for (let i = 0; i < 10; i++) pwd += chars[Math.floor(Math.random() * chars.length)];
+  document.getElementById(inputId).value = pwd;
+}
+
+function toggleReset(id, btn) {
+  const row = document.getElementById('reset-' + id);
+  const visible = row.style.display !== 'none';
+  row.style.display = visible ? 'none' : 'table-row';
+  if (btn) btn.textContent = visible ? 'Сброс пароля' : 'Скрыть';
+}
+
+function filterTeachers(q) {
+  q = q.toLowerCase().trim();
+  let found = 0;
+  document.querySelectorAll('.teacher-row').forEach(row => {
+    const d = row.dataset;
+    const match = !q || d.code.includes(q) || d.name.includes(q) || d.email.includes(q);
+    row.style.display = match ? '' : 'none';
+    const resetRow = document.getElementById('reset-' + d.tid);
+    if (resetRow && !match) resetRow.style.display = 'none';
+    if (match) found++;
+  });
+  document.getElementById('no-results').style.display = (found === 0 && q) ? '' : 'none';
+}
+</script>
+{% endblock %}

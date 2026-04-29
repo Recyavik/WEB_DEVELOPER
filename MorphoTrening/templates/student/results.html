@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Результат — {{ result.trainer.name }}{% endblock %}
+{% block content %}
+
+<div style="max-width:860px;margin:0 auto;">
+
+  <!-- Hero result -->
+  <div class="panel result-hero">
+    <div class="eyebrow">Результат выполнения</div>
+    <h2 style="margin-bottom:4px;">{{ result.trainer.name }}</h2>
+    <p style="color:var(--text-soft);margin-bottom:24px;">{{ result.completed_at.strftime('%d.%m.%Y в %H:%M') }}</p>
+
+    {% if result.percentage >= 85 %}{% set sc = 'star-green' %}{% set bc = '#15803d' %}
+    {% elif result.percentage >= 61 %}{% set sc = 'star-blue' %}{% set bc = '#1d4ed8' %}
+    {% elif result.percentage >= 31 %}{% set sc = 'star-yellow' %}{% set bc = '#d97706' %}
+    {% else %}{% set sc = 'star-red' %}{% set bc = '#f87171' %}{% endif %}
+    <div class="result-star-big {{ sc }}">&#9733;</div>
+    <div class="result-score">{{ result.total_stars }} / {{ result.max_stars }} звёзд</div>
+    <div class="result-pct">
+      <span class="result-pct-value {{ sc }}">{{ result.percentage }}%</span>
+    </div>
+    <div class="progress-bar-big">
+      <div class="progress-bar-fill" id="result-bar" style="width:0%; background:{{ bc }};"></div>
+    </div>
+    <p style="color:var(--text-soft);margin-bottom:28px;">
+      {% if result.percentage >= 90 %}Отличный результат! Так держать!
+      {% elif result.percentage >= 70 %}Хороший результат. Ещё чуть-чуть!
+      {% elif result.percentage >= 50 %}Неплохо, но есть над чем поработать.
+      {% else %}Не расстраивайтесь, попробуйте ещё раз!{% endif %}
+    </p>
+
+    <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
+      <a href="{{ url_for('student_exercise', tid=result.trainer_id) }}" class="btn btn-primary">Пройти ещё раз</a>
+      <a href="{{ url_for('student_dashboard') }}" class="btn btn-secondary">&larr; К списку тренажёров</a>
+      <a href="{{ url_for('student_stats') }}" class="btn btn-secondary">Моя статистика</a>
+    </div>
+  </div>
+
+  <!-- Sentence breakdown -->
+  <div class="panel">
+    <h3>Разбор по предложениям</h3>
+
+    {% for d in details %}
+    <div class="result-sentence-item">
+      <div class="rs-header">
+        <div class="rs-text">{{ loop.index }}. {{ d.sentence_text }}</div>
+        <div class="rs-stars">{{ d.stars }} / {{ d.max_stars }} &#9733;</div>
+      </div>
+      <div class="rs-words">
+        {% for w in d.word_details %}
+        <div class="rs-word {% if not w.correct %}incorrect{% endif %}"
+             style="background: {{ pos_colors[w.correct_pos] }};">
+          <span class="rs-word-text">{{ w.word }}</span>
+          {% if not w.correct %}
+          <span class="rs-word-pos" style="text-decoration:line-through;">{{ w.student_pos or '—' }}</span>
+          {% endif %}
+          <span class="rs-word-pos">{{ w.correct_pos }}</span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% if not loop.last %}<hr style="border:none;border-top:1px solid var(--line);margin:16px 0;">{% endif %}
+    {% endfor %}
+  </div>
+
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+window.addEventListener('DOMContentLoaded', () => {
+  const pct = {{ result.percentage }};
+  setTimeout(() => {
+    document.getElementById('result-bar').style.width = pct + '%';
+  }, 200);
+});
+</script>
+{% endblock %}

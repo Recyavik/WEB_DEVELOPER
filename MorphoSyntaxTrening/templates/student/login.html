@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}Вход ученика — MorphoSyntaxTrening{% endblock %}
+{% block content %}
+<div style="max-width:480px;margin:40px auto;">
+  <div class="panel">
+    <div class="eyebrow" style="background:#dcfce7;color:#15803d;">Ученик</div>
+    <h2>Вход в тренажёр</h2>
+
+    <form method="POST" action="/student/login" class="form-grid" id="login-form"
+          autocomplete="off" onsubmit="beforeSubmit()">
+
+      <!-- hidden fields submitted to server -->
+      <input type="hidden" name="teacher_code" id="hid-teacher-code">
+      <input type="hidden" name="student_id" id="hid-student-id">
+      <input type="hidden" name="password" id="hid-password">
+
+      <!-- Step 1: teacher code (no name, type=tel → browser skips password manager) -->
+      <div class="field-group">
+        <label>Код учителя <span style="color:var(--text-soft);font-weight:400;">(6 цифр)</span></label>
+        <div style="display:flex;gap:8px;">
+          <input type="tel" id="teacher-code"
+                 maxlength="6" inputmode="numeric"
+                 placeholder="000000"
+                 autocomplete="off"
+                 style="letter-spacing:6px;font-size:20px;font-weight:700;text-align:center;max-width:160px;"
+                 oninput="onCodeInput(this.value)">
+          <span id="code-status" style="align-self:center;font-size:13px;color:var(--text-soft);"></span>
+        </div>
+      </div>
+
+      <!-- Step 2: group -->
+      <div class="field-group" id="step-group" style="display:none;">
+        <label>Группа</label>
+        <select id="sel-group" autocomplete="off" onchange="onGroupChange(this.value)">
+          <option value="">— выберите группу —</option>
+        </select>
+      </div>
+
+      <!-- Step 3: student name -->
+      <div class="field-group" id="step-student" style="display:none;">
+        <label>Ваше имя</label>
+        <select id="sel-student" autocomplete="off" onchange="onStudentChange(this.value)">
+          <option value="">— выберите имя —</option>
+        </select>
+      </div>
+
+      <!-- Step 4: password — container only, input injected by JS to avoid password-manager scan -->
+      <div class="field-group" id="step-password" style="display:none;">
+        <label>Пароль</label>
+        <div id="pwd-container"></div>
+      </div>
+
+      <button type="submit" class="btn btn-success" id="btn-submit" style="display:none;">
+        Войти
+      </button>
+    </form>
+
+    <div style="margin-top:16px;border-top:1px solid #e2e8f0;padding-top:14px;">
+      <a href="/student/forgot-password" style="font-size:13px;color:var(--accent);">
+        Забыли пароль?
+      </a>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+let codeTimer = null;
+let pwdInput = null;
+
+function beforeSubmit() {
+  document.getElementById('hid-teacher-code').value =
+    document.getElementById('teacher-code').value;
+  document.getElementById('hid-student-id').value =
+    document.getElementById('sel-student').value;
+  if (pwdInput) {
+    document.getElementById('hid-password').value = pwdInput.value;
+  }
+}
+
+function onCodeInput(val) {
+  if (val.length === 6) {
+    clearTimeout(codeTimer);
+    codeTimer = setTimeout(() => fetchTeacher(val), 400);
+  } else {
+    hide('step-group'); hide('step-student'); hide('step-password'); hide('btn-submit');
+    document.getElementById('code-status').textContent = '';
+  }
+}
+
+async function fetchTeacher(code) {
+  const status = document.getElementById('code-status');
+  status.textContent = '⏳';
+  const data = await fetch(`/student/api/groups-by-code?code=${code}`).then(r => r.json());
+  if (!data.teacher) {
+    status.textContent = '✗ Код не найден';
+    hide('step-group'); hide('step-student'); hide('step-password'); hide('btn-submit');
+    return;
+  }
+  status.textContent = `✓ ${data.teacher.name}`;
+  const sel = document.getElementById('sel-group');
+  sel.innerHTML = '<option value="">— выберите группу —</option>';
+  data.groups.forEach(g => {
+    const o = document.createElement('option');
+    o.value = g.id; o.textContent = g.name;
+    sel.appendChild(o);
+  });
+  show('step-group');
+  hide('step-student'); hide('step-password'); hide('btn-submit');
+}
+
+async function onGroupChange(groupId) {
+  hide('step-student'); hide('step-password'); hide('btn-submit');
+  if (!groupId) return;
+  const students = await fetch(`/student/api/students-by-group?group_id=${groupId}`).then(r => r.json());
+  const sel = document.getElementById('sel-student');
+  sel.innerHTML = '<option value="">— выберите имя —</option>';
+  students.forEach(s => {
+    const o = document.createElement('option');
+    o.value = s.id; o.textContent = s.name;
+    sel.appendChild(o);
+  });
+  show('step-student');
+}
+
+function onStudentChange(val) {
+  if (val) {
+    show('step-password');
+    show('btn-submit');
+    // Create password input dynamically so it's absent on page load
+    // (password manager scans the DOM on load — if no password field exists, no popup)
+    const container = document.getElementById('pwd-container');
+    container.innerHTML = '';
+    pwdInput = document.createElement('input');
+    pwdInput.type = 'password';
+    pwdInput.autocomplete = 'new-password';
+    pwdInput.id = 'inp-password';
+    pwdInput.style.width = '100%';
+    container.appendChild(pwdInput);
+    pwdInput.focus();
+  } else {
+    hide('step-password');
+    hide('btn-submit');
+    pwdInput = null;
+  }
+}
+
+function show(id) { document.getElementById(id).style.display = ''; }
+function hide(id) { document.getElementById(id).style.display = 'none'; }
+</script>
+{% endblock %}

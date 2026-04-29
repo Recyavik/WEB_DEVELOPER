@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}MorphoTrening{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  {% block head %}{% endblock %}
+</head>
+<body{% block body_class %}{% endblock %}>
+
+  <nav class="top-nav">
+    <div class="nav-inner">
+      <a class="nav-brand" href="{{ url_for('index') }}">MorphoTrening</a>
+      <div class="nav-links">
+        {% if session.get('role') == 'teacher' %}
+          <a href="{{ url_for('teacher_dashboard') }}"{% if request.endpoint == 'teacher_dashboard' %} class="active"{% endif %}>Панель</a>
+          <a href="{{ url_for('teacher_groups') }}"{% if request.endpoint in ('teacher_groups',) %} class="active"{% endif %}>Ученики</a>
+          <a href="{{ url_for('teacher_trainers') }}"{% if 'trainer' in (request.endpoint or '') %} class="active"{% endif %}>Тренажёры</a>
+          <a href="{{ url_for('teacher_book') }}"{% if request.endpoint in ('teacher_book','upload_book','delete_book') %} class="active"{% endif %}>Книга</a>
+          <a href="{{ url_for('teacher_stats') }}"{% if request.endpoint == 'teacher_stats' %} class="active"{% endif %}>Статистика</a>
+          <a href="{{ url_for('teacher_logout') }}" class="btn-nav-logout">Выйти</a>
+        {% elif session.get('role') == 'student' %}
+          <span style="font-weight:700;color:var(--text-soft);padding:8px 4px;">{{ session.get('student_name','') }}</span>
+          <a href="{{ url_for('student_dashboard') }}"{% if request.endpoint == 'student_dashboard' %} class="active"{% endif %}>Тренажёры</a>
+          <a href="{{ url_for('student_stats') }}"{% if request.endpoint == 'student_stats' %} class="active"{% endif %}>Моя статистика</a>
+          <a href="{{ url_for('student_logout') }}" class="btn-nav-logout">Выйти</a>
+        {% else %}
+          <a href="{{ url_for('teacher_login') }}">Учитель</a>
+          <a href="{{ url_for('student_login') }}">Ученик</a>
+        {% endif %}
+        <a href="{{ url_for('about') }}"{% if request.endpoint == 'about' %} class="active"{% endif %}>О программе</a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="page">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for cat, msg in messages %}
+        <div class="alert alert-{{ cat }}">{{ msg }}</div>
+      {% endfor %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </div>
+
+  <footer class="site-footer">
+    <p>MorphoTrening &mdash; Интерактивный тренажёр морфосинтаксического анализа &nbsp;&bull;&nbsp; Хакатон 2026</p>
+  </footer>
+
+  {% block scripts %}{% endblock %}
+</body>
+</html>

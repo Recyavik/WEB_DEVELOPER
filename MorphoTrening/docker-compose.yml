@@ -1,0 +1,15 @@
+services:
+  web:
+    build: .
+    ports:
+      - "5000:5000"
+    volumes:
+      - db_data:/app/instance
+      - ./static:/app/static
+      - ./templates:/app/templates
+    environment:
+      - SECRET_KEY=morpho-hackathon-secret-2026
+      - FLASK_DEBUG=true
+
+volumes:
+  db_data:

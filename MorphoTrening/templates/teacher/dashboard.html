@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Панель учителя — MorphoTrening{% endblock %}
+{% block content %}
+
+<header class="hero">
+  <div class="eyebrow">Панель учителя</div>
+  <h2>Добро пожаловать!</h2>
+  <p style="color:var(--text-soft);font-size:17px;margin-bottom:0;">Управляйте учениками, тренажёрами и просматривайте статистику выполнения заданий.</p>
+</header>
+
+<div class="stat-cards">
+  <div class="stat-card">
+    <div class="stat-value">{{ total_groups }}</div>
+    <div class="stat-label">Групп</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ total_students }}</div>
+    <div class="stat-label">Учеников</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ total_trainers }}</div>
+    <div class="stat-label">Тренажёров</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ total_results }}</div>
+    <div class="stat-label">Выполнений</div>
+  </div>
+</div>
+
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px;margin-bottom:28px;">
+  <a href="{{ url_for('teacher_groups') }}" class="panel" style="text-decoration:none;cursor:pointer;transition:transform .2s,box-shadow .2s;" onmouseover="this.style.transform='translateY(-3px)'" onmouseout="this.style.transform=''">
+    <h3 style="margin-bottom:8px;">Управление учениками</h3>
+    <p style="color:var(--text-soft);margin-bottom:0;font-size:14px;">Создание групп, добавление учеников, генерация паролей</p>
+  </a>
+  <a href="{{ url_for('teacher_trainers') }}" class="panel" style="text-decoration:none;cursor:pointer;transition:transform .2s,box-shadow .2s;" onmouseover="this.style.transform='translateY(-3px)'" onmouseout="this.style.transform=''">
+    <h3 style="margin-bottom:8px;">Тренажёры</h3>
+    <p style="color:var(--text-soft);margin-bottom:0;font-size:14px;">Создание и редактирование тренажёров с предложениями</p>
+  </a>
+  <a href="{{ url_for('teacher_stats') }}" class="panel" style="text-decoration:none;cursor:pointer;transition:transform .2s,box-shadow .2s;" onmouseover="this.style.transform='translateY(-3px)'" onmouseout="this.style.transform=''">
+    <h3 style="margin-bottom:8px;">Статистика</h3>
+    <p style="color:var(--text-soft);margin-bottom:0;font-size:14px;">Результаты по тренажёрам, датам, ученикам и группам</p>
+  </a>
+</div>
+
+<div class="panel" style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <strong>Сброс сессий учеников</strong>
+    <p style="color:var(--text-soft);font-size:14px;margin:4px 0 0;">Если ученик не может войти («уже в системе»), нажмите эту кнопку.</p>
+  </div>
+  <form method="POST" action="{{ url_for('reset_sessions') }}">
+    <button type="submit" class="btn btn-secondary">Сбросить все сессии</button>
+  </form>
+</div>
+
+{% if recent_results %}
+<div class="panel">
+  <h2>Последние выполнения</h2>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Ученик</th><th>Группа</th><th>Тренажёр</th>
+          <th>Результат</th><th>%</th><th>Дата</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in recent_results %}
+        <tr>
+          <td>{{ r.student.full_name }}</td>
+          <td>{{ r.student.group.name }}</td>
+          <td>{{ r.trainer.name }}</td>
+          <td>{{ r.total_stars }} / {{ r.max_stars }}
+            <span class="{% if r.percentage >= 85 %}star-green{% elif r.percentage >= 61 %}star-blue{% elif r.percentage >= 31 %}star-yellow{% else %}star-red{% endif %}">&#9733;</span>
+          </td>
+          <td>
+            <span class="badge {% if r.percentage >= 80 %}badge-green{% elif r.percentage >= 50 %}badge-orange{% else %}badge-blue{% endif %}">
+              {{ r.percentage }}%
+            </span>
+          </td>
+          <td style="font-size:13px;color:var(--text-soft);">{{ r.completed_at.strftime('%d.%m.%Y %H:%M') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}

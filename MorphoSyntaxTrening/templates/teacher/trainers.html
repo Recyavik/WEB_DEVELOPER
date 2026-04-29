@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Тренажёры — MorphoTrening{% endblock %}
+{% block content %}
+
+<header class="hero" style="padding:28px 36px;">
+  <div class="eyebrow">Управление</div>
+  <h1 style="font-size:clamp(24px,4vw,36px);">Тренажёры</h1>
+</header>
+
+<div style="display:grid;grid-template-columns:340px 1fr;gap:24px;align-items:start;">
+
+  <!-- Sidebar: create trainer -->
+  <div class="panel">
+    <h3>Новый тренажёр</h3>
+    <form method="POST" action="/teacher/trainers/add" class="form-grid">
+      <div class="field-group">
+        <label for="tname">Название тренажёра</label>
+        <input id="tname" name="name" type="text" placeholder="Например: Существительные в тексте" required>
+      </div>
+      <div class="field-group">
+        <label for="tdesc">Описание (необязательно)</label>
+        <textarea id="tdesc" name="description" placeholder="Краткое описание задания..." style="min-height:70px;"></textarea>
+      </div>
+      <div class="field-group">
+        <label for="ttime">Время выполнения (секунды)</label>
+        <input id="ttime" name="time_limit" type="number" min="30" max="3600" value="300">
+        <span style="font-size:12px;color:var(--text-soft);">300 = 5 минут, 600 = 10 минут</span>
+      </div>
+      <button type="submit" class="btn btn-primary">Создать тренажёр</button>
+    </form>
+  </div>
+
+  <!-- Trainers list -->
+  <div>
+    {% if not trainers %}
+      <div class="panel" style="text-align:center;color:var(--text-soft);padding:40px;">
+        Тренажёров пока нет. Создайте первый тренажёр слева.
+      </div>
+    {% else %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>ID</th><th>Название</th><th>Предложений</th><th>Время</th><th>Создан</th><th>Действия</th></tr>
+          </thead>
+          <tbody>
+            {% for t in trainers %}
+            <tr>
+              <td><span class="badge badge-blue">#{{ t.id }}</span></td>
+              <td style="font-weight:700;">{{ t.name }}</td>
+              <td>{{ t.sentences|length }}</td>
+              <td>{{ (t.time_limit // 60) }}м {{ (t.time_limit % 60) }}с</td>
+              <td style="font-size:13px;color:var(--text-soft);">{{ t.created_at.strftime('%d.%m.%Y') }}</td>
+              <td>
+                <div class="td-actions">
+                  <a href="/teacher/trainers/{{ t.id }}" class="btn btn-secondary btn-sm">Редактировать</a>
+                  <form method="POST" action="/teacher/trainers/{{ t.id }}/delete"
+                        onsubmit="return confirm('Удалить тренажёр «{{ t.name }}»?')">
+                    <button type="submit" class="btn btn-danger btn-sm">Удалить</button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}

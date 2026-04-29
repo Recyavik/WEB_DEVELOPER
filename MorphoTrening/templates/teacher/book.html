@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Книга-источник — MorphoTrening{% endblock %}
+{% block content %}
+
+<header class="hero" style="padding:28px 36px;">
+  <div class="eyebrow">Генерация предложений</div>
+  <h1 style="font-size:clamp(24px,4vw,36px);">Книга-источник</h1>
+  <p style="color:var(--text-soft);font-size:16px;max-width:640px;margin-bottom:0;">
+    Загрузите текстовый файл или PDF-книгу на русском языке. Система автоматически
+    извлечёт предложения и будет использовать их при создании тренажёров.
+  </p>
+</header>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start;max-width:860px;">
+
+  <!-- Status card -->
+  <div class="panel">
+    <h3>Текущий статус</h3>
+    {% if info %}
+    <div style="display:flex;flex-direction:column;gap:14px;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span class="badge badge-green" style="font-size:13px;">&#10003; Книга загружена</span>
+      </div>
+      <div class="stat-cards" style="grid-template-columns:1fr 1fr;gap:12px;margin:0;">
+        <div class="stat-card" style="padding:14px;">
+          <div class="stat-value" style="font-size:22px;">{{ info.sentence_count }}</div>
+          <div class="stat-label">предложений</div>
+        </div>
+        <div class="stat-card" style="padding:14px;">
+          <div class="stat-value" style="font-size:22px;">{{ info.size_kb }} КБ</div>
+          <div class="stat-label">размер файла</div>
+        </div>
+      </div>
+      <form method="POST" action="{{ url_for('delete_book') }}"
+            onsubmit="return confirm('Удалить книгу? Генерация предложений станет недоступна.')">
+        <button type="submit" class="btn btn-danger btn-sm">Удалить книгу</button>
+      </form>
+    </div>
+    {% else %}
+    <div style="text-align:center;padding:20px 0;color:var(--text-soft);">
+      <div style="font-size:40px;margin-bottom:10px;">📖</div>
+      <p style="margin:0;">Книга не загружена.</p>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Upload card -->
+  <div class="panel">
+    <h3>{{ 'Заменить книгу' if info else 'Загрузить книгу' }}</h3>
+    <form method="POST" action="{{ url_for('upload_book') }}" enctype="multipart/form-data" class="form-grid">
+      <div class="field-group">
+        <label>Файл (.txt или .pdf)</label>
+        <input type="file" name="book_file" accept=".txt,.pdf" required
+               style="padding:8px;font-size:14px;">
+      </div>
+      <p style="font-size:13px;color:var(--text-soft);margin:0;">
+        Поддерживаются файлы .txt (UTF-8 или Windows-1251) и .pdf.
+        Рекомендуемый размер: до 5 МБ.
+      </p>
+      <button type="submit" class="btn btn-primary">Загрузить</button>
+    </form>
+  </div>
+
+</div>
+
+<!-- Tips -->
+<div class="panel" style="max-width:860px;margin-top:4px;">
+  <h3>Как использовать</h3>
+  <ol style="color:var(--text-soft);padding-left:20px;line-height:1.8;margin:0;">
+    <li>Загрузите любую книгу или учебный текст на русском языке.</li>
+    <li>Откройте тренажёр и нажмите <strong>«Сгенерировать»</strong> в панели генерации.</li>
+    <li>Задайте желаемое количество слов в предложении (например, от 6 до 12).</li>
+    <li>Система выберет случайное подходящее предложение — просмотрите и добавьте одним нажатием.</li>
+    <li>При необходимости нажмите <strong>«Ещё»</strong>, чтобы получить другое предложение.</li>
+  </ol>
+</div>
+
+{% endblock %}

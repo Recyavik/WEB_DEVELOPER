@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Вход учителя — MorphoTrening{% endblock %}
+{% block content %}
+
+<div style="max-width:420px;margin:60px auto;">
+  <div class="panel">
+    <div class="eyebrow">Учитель / Администратор</div>
+    <h2>Вход в панель управления</h2>
+    <p style="color:var(--text-soft);">Введите пароль учителя для доступа к управлению группами, тренажёрами и статистикой.</p>
+    <form method="POST" class="form-grid" style="margin-top:20px;">
+      <div class="field-group">
+        <label for="password">Пароль учителя</label>
+        <input id="password" name="password" type="password" placeholder="Введите пароль" autofocus required>
+      </div>
+      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center;">Войти</button>
+    </form>
+    <p style="text-align:center;margin-top:16px;">
+      <a href="{{ url_for('student_login') }}" style="color:var(--accent);text-decoration:none;">Войти как ученик</a>
+    </p>
+  </div>
+</div>
+
+{% endblock %}

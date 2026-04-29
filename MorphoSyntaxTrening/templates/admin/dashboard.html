@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Панель администратора{% endblock %}
+{% block content %}
+<header class="hero" style="padding:28px 36px;">
+  <div class="eyebrow" style="background:#fee2e2;color:#dc2626;">Администратор</div>
+  <h1 style="font-size:clamp(24px,4vw,36px);">Панель управления</h1>
+</header>
+
+<div class="stat-cards">
+  <div class="stat-card">
+    <div class="stat-value">{{ teachers|length }}</div>
+    <div class="stat-label">Учителей</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ teachers|selectattr('is_active')|list|length }}</div>
+    <div class="stat-label">Активных</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ total_students }}</div>
+    <div class="stat-label">Учеников</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ total_results }}</div>
+    <div class="stat-label">Попыток</div>
+  </div>
+</div>
+
+<div class="panel">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+    <h2 style="margin:0;">Учителя</h2>
+    <a href="/admin/teachers" class="btn btn-primary btn-sm">Управление учителями</a>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Код</th><th>Имя</th><th>Email</th><th>Статус</th><th>Создан</th></tr></thead>
+      <tbody>
+        {% for t in teachers %}
+        <tr>
+          <td><span class="badge badge-blue">{{ t.code }}</span></td>
+          <td style="font-weight:600;">{{ t.name }}</td>
+          <td style="color:var(--text-soft);">{{ t.email }}</td>
+          <td>
+            {% if t.is_active %}
+              <span class="badge badge-green">Активен</span>
+            {% else %}
+              <span class="badge" style="background:#fee2e2;color:#dc2626;">Отключён</span>
+            {% endif %}
+          </td>
+          <td style="font-size:13px;color:var(--text-soft);">{{ t.created_at.strftime('%d.%m.%Y') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

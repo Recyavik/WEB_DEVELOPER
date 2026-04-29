@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Список группы {{ group.name }}{% endblock %}
+{% block content %}
+
+<div class="no-print" style="margin-bottom:20px;display:flex;gap:10px;align-items:center;">
+  <button onclick="window.print()" class="btn btn-primary">🖨 Распечатать</button>
+  <a href="/teacher/groups" class="btn btn-secondary btn-sm">← Назад</a>
+  <span style="color:var(--text-soft);font-size:14px;">Откройте в браузере и нажмите «Распечатать» или Ctrl+P</span>
+</div>
+
+<div class="panel">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;flex-wrap:wrap;gap:14px;">
+    <div>
+      <div class="eyebrow">Список учеников</div>
+      <h2 style="margin:4px 0;">Группа: {{ group.name }}</h2>
+      <div style="color:var(--text-soft);font-size:14px;">Учитель: {{ teacher.name }}</div>
+    </div>
+    <div style="text-align:center;">
+      <div style="font-size:12px;color:var(--text-soft);margin-bottom:4px;">Код учителя для входа</div>
+      <span class="teacher-code-badge">{{ teacher.code }}</span>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table class="print-table">
+      <thead>
+        <tr>
+          <th style="width:40px;">№</th>
+          <th>ФИО ученика</th>
+          <th style="width:140px;">Пароль</th>
+          <th style="width:120px;">Код учителя</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in group.students | sort(attribute='full_name') %}
+        <tr>
+          <td style="text-align:center;color:var(--text-soft);">{{ loop.index }}</td>
+          <td style="font-weight:600;">{{ s.full_name }}</td>
+          <td style="font-family:monospace;font-size:15px;letter-spacing:1px;">{{ s.password }}</td>
+          <td style="font-family:monospace;font-weight:700;text-align:center;">{{ teacher.code }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <p style="margin-top:16px;font-size:13px;color:var(--text-soft);">
+    Для входа: откройте сайт → «Войти как ученик» → введите код учителя <b>{{ teacher.code }}</b> → выберите группу и своё имя → введите пароль.
+  </p>
+</div>
+
+{% endblock %}

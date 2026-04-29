@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block title %}Ученики — MorphoSyntaxTrening{% endblock %}
+{% block content %}
+
+<header class="hero" style="padding:28px 36px;">
+  <div class="eyebrow">Управление учениками</div>
+  <h1 style="font-size:clamp(24px,4vw,36px);">Группы и ученики</h1>
+  <p style="color:var(--text-soft);font-size:15px;margin-bottom:0;">
+    Ваш код для учеников: <span class="teacher-code-badge" style="font-size:18px;padding:4px 14px;">{{ request.session.get('teacher_code') }}</span>
+  </p>
+</header>
+
+<div style="display:grid;grid-template-columns:300px 1fr;gap:24px;align-items:start;">
+
+  <!-- Sidebar -->
+  <div>
+    <div class="panel">
+      <h3>Новая группа</h3>
+      <form method="POST" action="/teacher/groups/add" class="form-grid">
+        <div class="field-group">
+          <label>Название группы</label>
+          <input type="text" name="name" required placeholder="10А">
+        </div>
+        <button type="submit" class="btn btn-primary">Создать группу</button>
+      </form>
+    </div>
+
+    {% if groups %}
+    <div class="panel" style="margin-top:16px;">
+      <h3 style="margin-bottom:10px;">Поиск</h3>
+      <input type="text" id="search-input" placeholder="Группа или ФИО ученика..."
+             oninput="filterAll(this.value)" style="width:100%;">
+      <div id="search-counts" style="font-size:12px;color:var(--text-soft);margin-top:8px;"></div>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Groups list -->
+  <div id="groups-container">
+    {% if not groups %}
+      <div class="panel" style="text-align:center;color:var(--text-soft);padding:40px;">
+        Групп пока нет. Создайте первую группу.
+      </div>
+    {% endif %}
+
+    {% for group in groups %}
+    <div class="panel group-panel" style="margin-bottom:20px;"
+         data-group-name="{{ group.name|lower }}">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+        <h3 style="margin:0;">{{ group.name }}
+          <span class="badge badge-blue student-count" style="font-size:13px;">{{ group.students|length }} учеников</span>
+        </h3>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <a href="/teacher/groups/{{ group.id }}/export" target="_blank"
+             class="btn btn-secondary btn-sm">&#128196; Экспорт списка</a>
+          <form method="POST" action="/teacher/groups/{{ group.id }}/delete"
+                onsubmit="return confirm('Удалить группу «{{ group.name }}» со всеми учениками?')">
+            <button class="btn btn-danger btn-sm">Удалить группу</button>
+          </form>
+        </div>
+      </div>
+
+      <!-- Add student -->
+      <details style="margin-bottom:14px;">
+        <summary style="cursor:pointer;color:var(--accent);font-weight:600;font-size:14px;padding:8px 0;">
+          + Добавить ученика
+        </summary>
+        <form method="POST" action="/teacher/students/add"
+              style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:10px;">
+          <input type="hidden" name="group_id" value="{{ group.id }}">
+          <div class="field-group" style="flex:2;min-width:160px;margin:0;">
+            <label style="font-size:12px;">ФИО ученика</label>
+            <input type="text" name="full_name" required placeholder="Иванов Иван">
+          </div>
+          <div class="field-group" style="flex:2;min-width:180px;margin:0;">
+            <label style="font-size:12px;">Email (необязательно)</label>
+            <input type="email" name="email" placeholder="student@mail.ru">
+          </div>
+          <button type="submit" class="btn btn-success btn-sm">Добавить</button>
+        </form>
+      </details>
+
+      <!-- Students table -->
+      {% if group.students %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>#</th><th>ФИО</th><th>Email</th><th>Пароль</th><th></th></tr>
+          </thead>
+          <tbody>
+            {% for s in group.students | sort(attribute='full_name') %}
+            <tr class="student-row" data-name="{{ s.full_name|lower }}">
+              <td style="color:var(--text-soft);">{{ loop.index }}</td>
+              <td style="font-weight:600;">{{ s.full_name }}</td>
+              <td style="font-size:13px;color:var(--text-soft);">{{ s.email or '—' }}</td>
+              <td><code style="background:#f1f5f9;padding:2px 8px;border-radius:6px;">{{ s.password }}</code></td>
+              <td style="display:flex;gap:6px;flex-wrap:wrap;">
+                {% if s.email and email_enabled %}
+                <form method="POST" action="/teacher/students/{{ s.id }}/invite"
+                      onsubmit="return confirm('Отправить приглашение на {{ s.email }}?')">
+                  <button class="btn btn-secondary btn-sm" style="color:#1d4ed8;"
+                          title="Отправить приглашение на {{ s.email }}">&#9993; Пригласить</button>
+                </form>
+                {% elif s.email %}
+                <span title="Почта не настроена в Безопасность → Настройки"
+                      style="font-size:12px;color:var(--text-soft);padding:4px 6px;">&#9993; —</span>
+                {% endif %}
+                <form method="POST" action="/teacher/students/{{ s.id }}/regen">
+                  <button class="btn btn-secondary btn-sm" title="Сгенерировать новый пароль">&#8635; Пароль</button>
+                </form>
+                <form method="POST" action="/teacher/students/{{ s.id }}/delete"
+                      onsubmit="return confirm('Удалить ученика «{{ s.full_name }}»?')">
+                  <button class="btn btn-danger btn-sm">Удалить</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+        <p style="color:var(--text-soft);text-align:center;padding:14px 0;margin:0;">Учеников пока нет.</p>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+function filterAll(q) {
+  q = q.toLowerCase().trim();
+  let visibleGroups = 0;
+
+  document.querySelectorAll('.group-panel').forEach(panel => {
+    const groupName = panel.dataset.groupName;
+    const groupMatch = !q || groupName.includes(q);
+    let visibleStudents = 0;
+
+    panel.querySelectorAll('.student-row').forEach(row => {
+      const studentMatch = groupMatch || row.dataset.name.includes(q);
+      row.style.display = studentMatch ? '' : 'none';
+      if (studentMatch) visibleStudents++;
+    });
+
+    // Re-number visible rows
+    let idx = 1;
+    panel.querySelectorAll('.student-row').forEach(row => {
+      if (row.style.display !== 'none') {
+        row.querySelector('td:first-child').textContent = idx++;
+      }
+    });
+
+    const show = groupMatch || visibleStudents > 0;
+    panel.style.display = show ? '' : 'none';
+    if (show) visibleGroups++;
+
+    const badge = panel.querySelector('.student-count');
+    if (badge) badge.textContent = visibleStudents + ' учеников';
+  });
+
+  const info = document.getElementById('search-counts');
+  if (info) info.textContent = q ? `Найдено групп: ${visibleGroups}` : '';
+}
+</script>
+{% endblock %}

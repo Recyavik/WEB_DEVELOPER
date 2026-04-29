@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Вход администратора — MorphoSyntaxTrening{% endblock %}
+{% block content %}
+<div style="max-width:420px;margin:60px auto;">
+  <div class="panel">
+    <div class="eyebrow" style="background:#fee2e2;color:#dc2626;">Администратор</div>
+    <h2>Вход в панель администратора</h2>
+    <p style="color:var(--text-soft);font-size:14px;">По умолчанию: логин <b>admin</b>, пароль <b>admin123</b></p>
+    <form method="POST" action="/admin/login" class="form-grid">
+      <div class="field-group">
+        <label>Логин</label>
+        <input type="text" name="username" required autofocus>
+      </div>
+      <div class="field-group">
+        <label>Пароль</label>
+        <input type="password" name="password" required>
+      </div>
+      <button type="submit" class="btn btn-primary">Войти</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

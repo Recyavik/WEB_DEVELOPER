@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}Управление учениками — MorphoTrening{% endblock %}
+{% block content %}
+
+<header class="hero" style="padding:28px 36px;">
+  <div class="eyebrow">Управление</div>
+  <h1 style="font-size:clamp(24px,4vw,36px);">Группы и ученики</h1>
+</header>
+
+<div style="display:grid;grid-template-columns:320px 1fr;gap:24px;align-items:start;">
+
+  <!-- Sidebar: add group -->
+  <div>
+    <div class="panel">
+      <h3>Новая группа</h3>
+      <form method="POST" action="{{ url_for('add_group') }}" class="form-grid">
+        <div class="field-group">
+          <label for="gname">Название группы</label>
+          <input id="gname" name="name" type="text" placeholder="Например: 7А или Группа 1" required>
+        </div>
+        <button type="submit" class="btn btn-primary">Создать группу</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Main: groups list -->
+  <div>
+    {% if not groups %}
+      <div class="panel" style="text-align:center;color:var(--text-soft);padding:40px;">
+        Групп пока нет. Создайте первую группу слева.
+      </div>
+    {% endif %}
+
+    {% for group in groups %}
+    <div class="panel" style="margin-bottom:20px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:16px;">
+        <div>
+          <h3 style="margin-bottom:2px;">{{ group.name }}</h3>
+          <span style="font-size:13px;color:var(--text-soft);">{{ group.students|length }} учеников</span>
+        </div>
+        <form method="POST" action="{{ url_for('delete_group', gid=group.id) }}"
+              onsubmit="return confirm('Удалить группу «{{ group.name }}» и всех учеников?')">
+          <button type="submit" class="btn btn-danger btn-sm">Удалить группу</button>
+        </form>
+      </div>
+
+      <!-- Add student form -->
+      <form method="POST" action="{{ url_for('add_student') }}"
+            style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px;padding:14px;background:#f8fafc;border-radius:12px;border:1px solid var(--line);">
+        <input type="hidden" name="group_id" value="{{ group.id }}">
+        <div class="field-group" style="flex:1;min-width:180px;">
+          <label>ФИО ученика</label>
+          <input name="full_name" type="text" placeholder="Иванов Иван Иванович" required>
+        </div>
+        <button type="submit" class="btn btn-success btn-sm" style="white-space:nowrap;">+ Добавить ученика</button>
+      </form>
+
+      <!-- Students table -->
+      {% if group.students %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>ФИО</th><th>Пароль</th><th>Статус</th><th>Действия</th></tr>
+          </thead>
+          <tbody>
+            {% for s in group.students|sort(attribute='full_name') %}
+            <tr>
+              <td style="font-weight:600;">{{ s.full_name }}</td>
+              <td><span class="pwd">{{ s.password }}</span></td>
+              <td>
+                {% if s.is_online %}
+                  <span class="badge badge-green">В сети</span>
+                {% else %}
+                  <span class="badge" style="background:#f1f5f9;color:#64748b;">Не в сети</span>
+                {% endif %}
+              </td>
+              <td>
+                <div class="td-actions">
+                  <form method="POST" action="{{ url_for('regen_password', sid=s.id) }}">
+                    <button type="submit" class="btn btn-secondary btn-sm" title="Сгенерировать новый пароль">Новый пароль</button>
+                  </form>
+                  <form method="POST" action="{{ url_for('delete_student', sid=s.id) }}"
+                        onsubmit="return confirm('Удалить ученика «{{ s.full_name }}»?')">
+                    <button type="submit" class="btn btn-danger btn-sm">Удалить</button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+        <p style="color:var(--text-soft);text-align:center;margin:0;">В этой группе пока нет учеников.</p>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+{% endblock %}

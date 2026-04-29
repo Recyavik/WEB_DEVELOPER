@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Панель учителя — MorphoSyntaxTrening{% endblock %}
+{% block content %}
+
+<div class="panel" style="display:flex;align-items:center;gap:20px;padding:18px 24px;margin-bottom:20px;flex-wrap:wrap;">
+  <div style="width:48px;height:48px;border-radius:50%;background:var(--accent-soft);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:900;color:var(--accent);flex-shrink:0;">
+    {{ teacher.name[0] }}
+  </div>
+  <div style="flex:1;">
+    <div style="font-size:20px;font-weight:800;color:var(--text-main);">{{ teacher.name }}</div>
+    <div style="font-size:14px;color:var(--text-soft);margin-top:2px;">{{ teacher.email }}</div>
+  </div>
+  <div style="text-align:center;">
+    <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--text-soft);margin-bottom:4px;">Ваш код для учеников</div>
+    <span class="teacher-code-badge">{{ teacher.code }}</span>
+  </div>
+</div>
+
+<div class="stat-cards">
+  <div class="stat-card"><div class="stat-value">{{ total_groups }}</div><div class="stat-label">Групп</div></div>
+  <div class="stat-card"><div class="stat-value">{{ total_students }}</div><div class="stat-label">Учеников</div></div>
+  <div class="stat-card"><div class="stat-value">{{ total_trainers }}</div><div class="stat-label">Тренажёров</div></div>
+  <div class="stat-card"><div class="stat-value">{{ total_results }}</div><div class="stat-label">Попыток</div></div>
+</div>
+
+{% if recent_results %}
+<div class="panel">
+  <h3>Последние результаты</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Ученик</th><th>Группа</th><th>Тренажёр</th><th>Результат</th><th>Дата</th></tr></thead>
+      <tbody>
+        {% for r in recent_results %}
+        <tr>
+          <td style="font-weight:600;">{{ r.student.full_name }}</td>
+          <td>{{ r.student.group.name }}</td>
+          <td>{{ r.trainer.name }}</td>
+          <td>
+            <span class="badge {% if r.percentage >= 85 %}badge-green{% elif r.percentage >= 50 %}badge-orange{% else %}badge-blue{% endif %}">{{ r.percentage }}%</span>
+          </td>
+          <td style="font-size:13px;color:var(--text-soft);">{{ r.completed_at.strftime('%d.%m %H:%M') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div style="margin-top:12px;display:flex;gap:10px;">
+    <a href="/teacher/stats" class="btn btn-secondary btn-sm">Вся статистика &rarr;</a>
+    <form method="POST" action="/teacher/reset-sessions">
+      <button class="btn btn-secondary btn-sm">Сбросить сессии учеников</button>
+    </form>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

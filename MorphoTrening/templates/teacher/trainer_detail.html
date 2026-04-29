@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+{% block title %}{{ trainer.name }} — Редактирование{% endblock %}
+{% block content %}
+
+<div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap;">
+  <a href="{{ url_for('teacher_trainers') }}" class="btn btn-secondary btn-sm">&larr; К списку тренажёров</a>
+  <span class="badge badge-blue">#{{ trainer.id }}</span>
+</div>
+
+<div style="display:grid;grid-template-columns:340px 1fr;gap:24px;align-items:start;">
+
+  <!-- Sidebar: settings -->
+  <div>
+    <div class="panel">
+      <h3>Настройки тренажёра</h3>
+      <form method="POST" class="form-grid">
+        <input type="hidden" name="action" value="update">
+        <div class="field-group">
+          <label>Название</label>
+          <input name="name" type="text" value="{{ trainer.name }}" required>
+        </div>
+        <div class="field-group">
+          <label>Описание</label>
+          <textarea name="description" style="min-height:70px;">{{ trainer.description }}</textarea>
+        </div>
+        <div class="field-group">
+          <label>Время выполнения (секунды)</label>
+          <input name="time_limit" type="number" min="30" max="3600" value="{{ trainer.time_limit }}">
+        </div>
+        <button type="submit" class="btn btn-primary">Сохранить</button>
+      </form>
+      {% if trainer.sentences %}
+      <form method="POST" action="{{ url_for('reanalyze_trainer', tid=trainer.id) }}"
+            style="margin-top:10px;"
+            onsubmit="return confirm('Пересчитать разбор частей речи для всех предложений тренажёра? Используйте после обновления логики анализа.')">
+        <button type="submit" class="btn btn-secondary btn-sm" style="width:100%;">
+          &#8635; Пересчитать разбор
+        </button>
+      </form>
+      {% endif %}
+    </div>
+
+    <!-- Manual add -->
+    <div class="panel">
+      <h3>Добавить вручную</h3>
+      <form method="POST" class="form-grid">
+        <input type="hidden" name="action" value="add_sentence">
+        <div class="field-group">
+          <label>Предложение на русском языке</label>
+          <textarea name="text" id="manual-text"
+                    placeholder="Введите предложение для разбора..."
+                    required style="min-height:90px;"></textarea>
+        </div>
+        <p style="font-size:13px;color:var(--text-soft);margin:0;">
+          Система автоматически определит часть речи каждого слова.
+        </p>
+        <button type="submit" class="btn btn-success">Добавить предложение</button>
+      </form>
+    </div>
+
+    <!-- Generate from book -->
+    <div class="panel" style="border:2px solid var(--accent-soft);">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+        <h3 style="margin:0;">Генерация из книги</h3>
+        {% if book_loaded %}
+        <span class="badge badge-green" style="font-size:11px;">&#10003; Книга загружена</span>
+        {% endif %}
+      </div>
+
+      {% if book_loaded %}
+      <div style="margin-bottom:12px;">
+        <label style="font-size:13px;color:var(--text-soft);display:block;margin-bottom:6px;">
+          Количество слов в предложении
+        </label>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span style="font-size:13px;color:var(--text-soft);">от</span>
+          <input type="number" id="min-words" value="6" min="2" max="40"
+                 style="width:64px;padding:6px 8px;font-size:14px;">
+          <span style="font-size:13px;color:var(--text-soft);">до</span>
+          <input type="number" id="max-words" value="14" min="3" max="60"
+                 style="width:64px;padding:6px 8px;font-size:14px;">
+          <button type="button" class="btn btn-primary btn-sm" onclick="generateSentence()" id="gen-btn">
+            &#8635;&nbsp;Сгенерировать
+          </button>
+        </div>
+      </div>
+
+      <div id="gen-preview" style="display:none;margin-top:4px;">
+        <div id="gen-text"
+             style="background:#f0f7ff;border:1px solid #bfdbfe;border-radius:10px;
+                    padding:12px 14px;font-size:14px;color:var(--text-main);
+                    line-height:1.6;margin-bottom:10px;cursor:pointer;"
+             title="Нажмите, чтобы скопировать в поле ручного ввода"
+             onclick="copyToManual()"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <form method="POST" id="gen-form">
+            <input type="hidden" name="action" value="add_sentence">
+            <input type="hidden" name="text" id="gen-hidden-text">
+            <button type="submit" class="btn btn-success btn-sm">+ Добавить</button>
+          </form>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="generateSentence()">
+            &#8635;&nbsp;Ещё
+          </button>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="copyToManual()"
+                  title="Перенести в поле ручного редактирования">
+            ✏️ Редактировать
+          </button>
+        </div>
+      </div>
+
+      <div id="gen-error"
+           style="display:none;color:var(--danger);font-size:13px;margin-top:8px;padding:8px 12px;
+                  background:#fef2f2;border-radius:8px;"></div>
+
+      {% else %}
+      <p style="font-size:13px;color:var(--text-soft);margin:0 0 12px;">
+        Загрузите книгу или текстовый файл, чтобы система могла автоматически
+        подбирать предложения нужной длины.
+      </p>
+      <a href="{{ url_for('teacher_book') }}" class="btn btn-secondary btn-sm">
+        📖&nbsp;Загрузить книгу &rarr;
+      </a>
+      {% endif %}
+    </div>
+
+  </div>
+
+  <!-- Main: sentences list -->
+  <div>
+    <div class="panel">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+        <h2 style="margin:0;">Предложения тренажёра</h2>
+        <span class="badge badge-blue">{{ trainer.sentences|length }} предложений</span>
+      </div>
+
+      {% if not trainer.sentences %}
+        <p style="color:var(--text-soft);text-align:center;padding:20px;">
+          Предложений пока нет. Добавьте первое предложение в форме слева.
+        </p>
+      {% endif %}
+
+      {% for s in trainer.sentences %}
+      <div class="sentence-item" id="s{{ s.id }}">
+        <div class="sentence-text">{{ loop.index }}. {{ s.text }}</div>
+
+        <!-- POS preview -->
+        <div class="sentence-preview">
+          {% for item in s.correct_pos %}
+          <div class="pos-chip" style="background:{{ pos_colors[item.pos] }};">
+            {{ item.word }}
+            <span class="pos-chip-label">{{ item.pos }}</span>
+          </div>
+          {% endfor %}
+        </div>
+        <p style="font-size:12px;color:var(--text-soft);margin:6px 0 0;">{{ s.word_count }} слов</p>
+
+        <div class="sentence-actions">
+          <button class="btn btn-secondary btn-sm"
+                  onclick="toggleEdit('{{ s.id }}')">Редактировать</button>
+          <form method="POST" action="{{ url_for('delete_sentence', sid=s.id) }}"
+                onsubmit="return confirm('Удалить это предложение?')">
+            <button type="submit" class="btn btn-danger btn-sm">Удалить</button>
+          </form>
+        </div>
+
+        <form method="POST" action="{{ url_for('edit_sentence', sid=s.id) }}"
+              class="sentence-edit-form" id="edit-{{ s.id }}">
+          <input name="text" type="text" value="{{ s.text }}" required style="flex:1;">
+          <button type="submit" class="btn btn-primary btn-sm">Сохранить</button>
+          <button type="button" class="btn btn-secondary btn-sm"
+                  onclick="toggleEdit('{{ s.id }}')">Отмена</button>
+        </form>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+function toggleEdit(sid) {
+  const form = document.getElementById('edit-' + sid);
+  form.classList.toggle('open');
+}
+
+async function generateSentence() {
+  const min = document.getElementById('min-words').value;
+  const max = document.getElementById('max-words').value;
+  const btn = document.getElementById('gen-btn');
+  const preview = document.getElementById('gen-preview');
+  const errorEl = document.getElementById('gen-error');
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Ищу...';
+  errorEl.style.display = 'none';
+
+  try {
+    const res = await fetch(`/teacher/api/random-sentence?min_words=${min}&max_words=${max}`);
+    const data = await res.json();
+    if (data.sentence) {
+      document.getElementById('gen-text').textContent = data.sentence;
+      document.getElementById('gen-hidden-text').value = data.sentence;
+      preview.style.display = 'block';
+    } else {
+      preview.style.display = 'none';
+      errorEl.textContent = data.error || 'Нет подходящих предложений';
+      errorEl.style.display = 'block';
+    }
+  } catch {
+    errorEl.textContent = 'Ошибка соединения с сервером';
+    errorEl.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '&#8635;&nbsp;Сгенерировать';
+  }
+}
+
+function copyToManual() {
+  const text = document.getElementById('gen-hidden-text').value;
+  if (text) {
+    document.getElementById('manual-text').value = text;
+    document.getElementById('manual-text').focus();
+  }
+}
+</script>
+{% endblock %}

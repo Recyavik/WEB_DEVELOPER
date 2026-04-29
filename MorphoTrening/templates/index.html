@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}MorphoTrening — Главная{% endblock %}
+{% block content %}
+
+<header class="hero">
+  <div class="eyebrow">Учебный тренажёр</div>
+  <h1>Интерактивный тренажёр простого<br>морфосинтаксического анализа предложений</h1>
+  <p style="color:var(--text-soft);font-size:18px;max-width:640px;margin-bottom:0">
+    Перетаскивайте цветные метки частей речи на слова предложения.
+    Система автоматически проверит ответы и запишет результат в журнал.
+  </p>
+  <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:28px;">
+    <a class="btn btn-primary" href="{{ url_for('teacher_login') }}">Войти как учитель</a>
+    <a class="btn btn-success" href="{{ url_for('student_login') }}">Войти как ученик</a>
+  </div>
+</header>
+
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:20px;margin-top:8px;">
+
+  <div class="panel">
+    <div class="eyebrow" style="background:#dcfce7;color:#15803d;">Ученик</div>
+    <h3>Как работает тренажёр</h3>
+    <ul style="color:var(--text-soft);padding-left:20px;margin:0;">
+      <li style="margin-bottom:8px;">Выберите свою группу и имя, введите пароль</li>
+      <li style="margin-bottom:8px;">Откройте тренажёр из списка по названию или ID</li>
+      <li style="margin-bottom:8px;">Раскрасьте каждое слово в цвет его части речи</li>
+      <li style="margin-bottom:8px;">Получите звёзды за каждый правильный ответ</li>
+      <li>Просматривайте свою статистику в личном кабинете</li>
+    </ul>
+  </div>
+
+  <div class="panel">
+    <div class="eyebrow" style="background:#dbeafe;color:#1d4ed8;">Учитель</div>
+    <h3>Инструменты учителя</h3>
+    <ul style="color:var(--text-soft);padding-left:20px;margin:0;">
+      <li style="margin-bottom:8px;">Создавайте группы и добавляйте учеников</li>
+      <li style="margin-bottom:8px;">Генерируйте уникальные пароли для каждого ученика</li>
+      <li style="margin-bottom:8px;">Составляйте тренажёры с любыми предложениями</li>
+      <li style="margin-bottom:8px;">Устанавливайте время выполнения заданий</li>
+      <li>Просматривайте статистику по группам и тренажёрам</li>
+    </ul>
+  </div>
+
+  <div class="panel">
+    <h3>Части речи в тренажёре</h3>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;">
+      <span class="badge" style="background:#dbeafe;color:#1d4ed8;">Существительное</span>
+      <span class="badge" style="background:#dcfce7;color:#15803d;">Прилагательное</span>
+      <span class="badge" style="background:#fee2e2;color:#dc2626;">Глагол</span>
+      <span class="badge" style="background:#ede9fe;color:#7c3aed;">Наречие</span>
+      <span class="badge" style="background:#fef3c7;color:#92400e;">Местоимение</span>
+      <span class="badge" style="background:#f1f5f9;color:#475569;">Предлог</span>
+      <span class="badge" style="background:#fce7f3;color:#be185d;">Союз</span>
+      <span class="badge" style="background:#cffafe;color:#0e7490;">Частица</span>
+      <span class="badge" style="background:#ffedd5;color:#c2410c;">Причастие</span>
+      <span class="badge" style="background:#f0fdf4;color:#166534;">Деепричастие</span>
+      <span class="badge" style="background:#ccfbf1;color:#0f766e;">Числительное</span>
+      <span class="badge" style="background:#fef3c7;color:#78350f;">Междометие</span>
+    </div>
+    <p style="color:var(--text-soft);font-size:14px;margin-top:12px;margin-bottom:0;">
+      Разбор частей речи выполняется автоматически с помощью библиотеки <strong>pymorphy3</strong>.
+    </p>
+  </div>
+
+</div>
+{% endblock %}

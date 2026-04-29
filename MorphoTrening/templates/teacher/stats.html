@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}Статистика — MorphoTrening{% endblock %}
+{% block content %}
+
+<header class="hero" style="padding:28px 36px;">
+  <div class="eyebrow">Аналитика</div>
+  <h1 style="font-size:clamp(24px,4vw,36px);">Статистика выполнения</h1>
+</header>
+
+<!-- Filters -->
+<div class="panel" style="margin-bottom:20px;">
+  <h3 style="margin-bottom:16px;">Фильтры</h3>
+  <form method="GET" style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;">
+    <div class="field-group" style="flex:1;min-width:160px;">
+      <label>Группа</label>
+      <select name="group_id" id="filter-group" onchange="loadStudents(this.value)">
+        <option value="">Все группы</option>
+        {% for g in groups %}
+        <option value="{{ g.id }}" {% if sel_group == g.id %}selected{% endif %}>{{ g.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field-group" style="flex:1;min-width:180px;">
+      <label>Ученик</label>
+      <select name="student_id" id="filter-student">
+        <option value="">Все ученики</option>
+        {% for s in students_for_group %}
+        <option value="{{ s.id }}" {% if sel_student == s.id %}selected{% endif %}>{{ s.full_name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field-group" style="flex:1;min-width:180px;">
+      <label>Тренажёр</label>
+      <select name="trainer_id">
+        <option value="">Все тренажёры</option>
+        {% for t in trainers %}
+        <option value="{{ t.id }}" {% if sel_trainer == t.id %}selected{% endif %}>{{ t.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field-group" style="min-width:140px;">
+      <label>Дата с</label>
+      <input type="date" name="date_from" value="{{ date_from }}">
+    </div>
+    <div class="field-group" style="min-width:140px;">
+      <label>Дата по</label>
+      <input type="date" name="date_to" value="{{ date_to }}">
+    </div>
+    <div style="display:flex;gap:8px;">
+      <button type="submit" class="btn btn-primary">Применить</button>
+      <a href="{{ url_for('teacher_stats') }}" class="btn btn-secondary">Сбросить</a>
+    </div>
+  </form>
+</div>
+
+<!-- Summary -->
+{% if results %}
+<div class="stat-cards" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));">
+  <div class="stat-card">
+    <div class="stat-value">{{ results|length }}</div>
+    <div class="stat-label">Попыток</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ ((results | sum(attribute='percentage')) / results|length) | round(1) }}%</div>
+    <div class="stat-label">Средний %</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ results | selectattr('percentage', 'ge', 85) | list | length }}</div>
+    <div class="stat-label">Отлично (&ge;85%)</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ results | map(attribute='total_stars') | sum }}</div>
+    <div class="stat-label">Звёзд всего</div>
+  </div>
+</div>
+{% endif %}
+
+<!-- Results table -->
+<div class="panel">
+  <h2>Результаты</h2>
+  {% if not results %}
+    <p style="text-align:center;color:var(--text-soft);padding:20px;">Нет результатов по выбранным фильтрам.</p>
+  {% else %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Ученик</th><th>Группа</th><th>Тренажёр</th>
+          <th>Звёзды</th><th>Результат</th><th>Дата и время</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in results %}
+        <tr>
+          <td style="font-weight:600;">{{ r.student.full_name }}</td>
+          <td>{{ r.student.group.name }}</td>
+          <td>{{ r.trainer.name }}</td>
+          <td>{{ r.total_stars }} / {{ r.max_stars }}
+            <span class="{% if r.percentage >= 85 %}star-green{% elif r.percentage >= 61 %}star-blue{% elif r.percentage >= 31 %}star-yellow{% else %}star-red{% endif %}">&#9733;</span>
+          </td>
+          <td>
+            <span class="badge {% if r.percentage >= 85 %}badge-green{% elif r.percentage >= 50 %}badge-orange{% else %}badge-blue{% endif %}">
+              {{ r.percentage }}%
+            </span>
+          </td>
+          <td style="font-size:13px;color:var(--text-soft);">{{ r.completed_at.strftime('%d.%m.%Y %H:%M') }}</td>
+          <td>
+            <form method="POST" action="{{ url_for('delete_result', rid=r.id) }}"
+                  onsubmit="return confirm('Удалить этот результат?')">
+              <button type="submit" class="btn btn-danger btn-sm">Удалить</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+async function loadStudents(groupId) {
+  const sel = document.getElementById('filter-student');
+  sel.innerHTML = '<option value="">Все ученики</option>';
+  if (!groupId) return;
+  const res = await fetch(`/teacher/stats/students-by-group?group_id=${groupId}`);
+  const data = await res.json();
+  data.forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s.id;
+    opt.textContent = s.name;
+    sel.appendChild(opt);
+  });
+}
+</script>
+{% endblock %}

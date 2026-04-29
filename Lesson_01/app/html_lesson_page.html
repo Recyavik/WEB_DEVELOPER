@@ -1,0 +1,970 @@
+<!DOCTYPE html>
+<!--
+  <!DOCTYPE html> сообщает браузеру, что документ нужно открывать
+  в современном стандарте HTML5, а не в старом режиме совместимости.
+-->
+<html lang="ru">
+<!--
+  <html> — корневой тег всего документа.
+  lang="ru" говорит браузеру, переводчикам, поисковикам и скринридерам,
+  что основной язык страницы — русский.
+-->
+<head>
+  <!--
+    <head> хранит служебную информацию о странице.
+    Здесь обычно лежат метаданные, заголовок вкладки, стили, шрифты,
+    SEO-описания и подключения скриптов.
+  -->
+  <meta charset="UTF-8">
+  <!--
+    charset="UTF-8" задаёт кодировку документа.
+    Без неё русские буквы могут отображаться "кракозябрами".
+  -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!--
+    name="viewport" говорит мобильному браузеру,
+    как рассчитывать ширину страницы.
+    width=device-width означает "ширина страницы равна ширине экрана устройства".
+    initial-scale=1.0 означает "первичный масштаб без увеличения и уменьшения".
+  -->
+  <meta
+    name="description"
+    content="Учебная HTML-страница с подробными комментариями по каждому важному тегу, атрибуту и блоку интерфейса."
+  >
+  <!--
+    description часто используют поисковые системы и превью ссылок.
+    Это не обязательный тег для отображения страницы, но очень полезный.
+  -->
+  <title>Урок 1 HTML: структура страницы и размещение элементов</title>
+  <!--
+    <title> — текст во вкладке браузера.
+    Почти ни одна страница не обходится без title.
+  -->
+
+  <style>
+    /*
+      Ниже идёт CSS.
+      CSS не относится к HTML напрямую, но почти любая реальная страница
+      использует стили, поэтому здесь они встроены прямо в документ,
+      чтобы новичку было удобно видеть всё в одном файле.
+    */
+
+    :root {
+      /*
+        :root — глобальная область для CSS-переменных.
+        Переменные удобно использовать, чтобы не повторять цвета и размеры
+        много раз в разных местах.
+      */
+      --page-bg: #f4f7fb;
+      --panel-bg: #ffffff;
+      --text-main: #1f2937;
+      --text-soft: #4b5563;
+      --line: #dbe4f0;
+      --accent: #1d4ed8;
+      --accent-soft: #dbeafe;
+      --success: #15803d;
+      --success-soft: #dcfce7;
+      --warning: #92400e;
+      --warning-soft: #fef3c7;
+      --shadow: 0 18px 45px rgba(15, 23, 42, 0.08);
+      --radius: 20px;
+    }
+
+    * {
+      /*
+        * — универсальный селектор.
+        Он выбирает вообще все элементы страницы.
+      */
+      box-sizing: border-box;
+      /*
+        box-sizing: border-box делает расчёт ширины и высоты удобнее:
+        padding и border входят внутрь указанного размера,
+        а не прибавляются сверху.
+      */
+    }
+
+    html {
+      scroll-behavior: smooth;
+      /*
+        Плавная прокрутка к якорям.
+        Когда пользователь нажимает ссылку на #forms или #summary,
+        переход вниз страницы будет мягким.
+      */
+    }
+
+    body {
+      margin: 0;
+      /*
+        У body по умолчанию есть внешние отступы браузера.
+        margin: 0 убирает их, чтобы мы управляли пространством сами.
+      */
+      font-family: "Segoe UI", Tahoma, sans-serif;
+      /*
+        font-family задаёт список шрифтов по приоритету.
+        Браузер попытается взять первый, а если его нет — следующий.
+      */
+      background:
+        radial-gradient(circle at top left, #dbeafe 0%, transparent 32%),
+        linear-gradient(180deg, #f8fbff 0%, var(--page-bg) 100%);
+      /*
+        Здесь сразу два фона:
+        1. radial-gradient — мягкое круглое цветовое пятно.
+        2. linear-gradient — плавный вертикальный переход цвета.
+      */
+      color: var(--text-main);
+      line-height: 1.6;
+      /*
+        line-height управляет расстоянием между строками текста.
+        Значение 1.6 обычно комфортно для чтения.
+      */
+    }
+
+    .page {
+      width: min(1180px, calc(100% - 32px));
+      /*
+        width: min(...) берёт меньшее из двух значений.
+        1180px — желаемая максимальная ширина.
+        calc(100% - 32px) — почти вся ширина экрана, но с зазором по бокам.
+      */
+      margin: 0 auto;
+      /*
+        0 auto центрирует блок по горизонтали.
+      */
+      padding: 24px 0 56px;
+    }
+
+    .hero,
+    .panel,
+    .lesson-card,
+    .code-sample,
+    .table-wrap,
+    .tips,
+    .site-footer {
+      background: var(--panel-bg);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .hero {
+      padding: 36px;
+      margin-bottom: 24px;
+      position: relative;
+      overflow: hidden;
+      /*
+        overflow: hidden обрезает всё, что выходит за пределы блока.
+        Полезно для декоративных элементов и скруглённых углов.
+      */
+    }
+
+    .hero::after {
+      /*
+        ::after создаёт псевдоэлемент после содержимого блока.
+        Он не существует в HTML, но существует визуально через CSS.
+      */
+      content: "";
+      position: absolute;
+      inset: auto -80px -80px auto;
+      /*
+        inset — короткая запись для top/right/bottom/left.
+        Здесь псевдоэлемент сдвигается в правый нижний угол.
+      */
+      width: 260px;
+      height: 260px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(29, 78, 216, 0.16), transparent 70%);
+    }
+
+    .eyebrow {
+      display: inline-block;
+      padding: 8px 14px;
+      margin-bottom: 18px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      /*
+        text-transform: uppercase переводит текст в верхний регистр.
+      */
+    }
+
+    h1,
+    h2,
+    h3 {
+      margin-top: 0;
+      line-height: 1.2;
+    }
+
+    h1 {
+      font-size: clamp(32px, 5vw, 54px);
+      /*
+        clamp(min, preferred, max) ограничивает размер между минимумом и максимумом.
+        Это удобно для адаптивной типографики.
+      */
+      margin-bottom: 16px;
+    }
+
+    .hero p {
+      max-width: 760px;
+      margin-bottom: 18px;
+      color: var(--text-soft);
+      font-size: 18px;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 24px;
+    }
+
+    .button-link {
+      display: inline-block;
+      padding: 12px 18px;
+      border-radius: 12px;
+      text-decoration: none;
+      /*
+        text-decoration: none убирает стандартное подчёркивание ссылки.
+      */
+      font-weight: 700;
+    }
+
+    .button-link.primary {
+      background: var(--accent);
+      color: #ffffff;
+    }
+
+    .button-link.secondary {
+      background: #eef2ff;
+      color: #3730a3;
+    }
+
+    .main-grid {
+      display: grid;
+      /*
+        display: grid включает CSS Grid — современную систему раскладки.
+      */
+      grid-template-columns: 2fr 1fr;
+      /*
+        Две колонки:
+        2fr — основная колонка в два раза шире.
+        1fr — боковая колонка в два раза уже.
+      */
+      gap: 24px;
+      align-items: start;
+    }
+
+    .panel {
+      padding: 28px;
+      margin-bottom: 24px;
+    }
+
+    .panel p,
+    .panel li,
+    .panel td,
+    .panel th,
+    .site-footer p {
+      color: var(--text-soft);
+    }
+
+    .check-list,
+    .topic-list,
+    .nav-list,
+    .card-list {
+      padding-left: 20px;
+    }
+
+    .check-list li,
+    .topic-list li,
+    .nav-list li,
+    .card-list li {
+      margin-bottom: 10px;
+    }
+
+    .semantic-layout {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      /*
+        repeat(6, 1fr) означает "создай 6 одинаковых колонок".
+      */
+      gap: 14px;
+      margin-top: 20px;
+    }
+
+    .box {
+      padding: 18px;
+      border-radius: 16px;
+      font-weight: 700;
+      text-align: center;
+      border: 1px solid transparent;
+    }
+
+    .box.header,
+    .box.footer {
+      grid-column: 1 / -1;
+      /*
+        От первой до последней линии сетки.
+        То есть блок занимает всю ширину ряда.
+      */
+    }
+
+    .box.nav {
+      grid-column: 1 / -1;
+      background: #ffedd5;
+      border-color: #fdba74;
+    }
+
+    .box.header {
+      background: #dbeafe;
+      border-color: #93c5fd;
+    }
+
+    .box.main {
+      grid-column: span 4;
+      background: #dcfce7;
+      border-color: #86efac;
+    }
+
+    .box.aside {
+      grid-column: span 2;
+      background: #ede9fe;
+      border-color: #c4b5fd;
+    }
+
+    .box.footer {
+      background: #e2e8f0;
+      border-color: #cbd5e1;
+    }
+
+    .lesson-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      /*
+        auto-fit автоматически размещает карточки по ширине.
+        minmax(220px, 1fr) значит:
+        - карточка не станет уже 220px
+        - но может растягиваться и занимать свободное пространство
+      */
+      gap: 16px;
+      margin-top: 20px;
+    }
+
+    .lesson-card {
+      padding: 20px;
+    }
+
+    .lesson-card h3 {
+      margin-bottom: 10px;
+    }
+
+    .code-sample {
+      padding: 0;
+      overflow: hidden;
+    }
+
+    .code-sample-header {
+      padding: 14px 18px;
+      background: #eff6ff;
+      border-bottom: 1px solid var(--line);
+      font-weight: 700;
+      color: #1e40af;
+    }
+
+    pre {
+      margin: 0;
+      padding: 20px;
+      overflow-x: auto;
+      /*
+        Если код шире блока, появится горизонтальная прокрутка.
+      */
+      background: #0f172a;
+      color: #e2e8f0;
+      font-size: 14px;
+    }
+
+    code {
+      font-family: Consolas, "Courier New", monospace;
+      /*
+        Моноширинный шрифт лучше всего подходит для кода.
+      */
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      /*
+        border-collapse: collapse объединяет границы соседних ячеек.
+      */
+    }
+
+    th,
+    td {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f8fafc;
+      color: #0f172a;
+    }
+
+    .tips {
+      padding: 22px;
+      background: linear-gradient(180deg, #fff7ed 0%, #ffffff 100%);
+      border-color: #fed7aa;
+    }
+
+    .tips h3 {
+      color: var(--warning);
+      margin-bottom: 12px;
+    }
+
+    .mini-form {
+      display: grid;
+      gap: 14px;
+      margin-top: 20px;
+    }
+
+    .field-group {
+      display: grid;
+      gap: 8px;
+    }
+
+    label {
+      font-weight: 700;
+      color: #0f172a;
+    }
+
+    input,
+    select,
+    textarea,
+    button {
+      font: inherit;
+      /*
+        font: inherit заставляет элементы формы унаследовать шрифт
+        от родительского блока, а не использовать системный по умолчанию.
+      */
+    }
+
+    input,
+    select,
+    textarea {
+      width: 100%;
+      padding: 12px 14px;
+      border: 1px solid #cbd5e1;
+      border-radius: 12px;
+      background: #ffffff;
+    }
+
+    textarea {
+      min-height: 120px;
+      resize: vertical;
+      /*
+        Пользователь сможет менять высоту textarea,
+        но не ширину.
+      */
+    }
+
+    button {
+      padding: 14px 18px;
+      border: none;
+      border-radius: 12px;
+      background: var(--success);
+      color: #ffffff;
+      font-weight: 700;
+      cursor: pointer;
+      /*
+        cursor: pointer меняет курсор на "руку",
+        показывая, что элемент кликабельный.
+      */
+    }
+
+    .anchor-nav {
+      position: sticky;
+      /*
+        sticky оставляет блок "прилипшим" к верхней части окна
+        при прокрутке, пока позволяет родительская область.
+      */
+      top: 24px;
+    }
+
+    .site-footer {
+      padding: 24px 28px;
+      margin-top: 8px;
+      text-align: center;
+    }
+
+    .inline-code {
+      padding: 2px 8px;
+      border-radius: 8px;
+      background: #eff6ff;
+      color: #1d4ed8;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 0.95em;
+    }
+
+    @media (max-width: 920px) {
+      /*
+        Это медиа-запрос CSS.
+        Он срабатывает, когда ширина экрана становится меньше 920px.
+        Важно: это уже CSS-механизм адаптации, а не HTML-условие.
+      */
+      .main-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .anchor-nav {
+        position: static;
+      }
+
+      .semantic-layout {
+        grid-template-columns: 1fr;
+      }
+
+      .box.header,
+      .box.nav,
+      .box.main,
+      .box.aside,
+      .box.footer {
+        grid-column: auto;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <!--
+    <body> содержит всё, что реально увидит пользователь в окне браузера.
+    Именно здесь размещаются "виджеты":
+    заголовки, меню, карточки, формы, таблицы, кнопки и подвал.
+  -->
+
+  <div class="page">
+    <!--
+      div class="page" — внешний контейнер страницы.
+      class="page" нужен для стилизации через CSS.
+      Этот блок ограничивает ширину и центрирует контент.
+    -->
+
+    <header class="hero">
+      <!--
+        header — шапка страницы.
+        class="hero" добавляет специальное оформление именно для большой
+        стартовой секции наверху.
+      -->
+      <div class="eyebrow">Урок 1 по HTML</div>
+      <!--
+        Это небольшой акцентный ярлык над главным заголовком.
+        div здесь подходит, потому что смысл у блока декоративно-информационный.
+      -->
+
+      <h1>HTML как фундамент любой страницы</h1>
+      <!--
+        h1 — главный заголовок страницы.
+        Обычно он один на страницу, потому что отражает основную тему.
+      -->
+
+      <p>
+        Эта страница насыщена примерами базовых HTML-элементов, из которых строится почти
+        любой сайт: шапка, меню, основной контент, боковая колонка, списки, карточки, таблицы,
+        формы, кнопки, ссылки и подвал.
+      </p>
+
+      <p>
+        Важная мысль урока: HTML задаёт структуру и смысл, CSS оформляет внешний вид, а
+        JavaScript отвечает за поведение. Поэтому сначала мы учимся правильно раскладывать
+        блоки по местам, а уже потом делаем страницу красивой и интерактивной.
+      </p>
+
+      <div class="hero-actions">
+        <!--
+          Этот блок хранит ссылки-кнопки.
+          display:flex в CSS выстроит их в ряд.
+        -->
+        <a class="button-link primary" href="#structure">Перейти к структуре</a>
+        <!--
+          href="#structure" ведёт к элементу с id="structure" на этой же странице.
+          Это называется якорной ссылкой.
+        -->
+        <a class="button-link secondary" href="#forms">Перейти к формам</a>
+      </div>
+    </header>
+
+    <div class="main-grid">
+      <!--
+        Здесь начинается двухколоночная раскладка:
+        слева основное содержимое,
+        справа навигация и подсказки.
+      -->
+
+      <main>
+        <!--
+          main — главная смысловая область страницы.
+          На одной странице обычно должен быть один основной main.
+        -->
+
+        <section class="panel" id="structure">
+          <!--
+            section — тематический раздел.
+            class="panel" даёт блоку общий внешний вид карточки.
+            id="structure" позволяет ссылаться на этот блок через #structure.
+          -->
+          <h2>1. Минимальная структура HTML-документа</h2>
+
+          <p>
+            Ниже показан каркас, без которого не обходится практически ни одна современная
+            веб-страница. Даже если документ очень маленький, у него всё равно есть
+            <span class="inline-code">html</span>, <span class="inline-code">head</span> и
+            <span class="inline-code">body</span>.
+          </p>
+
+          <div class="code-sample">
+            <div class="code-sample-header">Минимальный шаблон HTML</div>
+            <pre><code>&lt;!DOCTYPE html&gt;
+&lt;html lang="ru"&gt;
+  &lt;head&gt;
+    &lt;meta charset="UTF-8"&gt;
+    &lt;meta name="viewport" content="width=device-width, initial-scale=1.0"&gt;
+    &lt;title&gt;Моя страница&lt;/title&gt;
+  &lt;/head&gt;
+  &lt;body&gt;
+    &lt;h1&gt;Привет, HTML!&lt;/h1&gt;
+  &lt;/body&gt;
+&lt;/html&gt;</code></pre>
+          </div>
+
+          <ul class="check-list">
+            <li><strong>DOCTYPE</strong> включает современный стандарт HTML5.</li>
+            <li><strong>html</strong> является корневым элементом всего документа.</li>
+            <li><strong>head</strong> содержит служебные данные, невидимые в основной области страницы.</li>
+            <li><strong>body</strong> содержит весь видимый интерфейс.</li>
+          </ul>
+        </section>
+
+        <section class="panel">
+          <h2>2. Как раскладывать виджеты по странице</h2>
+
+          <p>
+            Когда мы говорим о размещении элементов, сначала нужно мыслить не кнопками и
+            картинками, а крупными смысловыми областями. Такая привычка помогает не сваливать
+            всё в беспорядочный набор <span class="inline-code">div</span>-блоков.
+          </p>
+
+          <div class="semantic-layout">
+            <div class="box header">&lt;header&gt;</div>
+            <div class="box nav">&lt;nav&gt;</div>
+            <div class="box main">&lt;main&gt;</div>
+            <div class="box aside">&lt;aside&gt;</div>
+            <div class="box footer">&lt;footer&gt;</div>
+          </div>
+
+          <ol class="topic-list">
+            <!--
+              ol — нумерованный список.
+              Он подходит, когда у пунктов есть логический порядок.
+            -->
+            <li>Сначала выделяем шапку страницы: логотип, название, главное сообщение.</li>
+            <li>Затем размещаем навигацию: ссылки на разделы, меню, якоря.</li>
+            <li>После этого строим main — центральную область с основным материалом.</li>
+            <li>Если есть второстепенный контент, используем aside.</li>
+            <li>Внизу страницы ставим footer с контактами, авторством и служебной информацией.</li>
+          </ol>
+        </section>
+
+        <section class="panel">
+          <h2>3. Основные элементы, без которых почти не обходится страница</h2>
+
+          <div class="lesson-cards">
+            <article class="lesson-card">
+              <!--
+                article подходит для самостоятельного фрагмента,
+                который можно мысленно отделить от остальных.
+              -->
+              <h3>Заголовки</h3>
+              <p>
+                Теги <span class="inline-code">h1-h6</span> задают иерархию текста:
+                от главного заголовка к более мелким подзаголовкам.
+              </p>
+            </article>
+
+            <article class="lesson-card">
+              <h3>Абзацы</h3>
+              <p>
+                Тег <span class="inline-code">p</span> хранит обычный текст.
+                Он нужен почти на любой информационной странице.
+              </p>
+            </article>
+
+            <article class="lesson-card">
+              <h3>Ссылки</h3>
+              <p>
+                Тег <span class="inline-code">a</span> связывает страницы между собой,
+                ведёт на другие разделы, документы и внешние сайты.
+              </p>
+            </article>
+
+            <article class="lesson-card">
+              <h3>Списки</h3>
+              <p>
+                Списки через <span class="inline-code">ul</span> и <span class="inline-code">ol</span>
+                подходят для меню, преимуществ, инструкций и шагов.
+              </p>
+            </article>
+
+            <article class="lesson-card">
+              <h3>Изображения</h3>
+              <p>
+                Тег <span class="inline-code">img</span> добавляет картинку.
+                Атрибут <span class="inline-code">alt</span> обязателен по смыслу и доступности.
+              </p>
+            </article>
+
+            <article class="lesson-card">
+              <h3>Формы</h3>
+              <p>
+                Через <span class="inline-code">form</span>, <span class="inline-code">input</span> и
+                <span class="inline-code">button</span> пользователь отправляет данные.
+              </p>
+            </article>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>4. Пример ссылки, изображения и подписи</h2>
+
+          <p>
+            Ссылка ниже показывает, как работает тег <span class="inline-code">a</span>.
+            Атрибут <span class="inline-code">target="_blank"</span> открывает адрес в новой вкладке,
+            а <span class="inline-code">rel="noopener noreferrer"</span> добавляет безопасность
+            для внешних ссылок.
+          </p>
+
+          <p>
+            <a href="https://developer.mozilla.org/ru/docs/Web/HTML" target="_blank" rel="noopener noreferrer">
+              Открыть справочник MDN по HTML
+            </a>
+          </p>
+
+          <figure>
+            <!--
+              figure удобно использовать, когда картинка и подпись
+              образуют единый смысловой блок.
+            -->
+            <img
+              src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='900' height='320' viewBox='0 0 900 320'%3E%3Crect width='900' height='320' fill='%23dbeafe'/%3E%3Crect x='40' y='40' width='820' height='240' rx='24' fill='%23ffffff' stroke='%2393c5fd' stroke-width='2'/%3E%3Ctext x='450' y='135' text-anchor='middle' font-size='44' font-family='Arial' font-weight='700' fill='%231d4ed8'%3EHTML%3C/text%3E%3Ctext x='450' y='185' text-anchor='middle' font-size='28' font-family='Arial' fill='%23334155'%3E%D1%8D%D1%82%D0%BE%20%D1%81%D1%82%D1%80%D1%83%D0%BA%D1%82%D1%83%D1%80%D0%B0%20%D1%81%D1%82%D1%80%D0%B0%D0%BD%D0%B8%D1%86%D1%8B%3C/text%3E%3C/svg%3E"
+              alt="Иллюстрация с надписью HTML равно структура страницы"
+              style="width: 100%; border-radius: 18px; border: 1px solid #bfdbfe;"
+            >
+            <!--
+              src — путь к изображению.
+              alt — текстовое описание картинки.
+              style — встроенные стили прямо в атрибуте элемента.
+              Обычно стили лучше хранить в CSS, но здесь это сделано
+              как демонстрация самого атрибута style.
+            -->
+            <figcaption>
+              Подпись к изображению объясняет, что HTML — это в первую очередь структура, а не оформление.
+            </figcaption>
+          </figure>
+        </section>
+
+        <section class="panel">
+          <h2>5. Таблица как пример структурированных данных</h2>
+
+          <p>
+            Таблицы нужны не для общего макета страницы, а для действительно табличных данных:
+            сравнений, прайсов, расписаний, отчётов и характеристик.
+          </p>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <!--
+                  thead — шапка таблицы.
+                  Здесь обычно лежит строка с названиями колонок.
+                -->
+                <tr>
+                  <!-- tr — table row, то есть строка таблицы. -->
+                  <th>Элемент</th>
+                  <!-- th — ячейка-заголовок. -->
+                  <th>Зачем нужен</th>
+                  <th>Пример</th>
+                </tr>
+              </thead>
+              <tbody>
+                <!-- tbody — основное содержимое таблицы. -->
+                <tr>
+                  <td>header</td>
+                  <td>Шапка страницы или раздела</td>
+                  <td>Логотип, название сайта, контакты</td>
+                </tr>
+                <tr>
+                  <td>nav</td>
+                  <td>Навигация по разделам</td>
+                  <td>Меню, хлебные крошки, вкладки</td>
+                </tr>
+                <tr>
+                  <td>main</td>
+                  <td>Главный смысловой контент</td>
+                  <td>Статья, каталог, лендинг, карточки</td>
+                </tr>
+                <tr>
+                  <td>form</td>
+                  <td>Сбор и отправка данных пользователя</td>
+                  <td>Поиск, заявка, регистрация</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel" id="forms">
+          <h2>6. Формы, поля ввода и запросы</h2>
+
+          <p>
+            В чистом HTML нет циклов и условий, но есть очень важный механизм общения пользователя
+            со страницей — формы. Через форму можно отправить GET- или POST-запрос.
+          </p>
+
+          <form class="mini-form" action="/search" method="get">
+            <!--
+              action="/search" указывает адрес, куда отправится форма.
+              method="get" говорит, что данные полей будут добавлены в URL
+              в виде query-параметров.
+            -->
+
+            <div class="field-group">
+              <label for="course-name">Что изучаем</label>
+              <!--
+                for="course-name" связывает подпись label
+                с полем, у которого id="course-name".
+                Если нажать на текст подписи, курсор встанет в поле.
+              -->
+              <input
+                id="course-name"
+                name="course"
+                type="text"
+                placeholder="Например: HTML basics"
+                value="HTML structure"
+              >
+              <!--
+                id — уникальный идентификатор элемента на странице.
+                name — имя параметра, под которым значение уйдёт на сервер.
+                type="text" — обычное текстовое поле.
+                placeholder — подсказка внутри пустого поля.
+                value — заранее установленное значение.
+              -->
+            </div>
+
+            <div class="field-group">
+              <label for="level">Уровень ученика</label>
+              <select id="level" name="level">
+                <!--
+                  select создаёт выпадающий список.
+                  option — один вариант выбора внутри списка.
+                -->
+                <option value="beginner" selected>Начинающий</option>
+                <option value="junior">Уже пробовал HTML</option>
+                <option value="confident">Уверенный пользователь</option>
+              </select>
+            </div>
+
+            <div class="field-group">
+              <label for="comment">Что осталось непонятным</label>
+              <textarea
+                id="comment"
+                name="comment"
+                placeholder="Напиши, какую тему нужно разобрать ещё подробнее"
+              ></textarea>
+            </div>
+
+            <button type="submit">Отправить учебный GET-запрос</button>
+            <!--
+              type="submit" означает, что кнопка отправляет форму.
+              Если этот атрибут не указать, button внутри формы часто
+              тоже будет вести себя как submit, но лучше писать явно.
+            -->
+          </form>
+        </section>
+
+        <section class="panel">
+          <h2>7. Есть ли в HTML циклы и условия?</h2>
+
+          <p>
+            Короткий ответ: <strong>нет, в чистом HTML их нет</strong>. HTML — это язык разметки,
+            а не язык программирования. Он описывает, какие элементы существуют на странице,
+            но сам по себе не умеет говорить:
+            «повтори карточку 5 раз» или «покажи блок только при таком условии».
+          </p>
+
+          <ul class="check-list">
+            <li>Повторение через циклы обычно появляется в шаблонизаторах или JavaScript.</li>
+            <li>Условия <span class="inline-code">if/else</span> тоже появляются вне чистого HTML.</li>
+            <li>Запросы в HTML чаще всего связаны со ссылками и формами.</li>
+            <li>Медиа-запросы относятся к CSS, а не к HTML.</li>
+          </ul>
+        </section>
+
+        <section class="panel" id="summary">
+          <h2>8. Что ученик должен запомнить после этой страницы</h2>
+
+          <ol class="topic-list">
+            <li>Любая страница начинается с базового каркаса: doctype, html, head и body.</li>
+            <li>Размещение элементов лучше строить от крупных зон к мелким виджетам.</li>
+            <li>Семантические теги делают код понятнее людям, браузерам и поисковикам.</li>
+            <li>Самые частые элементы страницы: заголовки, текст, ссылки, списки, изображения и формы.</li>
+            <li>HTML не содержит циклов и условий, но отлично задаёт основу для дальнейшей логики.</li>
+          </ol>
+        </section>
+      </main>
+
+      <aside class="anchor-nav">
+        <!--
+          aside хранит дополнительную информацию, которая не является
+          главным контентом страницы, но помогает пользователю.
+        -->
+
+        <section class="panel">
+          <h2>Навигация по уроку</h2>
+          <ul class="nav-list">
+            <li><a href="#structure">Структура документа</a></li>
+            <li><a href="#forms">Формы и поля</a></li>
+            <li><a href="#summary">Краткое закрепление</a></li>
+          </ul>
+        </section>
+
+        <section class="tips">
+          <h3>Подсказки начинающему</h3>
+          <ul class="nav-list">
+            <li>Сначала думай о смысле блока, а потом о его внешнем виде.</li>
+            <li>Не размещай всю страницу только через бесконечные div без причины.</li>
+            <li>Проверяй вложенность тегов: открытие и закрытие должны совпадать.</li>
+            <li>Всегда добавляй понятный alt для важных изображений.</li>
+            <li>У формы почти всегда должны быть label и name у полей.</li>
+          </ul>
+        </section>
+      </aside>
+    </div>
+
+    <footer class="site-footer">
+      <!--
+        footer — нижняя часть страницы.
+        Здесь часто размещают авторство, контакты, ссылки и служебные пометки.
+      -->
+      <p>
+        Учебная страница по HTML. Следующий шаг после разбора этой разметки —
+        собрать похожую страницу самостоятельно руками и попробовать изменить её структуру.
+      </p>
+    </footer>
+  </div>
+</body>
+</html>

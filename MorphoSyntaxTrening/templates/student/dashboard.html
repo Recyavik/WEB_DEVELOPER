@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Тренажёры — MorphoSyntaxTrening{% endblock %}
+{% block content %}
+
+<div class="panel" style="display:flex;align-items:center;gap:20px;padding:18px 24px;margin-bottom:20px;">
+  <div style="width:48px;height:48px;border-radius:50%;background:var(--accent-soft);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:900;color:var(--accent);flex-shrink:0;">
+    {{ student.full_name[0] }}
+  </div>
+  <div>
+    <div style="font-size:20px;font-weight:800;">Добро пожаловать, {{ student.full_name }}!</div>
+    <div style="font-size:14px;color:var(--text-soft);margin-top:2px;">Группа: <strong>{{ student.group.name }}</strong></div>
+  </div>
+</div>
+
+{% if recent %}
+<div class="panel" style="margin-bottom:24px;">
+  <h3>Мои последние результаты</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Тренажёр</th><th>Звёзды</th><th>Результат</th><th>Дата</th></tr></thead>
+      <tbody>
+        {% for r in recent %}
+        <tr>
+          <td style="font-weight:600;">{{ r.trainer.name }}</td>
+          <td>{{ r.total_stars }} / {{ r.max_stars }}
+            <span class="{% if r.percentage >= 85 %}star-green{% elif r.percentage >= 61 %}star-blue{% elif r.percentage >= 31 %}star-yellow{% else %}star-red{% endif %}">&#9733;</span>
+          </td>
+          <td><span class="badge {% if r.percentage >= 85 %}badge-green{% elif r.percentage >= 50 %}badge-orange{% else %}badge-blue{% endif %}">{{ r.percentage }}%</span></td>
+          <td style="font-size:13px;color:var(--text-soft);">{{ r.completed_at.strftime('%d.%m %H:%M') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div style="margin-top:12px;">
+    <a href="/student/stats" class="btn btn-secondary btn-sm">Вся моя статистика &rarr;</a>
+  </div>
+</div>
+{% endif %}
+
+<h2>Доступные тренажёры</h2>
+{% if not trainers %}
+  <div class="panel" style="text-align:center;color:var(--text-soft);padding:40px;">
+    Учитель ещё не создал тренажёры. Зайдите позже.
+  </div>
+{% else %}
+<div style="margin-bottom:16px;">
+  <input type="text" id="trainer-search" placeholder="Поиск по названию или ID..."
+         oninput="filterTrainers(this.value)" style="max-width:400px;">
+</div>
+<div class="trainer-grid" id="trainer-grid">
+  {% for t in trainers %}
+  <div class="trainer-card" data-name="{{ t.name|lower }}" data-id="{{ t.id }}">
+    <div class="trainer-card-id">Тренажёр #{{ t.id }}</div>
+    <div class="trainer-card-name">{{ t.name }}</div>
+    {% if t.description %}<div class="trainer-card-meta">{{ t.description }}</div>{% endif %}
+    <div class="trainer-card-meta">
+      {{ t.sentences|length }} предл. &nbsp;&bull;&nbsp;
+      {{ t.time_limit // 60 }}м {{ t.time_limit % 60 }}с
+    </div>
+    <div class="trainer-card-actions">
+      <a href="/student/exercise/{{ t.id }}" class="btn btn-primary" style="width:100%;justify-content:center;">
+        Начать тренажёр
+      </a>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+function filterTrainers(q) {
+  q = q.toLowerCase().trim();
+  document.querySelectorAll('.trainer-card').forEach(c => {
+    c.style.display = (c.dataset.name.includes(q) || c.dataset.id.includes(q)) ? '' : 'none';
+  });
+}
+</script>
+{% endblock %}

@@ -1,0 +1,325 @@
+{% extends "base.html" %}
+{% block title %}{{ trainer.name }} — MorphoTrening{% endblock %}
+{% block body_class %} class="exercise-body"{% endblock %}
+
+{% block content %}
+<div class="exercise-wrapper">
+
+  <!-- Top bar: timer + progress -->
+  <div class="ex-topbar">
+    <div class="timer" id="timer">{{ '%02d:%02d' % (trainer.time_limit // 60, trainer.time_limit % 60) }}</div>
+    <div class="ex-progress-wrap">
+      <div class="ex-progress-bar">
+        <div class="ex-progress-fill" id="progress-fill" style="width:0%"></div>
+      </div>
+      <div class="ex-counter" id="sentence-counter">Предложение 1 / …</div>
+    </div>
+    <div class="ex-trainer-name" title="{{ trainer.name }}">{{ trainer.name }}</div>
+  </div>
+
+  <!-- Sentence display -->
+  <div class="ex-sentence-panel">
+    <div class="ex-sentence-label">Предложение для разбора</div>
+    <div class="ex-sentence-text" id="sentence-text">Загрузка...</div>
+  </div>
+
+  <!-- Main: POS palette + words -->
+  <div class="ex-main">
+
+    <!-- Left: POS palette -->
+    <div class="pos-palette">
+      <div class="palette-title">Части речи</div>
+      {% for pos in all_pos %}
+      <div class="pos-badge"
+           data-pos="{{ pos }}"
+           style="background: {{ pos_colors[pos] }};"
+           draggable="true">
+        {{ pos }}
+      </div>
+      {% endfor %}
+    </div>
+
+    <!-- Right: words -->
+    <div class="words-area">
+      <div class="words-title">Слова предложения &mdash; выберите часть речи для каждого слова</div>
+      <div class="words-container" id="words-container">
+        <!-- rendered by JS -->
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Footer: check / next buttons -->
+  <div class="ex-footer">
+    <div class="stars-display" id="sentence-stars" style="display:none;"></div>
+    <div style="flex:1;color:var(--text-soft);font-size:14px;" id="hint-text">
+      Выберите часть речи слева, затем нажмите на слово справа. Можно перетаскивать.
+    </div>
+    <button class="btn-check" id="check-btn" disabled onclick="checkCurrentSentence()">
+      Проверить
+    </button>
+    <button class="btn-next-ex" id="next-btn" style="display:none;" onclick="goNext()">
+      Следующее &rarr;
+    </button>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const SENTENCES   = {{ sentences_json | safe }};
+const POS_COLORS  = {{ pos_colors_json | safe }};
+const TIME_LIMIT  = {{ trainer.time_limit }};
+const TRAINER_ID  = {{ trainer.id }};
+
+let currentIdx   = 0;
+let timerSec     = TIME_LIMIT;
+let timerHandle  = null;
+let currentAns   = {};   // wordIndex -> posName
+let allResults   = [];
+let selectedPOS  = null;
+let isChecked    = false;
+
+const timerEl     = document.getElementById('timer');
+const counterEl   = document.getElementById('sentence-counter');
+const progressEl  = document.getElementById('progress-fill');
+const sentenceEl  = document.getElementById('sentence-text');
+const wordsEl     = document.getElementById('words-container');
+const checkBtn    = document.getElementById('check-btn');
+const nextBtn     = document.getElementById('next-btn');
+const starsEl     = document.getElementById('sentence-stars');
+const hintEl      = document.getElementById('hint-text');
+
+// ── Timer ────────────────────────────────────────────────────────────────────
+function startTimer() {
+  updateTimerDisplay();
+  timerHandle = setInterval(() => {
+    timerSec--;
+    updateTimerDisplay();
+    if (timerSec <= 0) {
+      clearInterval(timerHandle);
+      handleTimeout();
+    }
+  }, 1000);
+}
+
+function updateTimerDisplay() {
+  const s = Math.max(0, timerSec);
+  const m = Math.floor(s / 60);
+  timerEl.textContent = `${String(m).padStart(2,'0')}:${String(s % 60).padStart(2,'0')}`;
+  timerEl.className = timerSec <= 30 ? 'timer danger'
+                    : timerSec <= 60 ? 'timer warning' : 'timer';
+}
+
+// ── Sentence loading ─────────────────────────────────────────────────────────
+function loadSentence(idx) {
+  const s = SENTENCES[idx];
+  currentAns = {};
+  selectedPOS = null;
+  isChecked = false;
+
+  sentenceEl.textContent = `«${s.text}»`;
+  counterEl.textContent = `Предложение ${idx + 1} / ${SENTENCES.length}`;
+  progressEl.style.width = `${(idx / SENTENCES.length) * 100}%`;
+
+  wordsEl.innerHTML = '';
+  s.words.forEach(w => wordsEl.appendChild(createWordSlot(w)));
+
+  checkBtn.disabled = true;
+  checkBtn.style.display = 'inline-flex';
+  nextBtn.style.display = 'none';
+  starsEl.style.display = 'none';
+  hintEl.textContent = 'Выберите часть речи слева, затем нажмите на слово справа. Можно перетаскивать.';
+
+  document.querySelectorAll('.pos-badge').forEach(b => b.classList.remove('selected'));
+}
+
+function createWordSlot(wordObj) {
+  const el = document.createElement('div');
+  el.className = 'word-slot';
+  el.dataset.index = wordObj.index;
+  el.innerHTML = `<span class="word-text">${wordObj.word}</span><span class="word-label"></span>`;
+
+  el.addEventListener('click', () => {
+    if (isChecked || !selectedPOS) return;
+    applyPOS(el, wordObj.index, selectedPOS);
+  });
+  el.addEventListener('dragover', e => {
+    if (!isChecked) { e.preventDefault(); el.classList.add('dragover'); }
+  });
+  el.addEventListener('dragleave', () => el.classList.remove('dragover'));
+  el.addEventListener('drop', e => {
+    el.classList.remove('dragover');
+    if (isChecked) return;
+    e.preventDefault();
+    const pos = e.dataTransfer.getData('text/plain');
+    applyPOS(el, wordObj.index, pos);
+    selectPOS(pos);
+  });
+  return el;
+}
+
+// ── POS selection ─────────────────────────────────────────────────────────────
+function selectPOS(posName) {
+  selectedPOS = posName;
+  document.querySelectorAll('.pos-badge').forEach(b =>
+    b.classList.toggle('selected', b.dataset.pos === posName));
+  hintEl.textContent = `Выбрано: «${posName}». Нажмите на слово или перетащите.`;
+}
+
+function applyPOS(wordEl, idx, posName) {
+  const color = POS_COLORS[posName];
+  wordEl.style.backgroundColor = color;
+  wordEl.style.borderColor      = color;
+  wordEl.style.color            = '#fff';
+  wordEl.querySelector('.word-label').textContent = posName;
+  wordEl.style.borderStyle = 'solid';
+  currentAns[idx] = posName;
+  checkAllAnswered();
+}
+
+function checkAllAnswered() {
+  const allDone = SENTENCES[currentIdx].words.every(w => currentAns[w.index] !== undefined);
+  checkBtn.disabled = !allDone;
+}
+
+// ── Check current sentence ────────────────────────────────────────────────────
+function checkCurrentSentence() {
+  isChecked = true;
+  checkBtn.disabled = true;
+  const s = SENTENCES[currentIdx];
+  let stars = 0;
+  const wordDetails = [];
+
+  s.words.forEach(w => {
+    const studentPos = currentAns[w.index] || '';
+    const correct    = studentPos === w.correct_pos;
+    if (correct) stars++;
+
+    wordDetails.push({
+      word:        w.word,
+      student_pos: studentPos,
+      correct_pos: w.correct_pos,
+      correct:     correct,
+    });
+
+    const slot = wordsEl.querySelector(`[data-index="${w.index}"]`);
+    if (!slot) return;
+    slot.classList.add('checked', correct ? 'correct' : 'incorrect');
+
+    if (correct) {
+      slot.querySelector('.word-label').textContent = w.correct_pos + ' ✓';
+    } else {
+      const cc = POS_COLORS[w.correct_pos];
+      slot.style.backgroundColor = cc;
+      slot.style.borderColor = cc;
+      // Две строки: зачёркнутый ответ ученика → правильный ответ
+      slot.querySelector('.word-label').textContent = `${studentPos || '—'} → ${w.correct_pos} ✓`;
+    }
+  });
+
+  allResults.push({
+    sentence_id:  s.id,
+    stars:        stars,
+    max_stars:    s.words.length,
+    answers:      Object.fromEntries(Object.entries(currentAns).map(([k,v]) => [k,v])),
+    word_details: wordDetails,
+  });
+
+  // Colored single star based on percentage
+  const pct = s.words.length > 0 ? Math.round(stars / s.words.length * 100) : 0;
+  const sc  = pct >= 85 ? '#15803d' : pct >= 61 ? '#1d4ed8' : pct >= 31 ? '#d97706' : '#f87171';
+  starsEl.innerHTML = `<span style="font-size:32px;color:${sc};">&#9733;</span>&nbsp;<strong style="font-size:18px;color:${sc};">${stars} / ${s.words.length}</strong>`;
+  starsEl.style.display = 'block';
+
+  checkBtn.style.display = 'none';
+  nextBtn.style.display = 'inline-flex';
+
+  if (currentIdx >= SENTENCES.length - 1) {
+    nextBtn.textContent = 'Завершить тренажёр ✔';
+    nextBtn.classList.add('finish-btn');
+    progressEl.style.width = '100%';
+  } else {
+    nextBtn.textContent = 'Следующее предложение →';
+  }
+}
+
+// ── Navigation ────────────────────────────────────────────────────────────────
+function goNext() {
+  if (currentIdx < SENTENCES.length - 1) {
+    currentIdx++;
+    loadSentence(currentIdx);
+  } else {
+    finishTrainer();
+  }
+}
+
+// ── Finish & submit ───────────────────────────────────────────────────────────
+async function finishTrainer() {
+  clearInterval(timerHandle);
+  nextBtn.textContent = 'Сохранение результатов...';
+  nextBtn.disabled = true;
+  progressEl.style.width = '100%';
+
+  try {
+    const res = await fetch('/student/submit-exercise', {
+      method:  'POST',
+      headers: {'Content-Type': 'application/json'},
+      body:    JSON.stringify({ trainer_id: TRAINER_ID, results: allResults }),
+    });
+    const data = await res.json();
+    window.location.href = `/student/results/${data.result_id}`;
+  } catch (err) {
+    console.error(err);
+    nextBtn.textContent = 'Ошибка — попробуйте ещё раз';
+    nextBtn.disabled = false;
+  }
+}
+
+// ── Timeout handler ───────────────────────────────────────────────────────────
+function handleTimeout() {
+  // Auto-answer unanswered words in current sentence
+  SENTENCES[currentIdx].words.forEach(w => {
+    if (currentAns[w.index] === undefined) currentAns[w.index] = '';
+  });
+
+  // Push 0-star stubs for remaining unchecked sentences
+  for (let i = currentIdx + 1; i < SENTENCES.length; i++) {
+    allResults.push({
+      sentence_id:  SENTENCES[i].id,
+      stars:        0,
+      max_stars:    SENTENCES[i].words.length,
+      answers:      {},
+      word_details: SENTENCES[i].words.map(w => ({
+        word: w.word, student_pos: '', correct_pos: w.correct_pos, correct: false
+      })),
+    });
+  }
+
+  // Check current and then finish after a brief pause
+  if (!isChecked) checkCurrentSentence();
+
+  const alert = document.createElement('div');
+  alert.className = 'alert alert-error';
+  alert.textContent = 'Время истекло! Результат сохраняется...';
+  document.querySelector('.ex-footer').prepend(alert);
+  setTimeout(finishTrainer, 2200);
+}
+
+// ── Drag-and-drop setup ───────────────────────────────────────────────────────
+function setupPalette() {
+  document.querySelectorAll('.pos-badge').forEach(badge => {
+    badge.addEventListener('click',      () => selectPOS(badge.dataset.pos));
+    badge.addEventListener('dragstart',  e  => e.dataTransfer.setData('text/plain', badge.dataset.pos));
+  });
+}
+
+// ── Bootstrap ────────────────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', () => {
+  setupPalette();
+  loadSentence(0);
+  startTimer();
+});
+</script>
+{% endblock %}

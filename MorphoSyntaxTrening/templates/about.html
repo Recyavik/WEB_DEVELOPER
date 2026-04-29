@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}О программе — MorphoTrening{% endblock %}
+{% block content %}
+
+<header class="hero" style="padding:32px 36px;">
+  <div class="eyebrow">Исследовательский проект</div>
+  <h1 style="font-size:clamp(26px,4vw,40px);">О программе</h1>
+  <p style="color:var(--text-soft);font-size:17px;max-width:700px;margin-bottom:0;">
+    Интерактивный тренажёр простого морфосинтаксического анализа предложений
+  </p>
+</header>
+
+<div style="display:grid;grid-template-columns:1fr;gap:20px;max-width:860px;">
+
+  <div class="panel">
+    <div class="eyebrow" style="background:#fee2e2;color:#dc2626;">Проблема и актуальность</div>
+    <h3>В чём проблема?</h3>
+    <p style="color:var(--text-soft);line-height:1.7;">
+      Определение частей речи — одна из базовых тем курса русского языка, с которой многие школьники
+      испытывают затруднения. Традиционные упражнения из учебника носят пассивный характер: ученик
+      читает правило и выполняет письменное задание без немедленной обратной связи.
+    </p>
+    <p style="color:var(--text-soft);line-height:1.7;margin-bottom:0;">
+      Отсутствие интерактивной практики приводит к тому, что навык распознавания частей речи
+      формируется медленно. Учитель, в свою очередь, не всегда имеет удобный инструмент для
+      оперативного отслеживания прогресса каждого ученика.
+    </p>
+  </div>
+
+  <div class="panel">
+    <div class="eyebrow" style="background:#dbeafe;color:#1d4ed8;">Цель проекта</div>
+    <h3>Что мы хотим достичь?</h3>
+    <p style="color:var(--text-soft);line-height:1.7;margin-bottom:0;">
+      Создать интерактивный веб-тренажёр, который превращает отработку определения частей речи
+      в увлекательную игровую практику с мгновенной автоматической проверкой, и одновременно
+      предоставляет учителю инструмент управления учебным процессом и аналитики результатов.
+    </p>
+  </div>
+
+  <div class="panel">
+    <div class="eyebrow" style="background:#dcfce7;color:#15803d;">Описание и назначение</div>
+    <h3>Что умеет программа?</h3>
+    <ul style="color:var(--text-soft);padding-left:20px;line-height:1.8;margin:0;">
+      <li>Учитель создаёт группы учеников и тренажёры с произвольными предложениями.</li>
+      <li>Ученик выбирает тренажёр и методом перетаскивания (drag-and-drop) или нажатием
+          присваивает каждому слову цвет его части речи.</li>
+      <li>Библиотека <strong>pymorphy3</strong> автоматически определяет эталонный ответ
+          по каждому слову — ручная разметка не нужна.</li>
+      <li>По завершении ученик получает цветную звезду и процент правильных ответов.</li>
+      <li>Учитель видит сводную статистику по группам, ученикам и тренажёрам с фильтрацией
+          по дате.</li>
+    </ul>
+    <div style="margin-top:16px;display:flex;flex-wrap:wrap;gap:6px;">
+      <span class="badge" style="background:#dbeafe;color:#1d4ed8;">Flask 3</span>
+      <span class="badge" style="background:#dcfce7;color:#15803d;">SQLAlchemy</span>
+      <span class="badge" style="background:#ede9fe;color:#7c3aed;">pymorphy3</span>
+      <span class="badge" style="background:#fef3c7;color:#92400e;">SQLite</span>
+      <span class="badge" style="background:#f1f5f9;color:#475569;">Docker</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="eyebrow" style="background:#fce7f3;color:#be185d;">Целевая аудитория</div>
+    <h3>Для кого создан тренажёр?</h3>
+    <ul style="color:var(--text-soft);padding-left:20px;line-height:1.8;margin:0;">
+      <li><strong>Ученики 3–6 классов</strong>, изучающие морфологию русского языка.</li>
+      <li><strong>Учителя русского языка</strong>, желающие разнообразить практические занятия
+          и оперативно контролировать успеваемость.</li>
+      <li><strong>Репетиторы и методисты</strong>, которым нужен гибкий инструмент для
+          составления заданий под конкретную тему.</li>
+    </ul>
+  </div>
+
+<div class="panel">
+  <div class="eyebrow" style="background:#ffedd5;color:#c2410c;">Авторы проекта</div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;margin-top:4px;">
+    
+    <div style="background:#f8fafc;border-radius:var(--radius-sm);padding:16px 20px;">
+      <div style="font-weight:800;font-size:16px;color:var(--text-main);">Катаев Дмитрий Викторович</div>
+      <div style="color:var(--text-soft);font-size:14px;margin-top:4px;">МОУ Лицей, г. Черемхово</div>
+    </div>
+
+    <div style="background:#f8fafc;border-radius:var(--radius-sm);padding:16px 20px;">
+      <div style="font-weight:800;font-size:16px;color:var(--text-main);">Катаев Сергей Юрьевич</div>
+      <div style="color:var(--text-soft);font-size:14px;margin-top:4px;">МОУ Лицей, г. Черемхово</div>
+    </div>
+  </div>
+</div>
+
+  <div class="panel">
+    <div class="eyebrow" style="background:#ccfbf1;color:#0f766e;">Руководители проекта</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;margin-top:4px;">
+      <div style="background:#f8fafc;border-radius:var(--radius-sm);padding:16px 20px;">
+        <div style="font-weight:800;font-size:16px;color:var(--text-main);">Катаев Виктор Борисович</div>
+        <div style="color:var(--text-soft);font-size:14px;margin-top:4px;">
+          Преподаватель-методист<br>Корпорация «1Т», г. Москва
+        </div>
+      </div>
+      <div style="background:#f8fafc;border-radius:var(--radius-sm);padding:16px 20px;">
+        <div style="font-weight:800;font-size:16px;color:var(--text-main);">Гайдукова Екатерина Викторовна</div>
+        <div style="color:var(--text-soft);font-size:14px;margin-top:4px;">
+          Учитель информатики<br>МОУ Лицей, г. Черемхово
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+{% endblock %}

@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+{% block title %}Безопасность — Администратор{% endblock %}
+{% block content %}
+<header class="hero" style="padding:28px 36px;">
+  <div class="eyebrow" style="background:#fee2e2;color:#dc2626;">Администратор</div>
+  <h1 style="font-size:clamp(24px,4vw,36px);">Безопасность и настройки почты</h1>
+</header>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start;">
+
+  <!-- Форма настроек -->
+  <div class="panel">
+    <h3>SMTP-сервер</h3>
+
+    <div class="panel" style="background:#fffbeb;border:1px solid #fde68a;padding:14px 16px;margin-bottom:20px;">
+      <b style="font-size:13px;">Быстрые настройки:</b>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+        <button type="button" class="btn btn-secondary btn-sm"
+                onclick="fillProvider('smtp.yandex.ru',465,'ssl')">Яндекс</button>
+        <button type="button" class="btn btn-secondary btn-sm"
+                onclick="fillProvider('smtp.mail.ru',465,'ssl')">Mail.ru</button>
+        <button type="button" class="btn btn-secondary btn-sm"
+                onclick="fillProvider('smtp.gmail.com',465,'ssl')">Gmail</button>
+      </div>
+      <div style="font-size:12px;color:var(--text-soft);margin:10px 0 0;line-height:1.8;">
+        <b style="color:#92400e;">Яндекс.Почта — два обязательных шага:</b><br>
+        <b>Шаг 1.</b> mail.yandex.ru → Настройки (⚙) → Почтовые программы → включить IMAP ✓<br>
+        <b>Шаг 2.</b> Создать пароль приложения:<br>
+        &nbsp;&nbsp;&nbsp;→ <b>id.yandex.ru</b> → Безопасность → <b>Пароли приложений</b> → Создать<br>
+        &nbsp;&nbsp;&nbsp;→ Скопировать сгенерированный пароль и вставить в поле ниже<br>
+        <i>Обычный пароль от ящика для SMTP не подходит — только пароль приложения!</i><br>
+        <br>
+        <b>Mail.ru:</b> Настройки → Безопасность → Пароли для внешних приложений<br>
+        <b>Gmail:</b> Аккаунт Google → Безопасность → Пароли приложений
+      </div>
+    </div>
+
+    <form method="POST" action="/admin/settings" class="form-grid" id="smtp-form">
+      <div class="field-group">
+        <label>SMTP хост</label>
+        <input type="text" name="smtp_host" id="f-host" value="{{ s.smtp_host }}"
+               placeholder="smtp.yandex.ru">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div class="field-group">
+          <label>Порт</label>
+          <input type="number" name="smtp_port" id="f-port" value="{{ s.smtp_port }}">
+        </div>
+        <div class="field-group">
+          <label>Шифрование</label>
+          <select name="smtp_tls" id="f-tls">
+            <option value="ssl" {% if s.smtp_tls == 'ssl' %}selected{% endif %}>SSL (порт 465)</option>
+            <option value="starttls" {% if s.smtp_tls == 'starttls' %}selected{% endif %}>STARTTLS (порт 587)</option>
+          </select>
+        </div>
+      </div>
+      <div class="field-group">
+        <label>Логин (полный email)</label>
+        <input type="email" name="smtp_user" id="f-user" value="{{ s.smtp_user }}"
+               placeholder="noreply@yandex.ru">
+      </div>
+      <div class="field-group">
+        <label>Пароль от почтового ящика <span style="font-weight:400;color:#92400e;">(для Яндекса — пароль приложения)</span></label>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input type="password" name="smtp_password" id="smtp-pwd"
+                 value="{{ s.smtp_password }}" style="flex:1;"
+                 placeholder="Пароль от email (не от этого сайта!)">
+          <button type="button" class="btn btn-secondary btn-sm"
+                  onclick="togglePwd()">Показать</button>
+        </div>
+        <div style="font-size:12px;color:var(--text-soft);margin-top:4px;">
+          Для Яндекса — пароль приложения с id.yandex.ru, не пароль от ящика
+        </div>
+      </div>
+      <div class="field-group">
+        <label>Имя отправителя <span style="color:var(--text-soft);font-weight:400;">(необязательно)</span></label>
+        <input type="text" name="smtp_from" id="f-from" value="{{ s.smtp_from }}"
+               placeholder="MorphoSyntaxTrening &lt;noreply@school.ru&gt;">
+        <div style="font-size:12px;color:var(--text-soft);margin-top:4px;">
+          Пример: <code>MorphoSyntaxTrening &lt;noreply@school.ru&gt;</code> — или оставьте пустым
+        </div>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:12px;">
+        {% if email_enabled %}
+          <span class="badge badge-green">&#10003; Почта активна</span>
+        {% else %}
+          <span class="badge" style="background:#fee2e2;color:#dc2626;">&#9888; Почта не настроена</span>
+        {% endif %}
+      </div>
+      <button type="submit" class="btn btn-primary">Сохранить настройки</button>
+    </form>
+  </div>
+
+  <!-- Тест и текущие настройки -->
+  <div>
+    <div class="panel" style="margin-bottom:20px;">
+      <h3>Проверка подключения</h3>
+      <p style="font-size:13px;color:var(--text-soft);margin-bottom:16px;">
+        Сначала сохраните настройки, затем отправьте тестовое письмо.
+      </p>
+      <form method="POST" action="/admin/settings/test" class="form-grid">
+        <div class="field-group">
+          <label>Отправить тест на email</label>
+          <input type="email" name="test_email" required placeholder="admin@school.ru">
+        </div>
+        <button type="submit" class="btn btn-secondary"
+                {% if not email_enabled %}disabled title="Сначала сохраните настройки"{% endif %}>
+          &#9993; Отправить тестовое письмо
+        </button>
+      </form>
+    </div>
+
+    <div class="panel">
+      <h4 style="margin-bottom:12px;">Текущие настройки</h4>
+      <table style="font-size:13px;width:100%;border-collapse:collapse;">
+        <tr>
+          <td style="color:var(--text-soft);padding:5px 0;width:110px;">Хост</td>
+          <td style="font-weight:600;">{{ s.smtp_host or '—' }}</td>
+        </tr>
+        <tr>
+          <td style="color:var(--text-soft);padding:5px 0;">Порт / TLS</td>
+          <td style="font-weight:600;">
+            {{ s.smtp_port }} &nbsp;/&nbsp;
+            {{ 'SSL' if s.smtp_tls == 'ssl' else 'STARTTLS' }}
+          </td>
+        </tr>
+        <tr>
+          <td style="color:var(--text-soft);padding:5px 0;">Логин</td>
+          <td style="font-weight:600;">{{ s.smtp_user or '—' }}</td>
+        </tr>
+        <tr>
+          <td style="color:var(--text-soft);padding:5px 0;">Пароль</td>
+          <td style="font-weight:600;">{{ '●●●●●●●●' if s.smtp_password else '—' }}</td>
+        </tr>
+        <tr>
+          <td style="color:var(--text-soft);padding:5px 0;">От кого</td>
+          <td style="font-weight:600;">{{ s.smtp_from or s.smtp_user or '—' }}</td>
+        </tr>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<div class="panel" style="margin-top:24px;max-width:480px;">
+  <h3>Смена пароля администратора</h3>
+  <form method="POST" action="/admin/settings/change-password" class="form-grid">
+    <div class="field-group">
+      <label>Текущий пароль</label>
+      <input type="password" name="current_password" required>
+    </div>
+    <div class="field-group">
+      <label>Новый пароль</label>
+      <input type="password" name="new_password" required minlength="8"
+             placeholder="Минимум 8 символов">
+    </div>
+    <div class="field-group">
+      <label>Повторите новый пароль</label>
+      <input type="password" name="confirm_password" required minlength="8">
+    </div>
+    <button type="submit" class="btn btn-primary">Сменить пароль</button>
+  </form>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+function togglePwd() {
+  const inp = document.getElementById('smtp-pwd');
+  const btn = inp.nextElementSibling;
+  if (inp.type === 'password') { inp.type = 'text'; btn.textContent = 'Скрыть'; }
+  else { inp.type = 'password'; btn.textContent = 'Показать'; }
+}
+
+function fillProvider(host, port, tls) {
+  document.getElementById('f-host').value = host;
+  document.getElementById('f-port').value = port;
+  document.getElementById('f-tls').value = tls;
+  document.getElementById('f-user').focus();
+}
+
+// Auto-sync port when TLS changes
+document.getElementById('f-tls').addEventListener('change', function() {
+  const portEl = document.getElementById('f-port');
+  if (this.value === 'ssl' && portEl.value == 587) portEl.value = 465;
+  if (this.value === 'starttls' && portEl.value == 465) portEl.value = 587;
+});
+</script>
+{% endblock %}

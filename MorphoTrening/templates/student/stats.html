@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Моя статистика — MorphoTrening{% endblock %}
+{% block content %}
+
+<header class="hero" style="padding:28px 36px;">
+  <div class="eyebrow">Личная статистика</div>
+  <h1 style="font-size:clamp(24px,4vw,36px);">Мои результаты</h1>
+</header>
+
+{% if not results %}
+  <div class="panel" style="text-align:center;color:var(--text-soft);padding:40px;">
+    Вы ещё не проходили ни одного тренажёра. <a href="{{ url_for('student_dashboard') }}">Перейти к тренажёрам</a>
+  </div>
+{% else %}
+
+<div class="stat-cards" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));">
+  <div class="stat-card">
+    <div class="stat-value">{{ results|length }}</div>
+    <div class="stat-label">Попыток</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ ((results | sum(attribute='percentage')) / results|length) | round(1) }}%</div>
+    <div class="stat-label">Средний %</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ results | map(attribute='total_stars') | sum }}</div>
+    <div class="stat-label">Всего звёзд</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value">{{ results | selectattr('percentage', 'ge', 85) | list | length }}</div>
+    <div class="stat-label">Отлично (&ge;85%)</div>
+  </div>
+</div>
+
+<div class="panel">
+  <h3>История попыток</h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Тренажёр</th><th>Звёзды</th><th>Результат</th><th>Дата</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for r in results %}
+        <tr>
+          <td style="font-weight:600;">{{ r.trainer.name }}</td>
+          <td>{{ r.total_stars }} / {{ r.max_stars }}
+            <span class="{% if r.percentage >= 85 %}star-green{% elif r.percentage >= 61 %}star-blue{% elif r.percentage >= 31 %}star-yellow{% else %}star-red{% endif %}">&#9733;</span>
+          </td>
+          <td>
+            <span class="badge {% if r.percentage >= 80 %}badge-green{% elif r.percentage >= 50 %}badge-orange{% else %}badge-blue{% endif %}">
+              {{ r.percentage }}%
+            </span>
+          </td>
+          <td style="font-size:13px;color:var(--text-soft);">{{ r.completed_at.strftime('%d.%m.%Y %H:%M') }}</td>
+          <td>
+            <a href="{{ url_for('student_results', rid=r.id) }}" class="btn btn-secondary btn-sm">Разбор</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
