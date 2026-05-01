@@ -4,7 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{% block title %}MorphoSyntaxTrening{% endblock %}</title>
-  <link rel="stylesheet" href="/static/style.css?v=3.0.5">
+  <script>
+    (function(){
+      var t = localStorage.getItem('theme') ||
+              (window.matchMedia('(prefers-color-scheme:dark)').matches ? 'dark' : 'light');
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
+  <link rel="stylesheet" href="/static/style.css?v=3.0.6">
   {% block head %}{% endblock %}
 </head>
 <body{% block body_class %}{% endblock %}>
@@ -41,6 +48,7 @@
           <a href="/admin/login">Администратор</a>
         {% endif %}
         <a href="/about"{% if request.url.path == '/about' %} class="active"{% endif %}>О программе</a>
+        <button class="theme-btn" id="theme-btn" onclick="toggleTheme()" title="Сменить тему">🌙</button>
       </div>
     </div>
   </nav>
@@ -57,5 +65,20 @@
   </footer>
 
   {% block scripts %}{% endblock %}
+  <script>
+    (function(){
+      var btn = document.getElementById('theme-btn');
+      function syncIcon(){
+        if(btn) btn.textContent = document.documentElement.getAttribute('data-theme')==='dark' ? '☀' : '🌙';
+      }
+      syncIcon();
+      window.toggleTheme = function(){
+        var next = document.documentElement.getAttribute('data-theme')==='dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', next);
+        localStorage.setItem('theme', next);
+        syncIcon();
+      };
+    })();
+  </script>
 </body>
 </html>
