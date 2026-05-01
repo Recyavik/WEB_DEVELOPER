@@ -126,6 +126,57 @@
   font-size: 13px;
   color: #1e40af;
 }
+.feat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+.feat-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.feat-row input {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text-main);
+  box-sizing: border-box;
+}
+.feat-row .feat-sep {
+  font-size: 12px;
+  color: var(--text-soft);
+  flex-shrink: 0;
+}
+.feat-del {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #dc2626;
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+.feat-del:hover { background: #fee2e2; }
+.feat-add {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 5px;
+  border: 1px dashed var(--border);
+  background: none;
+  color: var(--text-soft);
+  cursor: pointer;
+  margin-top: 2px;
+  align-self: flex-start;
+}
+.feat-add:hover { border-color: var(--accent); color: var(--accent); }
 </style>
 {% endblock %}
 
@@ -191,13 +242,17 @@
 
       <div class="sa-field">
         <label>Постоянные признаки</label>
-        <textarea class="f-const" data-index="{{ tok.index }}"
+        <div class="feat-list" data-type="const" data-index="{{ tok.index }}"></div>
+        <button type="button" class="feat-add" data-type="const" data-index="{{ tok.index }}">+ признак</button>
+        <textarea class="f-const" data-index="{{ tok.index }}" style="display:none"
                   placeholder="ключ: значение&#10;ключ: значение">{{ tok.const_features | featlines }}</textarea>
       </div>
 
       <div class="sa-field">
         <label>Непостоянные признаки</label>
-        <textarea class="f-var" data-index="{{ tok.index }}"
+        <div class="feat-list" data-type="var" data-index="{{ tok.index }}"></div>
+        <button type="button" class="feat-add" data-type="var" data-index="{{ tok.index }}">+ признак</button>
+        <textarea class="f-var" data-index="{{ tok.index }}" style="display:none"
                   placeholder="ключ: значение&#10;ключ: значение">{{ tok.var_features | featlines }}</textarea>
       </div>
 
@@ -262,13 +317,72 @@ function updateFieldVisibility(card, pos) {
   show(card.querySelector('.f-syntax')?.closest('.sa-field'), !NO_SYNTAX.has(pos));
 }
 
-// ── textarea auto-height ───────────────────────────────────────────────────────
+// ── feat-list (key-value rows with delete) ────────────────────────────────────
+function featListSync(list) {
+  const type  = list.dataset.type;
+  const idx   = list.dataset.index;
+  const ta    = list.closest('.sa-field').querySelector(`textarea.f-${type}`);
+  const lines = [...list.querySelectorAll('.feat-row')].map(row => {
+    const inputs = row.querySelectorAll('input');
+    const k = inputs[0].value.trim(), v = inputs[1].value.trim();
+    return k && v ? `${k}: ${v}` : null;
+  }).filter(Boolean);
+  ta.value = lines.join('\n');
+}
+
+function featListAddRow(list, k = '', v = '') {
+  const row = document.createElement('div');
+  row.className = 'feat-row';
+  row.innerHTML =
+    `<input type="text" placeholder="признак" value="${k.replace(/"/g,'&quot;')}">` +
+    `<span class="feat-sep">:</span>` +
+    `<input type="text" placeholder="значение" value="${v.replace(/"/g,'&quot;')}">` +
+    `<button type="button" class="feat-del" title="Удалить">×</button>`;
+  row.querySelector('.feat-del').addEventListener('click', () => {
+    row.remove();
+    featListSync(list);
+  });
+  row.querySelectorAll('input').forEach(inp =>
+    inp.addEventListener('input', () => featListSync(list))
+  );
+  list.appendChild(row);
+}
+
+function featListFromTextarea(ta) {
+  const list = ta.closest('.sa-field').querySelector('.feat-list');
+  if (!list) return;
+  list.innerHTML = '';
+  for (const line of (ta.value || '').split('\n')) {
+    const colon = line.indexOf(':');
+    if (colon === -1) continue;
+    const k = line.slice(0, colon).trim(), v = line.slice(colon + 1).trim();
+    if (k || v) featListAddRow(list, k, v);
+  }
+}
+
+function initAllFeatLists() {
+  document.querySelectorAll('.feat-list').forEach(list => {
+    const type = list.dataset.type;
+    const ta   = list.closest('.sa-field').querySelector(`textarea.f-${type}`);
+    if (ta) featListFromTextarea(ta);
+  });
+  document.querySelectorAll('.feat-add').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const type = btn.dataset.type;
+      const list = btn.closest('.sa-field').querySelector('.feat-list');
+      featListAddRow(list, '', '');
+      list.querySelector('.feat-row:last-child input')?.focus();
+    });
+  });
+}
+
+// ── textarea auto-height (kept for hidden textareas, not used visually) ────────
 function fitTextarea(ta) {
   ta.style.height = 'auto';
   ta.style.height = (ta.scrollHeight) + 'px';
 }
 function fitAllTextareas() {
-  document.querySelectorAll('.sa-field textarea').forEach(ta => {
+  document.querySelectorAll('.sa-field textarea:not([style*="display:none"])').forEach(ta => {
     fitTextarea(ta);
     ta.addEventListener('input', () => fitTextarea(ta));
   });
@@ -341,7 +455,7 @@ function featsToLines(obj) {
 }
 function setTextarea(ta, obj) {
   ta.value = featsToLines(obj);
-  fitTextarea(ta);
+  featListFromTextarea(ta);
 }
 
 function parseFeats(text) {
@@ -415,7 +529,7 @@ function resetToAI() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  fitAllTextareas();
+  initAllFeatLists();
   document.querySelectorAll('.sa-token-card').forEach(card => {
     const pos = card.querySelector('.f-pos').value;
     updateFieldVisibility(card, pos);

@@ -99,9 +99,11 @@
   display:grid; grid-template-columns:1fr 1fr; gap:12px;
 }
 .ef-done-btn {
+  position:sticky; bottom:8px; z-index:2;
   width:100%; margin-top:14px; padding:12px 0; border:none;
   border-radius:10px; background:var(--accent); color:#fff;
   font-size:17px; font-weight:700; cursor:pointer; transition:opacity .15s;
+  box-shadow:0 2px 8px rgba(29,78,216,.25);
 }
 .ef-done-btn:hover { opacity:.88; }
 
@@ -678,16 +680,18 @@ function checkCurrentSentence() {
     maxS  += result.max;
     wordDetails.push({ word: w.word, ...result.detail });
 
-    // Color chip: 1 star = correct, 0 = wrong (no partial — scoring is per-word)
     const chip    = chipsRow.querySelector(`[data-index="${w.index}"]`);
     const checkEl = chip?.querySelector('.ef-chip-check');
     chip?.classList.remove('filled');
-    if (result.stars === 1) {
+    if (result.stars === result.max) {
       chip?.classList.add('checked-ok');
       if (checkEl) checkEl.textContent = '✓';
     } else if (!currentAns[w.index]?.pos) {
       chip?.classList.add('checked-bad');
       if (checkEl) checkEl.textContent = '—';
+    } else if (result.stars > 0) {
+      chip?.classList.add('checked-partial');
+      if (checkEl) checkEl.textContent = `${result.stars}/${result.max}`;
     } else {
       chip?.classList.add('checked-bad');
       if (checkEl) checkEl.textContent = '✗';
@@ -755,8 +759,9 @@ function scoreWord(w, ans) {
   if (REQ_FIELDS.includes('syntax_role') && !SERVICE_POS.has(pos))
     chk('syntax_role', w.correct_syntax || '', ans.syntax_role || '');
 
-  const stars = allOk ? 1 : 0;
-  return { stars, max: 1, detail: { student_pos: sPos, correct_pos: pos, field_results: fields } };
+  const stars = fields.filter(f => f.ok).length;
+  const max   = fields.length;
+  return { stars, max, detail: { student_pos: sPos, correct_pos: pos, field_results: fields } };
 }
 
 // Scored feature keys (must match server SCORED_*_FEATURES)
