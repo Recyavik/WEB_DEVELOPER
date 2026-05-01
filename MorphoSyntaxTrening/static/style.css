@@ -104,7 +104,7 @@ body {
   border-radius: var(--radius);
   box-shadow: var(--shadow);
 }
-.panel { padding: 28px; margin-bottom: 24px; }
+.panel { padding: 20px; margin-bottom: 16px; }
 .panel h2 { margin-top: 0; }
 .panel p, .panel li, .panel td { color: var(--text-soft); }
 
@@ -142,9 +142,9 @@ h2, h3 { margin-top: 0; }
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 11px 20px;
+  padding: 8px 18px;
   border: none;
-  border-radius: 12px;
+  border-radius: 10px;
   font: inherit;
   font-weight: 700;
   font-size: 15px;
@@ -198,7 +198,7 @@ textarea { min-height: 100px; resize: vertical; }
 /* ── Tables ──────────────────────────────────────────────────────────────── */
 .table-wrap { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--line); }
 table { width: 100%; border-collapse: collapse; }
-th, td { padding: 13px 16px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
+th, td { padding: 9px 14px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
 th { background: #f8fafc; font-size: 14px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-soft); }
 tr:last-child td { border-bottom: none; }
 tr:hover td { background: #f8fbff; }
