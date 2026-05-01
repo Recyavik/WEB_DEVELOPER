@@ -1,14 +1,29 @@
 import smtplib
 import ssl
+from email.header import Header
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.utils import parseaddr, formataddr
 import smtp_settings
+
+
+def _encode_from(from_addr: str) -> str:
+    name, addr = parseaddr(from_addr)
+    if not addr:
+        return from_addr
+    if name:
+        try:
+            name.encode('ascii')
+            return from_addr
+        except UnicodeEncodeError:
+            return formataddr((str(Header(name, 'utf-8')), addr))
+    return from_addr
 
 
 def _make_msg(subject: str, from_addr: str, to: str, html: str):
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
-    msg["From"] = from_addr
+    msg["From"] = _encode_from(from_addr)
     msg["To"] = to
     msg.attach(MIMEText(html, "html", "utf-8"))
     return msg
@@ -41,7 +56,7 @@ def _send(to: str, subject: str, html: str) -> bool:
     try:
         msg = _make_msg(subject, from_addr, to, html)
         with _connect(s) as srv:
-            srv.sendmail(from_addr, [to], msg.as_string())
+            srv.send_message(msg)
         return True
     except Exception:
         return False
@@ -57,7 +72,7 @@ def send_test(to: str) -> tuple[bool, str]:
             "Тест почты — MorphoSyntaxTrening", from_addr, to,
             "<h2>Тест успешен!</h2><p>Почта MorphoSyntaxTrening настроена корректно.</p>")
         with _connect(s) as srv:
-            srv.sendmail(from_addr, [to], msg.as_string())
+            srv.send_message(msg)
         return True, f"Тестовое письмо отправлено на {to}"
     except smtplib.SMTPAuthenticationError:
         return False, ("Ошибка входа. Для Яндекса нужен пароль приложения: "
