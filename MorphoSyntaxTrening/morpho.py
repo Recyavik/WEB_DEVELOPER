@@ -101,7 +101,7 @@ LEVEL_REQUIRED_FIELDS = {
 SCORED_VAR_FEATURES: dict[str, list[str]] = {
     "Существительное": ["число", "падеж"],
     "Прилагательное":  ["число", "падеж", "род"],
-    "Глагол":          ["время", "число", "лицо", "род"],
+    "Глагол":          ["наклонение", "время", "число", "лицо", "род"],
     "Причастие":       ["число", "падеж", "род"],
     "Деепричастие":    [],
     "Местоимение":     ["число", "падеж"],
@@ -115,9 +115,9 @@ SCORED_VAR_FEATURES: dict[str, list[str]] = {
 
 # Constant features checked at advanced+ (per POS)
 SCORED_CONST_FEATURES: dict[str, list[str]] = {
-    "Существительное": ["род", "одушевлённость"],
+    "Существительное": ["род", "одушевлённость", "склонение"],
     "Прилагательное":  ["разряд"],
-    "Глагол":          ["вид", "переходность"],
+    "Глагол":          ["вид", "переходность", "спряжение"],
     "Причастие":       ["вид", "залог"],
     "Деепричастие":    ["вид"],
     "Местоимение":     ["лицо"],
@@ -154,7 +154,7 @@ CASE_MAP = {
     "loc2": "предложный (2-й)", "voct": "звательный",
 }
 TENSE_MAP = {"past": "прошедшее", "pres": "настоящее", "futr": "будущее"}
-MOOD_MAP  = {"indc": "изъявительное", "impr": "повелительное"}
+MOOD_MAP  = {"indc": "изъявительное", "impr": "повелительное", "Cond": "условное"}
 PERSON_MAP = {"1per": "1-е", "2per": "2-е", "3per": "3-е"}
 VOICE_MAP  = {"actv": "действительный", "pssv": "страдательный"}
 ASPECT_MAP = {"perf": "совершенный", "impf": "несовершенный"}
@@ -309,12 +309,12 @@ def _const_features(pos_ru: str, p) -> dict:
         trans = _get_grammeme(g, TRANS_MAP)
         if trans:
             result["переходность"] = trans
-        # conjugation class (1st / 2nd) — approximate
+        # conjugation class (I / II) — approximate
         lemma = p.normal_form
         if lemma.endswith(("ить", "еть")):
-            result["спряжение"] = "2-е"
+            result["спряжение"] = "II"
         else:
-            result["спряжение"] = "1-е"
+            result["спряжение"] = "I"
 
     elif pos_ru == "Причастие":
         aspect = _get_grammeme(g, ASPECT_MAP)

@@ -49,10 +49,10 @@
       <div>
         <div style="font-weight:700;color:var(--text-main);margin-bottom:8px;">Для ученика</div>
         <ul style="color:var(--text-soft);padding-left:18px;line-height:1.9;margin:0;">
-          <li>Разбор слов методом перетаскивания (drag-and-drop) или нажатием</li>
+          <li>Разбор слов нажатием с пошаговым заполнением признаков</li>
           <li>Пять уровней: от определения части речи до полного морфологического разбора с синтаксическими ролями</li>
-          <li>Мгновенная проверка с подробным разбором ошибок по каждому слову и признаку</li>
-          <li>Таймер, звёзды, процент правильных ответов и история результатов</li>
+          <li>Мгновенная проверка с подробным разбором ошибок по каждому слову и каждому признаку</li>
+          <li>Таймер, звёзды (за каждый правильный признак), история результатов</li>
           <li>Вход по коду учителя без регистрации</li>
         </ul>
       </div>
@@ -72,12 +72,27 @@
 
     <div style="margin-top:20px;">
       <div style="font-weight:700;color:var(--text-main);margin-bottom:8px;">Уровни разбора</div>
-      <div style="display:flex;flex-wrap:wrap;gap:8px;">
-        <span class="badge" style="background:#d1d5db;color:#1e293b;">Ознакомительный — часть речи</span>
-        <span class="badge" style="background:#ddd6fe;color:#1e293b;">Начальный — + лемма</span>
-        <span class="badge" style="background:#bbf7d0;color:#1e293b;">Базовый — + непостоянные признаки</span>
-        <span class="badge" style="background:#fed7aa;color:#1e293b;">Углублённый — + постоянные + роль</span>
-        <span class="badge" style="background:#e9d5ff;color:#1e293b;">Продвинутый — полный разбор</span>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div style="display:flex;align-items:baseline;gap:8px;">
+          <span class="badge" style="background:#d1d5db;color:#1e293b;flex-shrink:0;">Ознакомительный</span>
+          <span style="font-size:13px;color:var(--text-soft);">часть речи</span>
+        </div>
+        <div style="display:flex;align-items:baseline;gap:8px;">
+          <span class="badge" style="background:#ddd6fe;color:#1e293b;flex-shrink:0;">Начальный</span>
+          <span style="font-size:13px;color:var(--text-soft);">+ начальная форма (лемма / инфинитив)</span>
+        </div>
+        <div style="display:flex;align-items:baseline;gap:8px;">
+          <span class="badge" style="background:#bbf7d0;color:#1e293b;flex-shrink:0;">Базовый</span>
+          <span style="font-size:13px;color:var(--text-soft);">+ непостоянные признаки: наклонение, время, число, падеж, род и др.</span>
+        </div>
+        <div style="display:flex;align-items:baseline;gap:8px;">
+          <span class="badge" style="background:#fed7aa;color:#1e293b;flex-shrink:0;">Углублённый</span>
+          <span style="font-size:13px;color:var(--text-soft);">+ постоянные признаки (склонение, спряжение, вид, залог, разряд…) + синтаксическая роль</span>
+        </div>
+        <div style="display:flex;align-items:baseline;gap:8px;">
+          <span class="badge" style="background:#e9d5ff;color:#1e293b;flex-shrink:0;">Продвинутый</span>
+          <span style="font-size:13px;color:var(--text-soft);">полный морфологический разбор: все постоянные и непостоянные признаки + члены предложения</span>
+        </div>
       </div>
     </div>
   </div>
@@ -116,16 +131,20 @@
     <h3>Для кого создан тренажёр?</h3>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin-top:4px;">
       <div style="background:#f8fafc;border-radius:12px;padding:14px 16px;">
-        <div style="font-weight:800;font-size:15px;color:var(--text-main);margin-bottom:6px;">Начальный уровень</div>
-        <div style="font-size:13px;color:var(--text-soft);line-height:1.7;">Определение части речи и начальной формы слова</div>
+        <div style="font-weight:800;font-size:15px;color:var(--text-main);margin-bottom:6px;">Ознакомительный и начальный</div>
+        <div style="font-size:13px;color:var(--text-soft);line-height:1.7;">Определение части речи; + начальная форма (лемма / инфинитив)</div>
       </div>
       <div style="background:#f8fafc;border-radius:12px;padding:14px 16px;">
-        <div style="font-weight:800;font-size:15px;color:var(--text-main);margin-bottom:6px;">Базовый и углублённый уровни</div>
-        <div style="font-size:13px;color:var(--text-soft);line-height:1.7;">Постоянные и непостоянные признаки, синтаксическая роль</div>
+        <div style="font-weight:800;font-size:15px;color:var(--text-main);margin-bottom:6px;">Базовый</div>
+        <div style="font-size:13px;color:var(--text-soft);line-height:1.7;">Непостоянные признаки: наклонение, время, число, падеж, род и др.</div>
       </div>
       <div style="background:#f8fafc;border-radius:12px;padding:14px 16px;">
-        <div style="font-weight:800;font-size:15px;color:var(--text-main);margin-bottom:6px;">Продвинутый уровень</div>
-        <div style="font-size:13px;color:var(--text-soft);line-height:1.7;">Полный морфологический разбор с разбором по членам предложения</div>
+        <div style="font-weight:800;font-size:15px;color:var(--text-main);margin-bottom:6px;">Углублённый</div>
+        <div style="font-size:13px;color:var(--text-soft);line-height:1.7;">+ постоянные признаки (склонение, спряжение, вид, залог, разряд…) + синтаксическая роль</div>
+      </div>
+      <div style="background:#f8fafc;border-radius:12px;padding:14px 16px;">
+        <div style="font-weight:800;font-size:15px;color:var(--text-main);margin-bottom:6px;">Продвинутый</div>
+        <div style="font-size:13px;color:var(--text-soft);line-height:1.7;">Полный морфологический разбор: все постоянные и непостоянные признаки + члены предложения</div>
       </div>
       <div style="background:#f8fafc;border-radius:12px;padding:14px 16px;">
         <div style="font-weight:800;font-size:15px;color:var(--text-main);margin-bottom:6px;">Учителя и репетиторы</div>
