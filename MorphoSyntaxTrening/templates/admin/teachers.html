@@ -80,7 +80,7 @@
               </button>
               <form method="POST" action="/admin/teachers/{{ t.id }}/send-invite"
                     onsubmit="return confirm('Сгенерировать новый пароль и отправить приглашение на {{ t.email }}?')">
-                <button class="btn btn-secondary btn-sm" style="color:#1d4ed8;">&#9993; Пригласить</button>
+                <button class="btn btn-invite btn-sm">&#9993; Пригласить</button>
               </form>
               <form method="POST" action="/admin/teachers/{{ t.id }}/delete"
                     onsubmit="return confirm('Удалить учителя {{ t.name }} и все его данные?')">

@@ -99,7 +99,7 @@
                 {% if s.email and email_enabled %}
                 <form method="POST" action="/teacher/students/{{ s.id }}/invite"
                       onsubmit="return confirm('Отправить приглашение на {{ s.email }}?')">
-                  <button class="btn btn-secondary btn-sm" style="color:#1d4ed8;"
+                  <button class="btn btn-invite btn-sm"
                           title="Отправить приглашение на {{ s.email }}">&#9993; Пригласить</button>
                 </form>
                 {% elif s.email %}
