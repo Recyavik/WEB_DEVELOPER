@@ -249,6 +249,19 @@ const POS_COLORS  = {{ pos_colors_json | safe }};
 const SENTENCE_ID = {{ sentence.id }};
 const AI_TOKENS   = {{ ai_tokens_json | safe }};
 
+const NO_LEMMA  = new Set(['Предлог', 'Союз', 'Частица', 'Наречие', 'Междометие']);
+const NO_CONST  = new Set(['Предлог', 'Союз', 'Частица', 'Наречие', 'Междометие']);
+const NO_VAR    = new Set(['Деепричастие', 'Предлог', 'Союз', 'Частица', 'Наречие', 'Междометие']);
+const NO_SYNTAX = new Set(['Предлог', 'Союз', 'Частица', 'Междометие']);
+
+function updateFieldVisibility(card, pos) {
+  const show = (el, visible) => { if (el) el.style.display = visible ? '' : 'none'; };
+  show(card.querySelector('.f-lemma')?.closest('.sa-field'),  !NO_LEMMA.has(pos));
+  show(card.querySelector('.f-const')?.closest('.sa-field'),  !NO_CONST.has(pos));
+  show(card.querySelector('.f-var')?.closest('.sa-field'),    !NO_VAR.has(pos));
+  show(card.querySelector('.f-syntax')?.closest('.sa-field'), !NO_SYNTAX.has(pos));
+}
+
 // ── textarea auto-height ───────────────────────────────────────────────────────
 function fitTextarea(ta) {
   ta.style.height = 'auto';
@@ -274,6 +287,7 @@ function onPosChange(selectEl) {
   const card   = selectEl.closest('.sa-token-card');
   const newPos = selectEl.value;
   const oldPos = selectEl.dataset.originalPos;
+  updateFieldVisibility(card, newPos);
 
   // remove previous banner if any
   card.querySelector('.sa-refill-banner')?.remove();
@@ -395,10 +409,17 @@ function resetToAI() {
     setTextarea(card.querySelector('.f-const'), tok.const_features);
     setTextarea(card.querySelector('.f-var'),   tok.var_features);
     updateWordColor(sel);
+    updateFieldVisibility(card, tok.pos);
     card.querySelector('.sa-refill-banner')?.remove();
   });
 }
 
-document.addEventListener('DOMContentLoaded', fitAllTextareas);
+document.addEventListener('DOMContentLoaded', () => {
+  fitAllTextareas();
+  document.querySelectorAll('.sa-token-card').forEach(card => {
+    const pos = card.querySelector('.f-pos').value;
+    updateFieldVisibility(card, pos);
+  });
+});
 </script>
 {% endblock %}
