@@ -168,7 +168,7 @@ label { font-weight: 700; font-size: 14px; color: #0f172a; }
 input, select, textarea, button { font: inherit; }
 input, select, textarea {
   width: 100%;
-  padding: 11px 14px;
+  padding: 8px 12px;
   border: 1.5px solid #cbd5e1;
   border-radius: 12px;
   background: #fff;

@@ -1344,7 +1344,9 @@ def _score_word(tok: dict, ans: dict, level: str) -> tuple[int, int, dict]:
     student_pos = ans.get("pos", "") if isinstance(ans, dict) else str(ans)
     all_ok = _chk("pos", pos_ru, student_pos)
 
-    if "lemma" in req:
+    INVARIABLE  = {"Предлог", "Союз", "Частица", "Наречие", "Междометие"}
+    SERVICE_POS = {"Предлог", "Союз", "Частица", "Междометие"}
+    if "lemma" in req and pos_ru not in INVARIABLE:
         detail["correct_lemma"] = tok.get("lemma", "")
         detail["student_lemma"] = ans.get("lemma", "") if isinstance(ans, dict) else ""
         all_ok &= _chk("lemma", tok.get("lemma", ""), detail["student_lemma"])
@@ -1367,14 +1369,15 @@ def _score_word(tok: dict, ans: dict, level: str) -> tuple[int, int, dict]:
             if key in correct_const:
                 all_ok &= _chk(f"const:{key}", correct_const[key], student_const.get(key, ""))
 
-    if "syntax_role" in req:
+    if "syntax_role" in req and pos_ru not in SERVICE_POS:
         detail["correct_syntax"] = tok.get("syntax_role", "")
         detail["student_syntax"] = ans.get("syntax_role", "") if isinstance(ans, dict) else ""
         all_ok &= _chk("syntax_role", detail["correct_syntax"], detail["student_syntax"])
 
     detail["correct"] = bool(all_ok)
-    # 1 point per word: fully correct = 1, otherwise 0; max always 1
-    return (1 if all_ok else 0), 1, detail
+    correct_fields = sum(1 for fr in detail["field_results"] if fr["ok"])
+    total_fields = len(detail["field_results"])
+    return correct_fields, total_fields, detail
 
 
 @app.post("/student/submit-exercise")

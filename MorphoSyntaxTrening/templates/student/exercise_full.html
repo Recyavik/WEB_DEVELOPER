@@ -270,6 +270,8 @@ const TIME_LIMIT = {{ trainer.time_limit }};
 const TRAINER_ID = {{ trainer.id }};
 const LEVEL      = "{{ level }}";
 const REQ_FIELDS = {{ req_fields | tojson }};
+const INVARIABLE_POS = new Set(['Предлог', 'Союз', 'Частица', 'Наречие', 'Междометие']);
+const SERVICE_POS    = new Set(['Предлог', 'Союз', 'Частица', 'Междометие']);
 
 let currentIdx  = 0;
 let timerSec    = TIME_LIMIT;
@@ -491,9 +493,11 @@ function openWord(idx) {
   document.getElementById('inp-lemma').value  = ans.lemma || '';
   document.getElementById('inp-syntax').value = ans.syntax_role || '';
 
-  // Show/hide fields based on level
-  document.getElementById('field-lemma').style.display   = REQ_FIELDS.includes('lemma')   ? '' : 'none';
-  document.getElementById('field-syntax').style.display  = REQ_FIELDS.includes('syntax_role') ? '' : 'none';
+  // Show/hide fields based on level and POS (invariable POS have no lemma)
+  const wordIsInvariable = INVARIABLE_POS.has(w.correct_pos);
+  const wordIsService    = SERVICE_POS.has(w.correct_pos);
+  document.getElementById('field-lemma').style.display   = REQ_FIELDS.includes('lemma') && !wordIsInvariable ? '' : 'none';
+  document.getElementById('field-syntax').style.display  = REQ_FIELDS.includes('syntax_role') && !wordIsService ? '' : 'none';
 
   // Render feature inputs
   renderFeatureInputs(ans.pos || '', ans.var_features || {}, ans.const_features || {});
@@ -735,7 +739,7 @@ function scoreWord(w, ans) {
 
   chk('pos', pos, sPos);
 
-  if (REQ_FIELDS.includes('lemma'))
+  if (REQ_FIELDS.includes('lemma') && !INVARIABLE_POS.has(pos))
     chk('lemma', w.correct_lemma || '', ans.lemma || '');
 
   if (REQ_FIELDS.includes('var_features') && w.correct_var) {
@@ -748,7 +752,7 @@ function scoreWord(w, ans) {
     (POS_CONST_KEYS[pos] || []).forEach(k => { if (cc[k]) chk(`const:${k}`, cc[k], sc2[k]||''); });
   }
 
-  if (REQ_FIELDS.includes('syntax_role'))
+  if (REQ_FIELDS.includes('syntax_role') && !SERVICE_POS.has(pos))
     chk('syntax_role', w.correct_syntax || '', ans.syntax_role || '');
 
   const stars = allOk ? 1 : 0;
