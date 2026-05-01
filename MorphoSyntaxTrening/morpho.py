@@ -81,10 +81,10 @@ LEVEL_EXPERT       = "expert"
 
 LEVEL_LABELS = {
     LEVEL_INTRODUCTORY: "Ознакомительный",
-    LEVEL_ELEMENTARY:   "Начальный (3–5 кл)",
-    LEVEL_BASIC:        "Базовый (6–7 кл)",
-    LEVEL_ADVANCED:     "Углублённый (8–9 кл)",
-    LEVEL_EXPERT:       "Продвинутый (10–11 кл)",
+    LEVEL_ELEMENTARY:   "Начальный",
+    LEVEL_BASIC:        "Базовый",
+    LEVEL_ADVANCED:     "Углублённый",
+    LEVEL_EXPERT:       "Продвинутый",
 }
 
 # ── Scoring: which feature keys are checked at each level ─────────────────────
