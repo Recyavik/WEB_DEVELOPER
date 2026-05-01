@@ -41,6 +41,7 @@
     <h3>Разбор по предложениям</h3>
 
     {% for d in details %}
+    {% set level = d.level | default('introductory') %}
     <div class="result-sentence-item">
       <div class="rs-header">
         <div class="rs-text">{{ loop.index }}. {{ d.sentence_text }}</div>
@@ -48,14 +49,43 @@
       </div>
       <div class="rs-words">
         {% for w in d.word_details %}
-        <div class="rs-word {% if not w.correct %}incorrect{% endif %}"
-             style="background: {{ pos_colors[w.correct_pos] }};">
-          <span class="rs-word-text">{{ w.word }}</span>
-          {% if not w.correct %}
-          <span class="rs-word-pos" style="text-decoration:line-through;">{{ w.student_pos or '—' }}</span>
-          {% endif %}
-          <span class="rs-word-pos">{{ w.correct_pos }}</span>
-        </div>
+        {% set all_ok = w.correct | default(false) %}
+        {% set has_fields = w.field_results is defined and w.field_results | length > 0 %}
+        {% if level == 'introductory' or not has_fields %}
+          {# ── Introductory: simple POS chip ── #}
+          <div class="rs-word {% if not all_ok %}incorrect{% endif %}"
+               style="background: {{ pos_colors[w.correct_pos] }};">
+            <span class="rs-word-text">{{ w.word }}</span>
+            {% if not all_ok %}
+            <span class="rs-word-pos" style="text-decoration:line-through;">{{ w.student_pos or '—' }}</span>
+            {% endif %}
+            <span class="rs-word-pos">{{ w.correct_pos }}</span>
+          </div>
+        {% else %}
+          {# ── Non-introductory: expandable word card ── #}
+          <div class="rs-word-card {% if all_ok %}rs-card-ok{% else %}rs-card-mixed{% endif %}"
+               onclick="this.classList.toggle('expanded')">
+            <div class="rs-wc-header" style="background:{{ pos_colors[w.correct_pos] }};">
+              <span class="rs-wc-word">{{ w.word }}</span>
+              <span class="rs-wc-pos">{{ w.correct_pos }}</span>
+              <span class="rs-wc-icon">{% if all_ok %}✓{% else %}▾{% endif %}</span>
+            </div>
+            <div class="rs-wc-body">
+              {% for fr in w.field_results %}
+              <div class="rs-wc-field {% if fr.ok %}ok{% else %}err{% endif %}">
+                <span class="rs-wc-fname">{{ fr.field | replace('var:', '') | replace('const:', '') }}</span>
+                {% if fr.ok %}
+                  <span class="rs-wc-val">{{ fr.correct }}</span>
+                {% else %}
+                  <span class="rs-wc-val" style="text-decoration:line-through;opacity:.6;">{{ fr.student or '—' }}</span>
+                  <span class="rs-wc-arrow">→</span>
+                  <span class="rs-wc-val">{{ fr.correct }}</span>
+                {% endif %}
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+        {% endif %}
         {% endfor %}
       </div>
     </div>

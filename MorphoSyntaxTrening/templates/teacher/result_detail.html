@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Результат {{ result.student.full_name }} — {{ result.trainer.name }}{% endblock %}
+{% block content %}
+
+<div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap;">
+  <a href="/teacher/stats" class="btn btn-secondary btn-sm">&larr; К статистике</a>
+  <span class="badge badge-blue">#{{ result.id }}</span>
+  <span class="badge"
+        style="background:{{ level_colors.get(result.trainer.level,'#d1d5db') }};color:#1e293b;">
+    {{ level_labels.get(result.trainer.level, result.trainer.level) }}
+  </span>
+</div>
+
+<!-- Hero -->
+<div class="panel result-hero" style="margin-bottom:20px;">
+  <div style="display:flex;flex-wrap:wrap;gap:24px;align-items:center;">
+    <div>
+      <div class="eyebrow">Результат выполнения</div>
+      <h2 style="margin:4px 0 2px;">{{ result.trainer.name }}</h2>
+      <p style="color:var(--text-soft);margin:0;">
+        Ученик: <strong>{{ result.student.full_name }}</strong>
+        &bull; Группа: <strong>{{ result.student.group.name }}</strong>
+        &bull; {{ result.completed_at.strftime('%d.%m.%Y %H:%M') }}
+      </p>
+    </div>
+    <div style="margin-left:auto;text-align:center;">
+      {% if result.percentage >= 85 %}{% set bc = '#15803d' %}
+      {% elif result.percentage >= 61 %}{% set bc = '#1d4ed8' %}
+      {% elif result.percentage >= 31 %}{% set bc = '#d97706' %}
+      {% else %}{% set bc = '#f87171' %}{% endif %}
+      <div style="font-size:40px;color:{{ bc }};">&#9733;</div>
+      <div style="font-size:22px;font-weight:900;color:{{ bc }};">
+        {{ result.total_stars }} / {{ result.max_stars }}
+      </div>
+      <div style="font-size:18px;font-weight:700;color:{{ bc }};">{{ result.percentage }}%</div>
+    </div>
+  </div>
+</div>
+
+<!-- Sentence breakdown -->
+<div class="panel">
+  <h3>Разбор по предложениям</h3>
+
+  {% for d in details %}
+  {% set level = d.level | default('introductory') %}
+  <div class="result-sentence-item">
+    <div class="rs-header">
+      <div class="rs-text">{{ loop.index }}. {{ d.sentence_text }}</div>
+      <div class="rs-stars">{{ d.stars }} / {{ d.max_stars }} &#9733;</div>
+    </div>
+    <div class="rs-words">
+      {% for w in d.word_details %}
+      {% set has_fields = w.field_results is defined and w.field_results | length > 0 %}
+      {% if level == 'introductory' or not has_fields %}
+        <div class="rs-word {% if not w.correct %}incorrect{% endif %}"
+             style="background:{{ pos_colors[w.correct_pos] }};">
+          <span class="rs-word-text">{{ w.word }}</span>
+          {% if not w.correct %}
+          <span class="rs-word-pos" style="text-decoration:line-through;">{{ w.student_pos or '—' }}</span>
+          {% endif %}
+          <span class="rs-word-pos">{{ w.correct_pos }}</span>
+        </div>
+      {% else %}
+        <div class="rs-word-card {% if w.correct %}rs-card-ok{% else %}rs-card-mixed{% endif %}"
+             onclick="this.classList.toggle('expanded')">
+          <div class="rs-wc-header" style="background:{{ pos_colors[w.correct_pos] }};">
+            <span class="rs-wc-word">{{ w.word }}</span>
+            <span class="rs-wc-pos">{{ w.correct_pos }}</span>
+            <span class="rs-wc-icon">{% if w.correct %}✓{% else %}▾{% endif %}</span>
+          </div>
+          <div class="rs-wc-body">
+            {% for fr in w.field_results %}
+            <div class="rs-wc-field {% if fr.ok %}ok{% else %}err{% endif %}">
+              <span class="rs-wc-fname">
+                {{ fr.field | replace('var:', '') | replace('const:', '') }}
+              </span>
+              {% if fr.ok %}
+                <span class="rs-wc-val">{{ fr.correct }}</span>
+              {% else %}
+                <span class="rs-wc-val" style="text-decoration:line-through;opacity:.6;">
+                  {{ fr.student or '—' }}
+                </span>
+                <span class="rs-wc-arrow">→</span>
+                <span class="rs-wc-val">{{ fr.correct }}</span>
+              {% endif %}
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+      {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+  {% if not loop.last %}<hr style="border:none;border-top:1px solid var(--line);margin:16px 0;">{% endif %}
+  {% endfor %}
+</div>
+
+<!-- Actions -->
+<div style="display:flex;gap:12px;margin-top:16px;flex-wrap:wrap;">
+  <a href="/teacher/stats" class="btn btn-secondary">&larr; Статистика</a>
+  <form method="POST" action="/teacher/results/{{ result.id }}/delete"
+        onsubmit="return confirm('Удалить этот результат?')">
+    <button class="btn btn-danger">Удалить результат</button>
+  </form>
+</div>
+
+{% endblock %}

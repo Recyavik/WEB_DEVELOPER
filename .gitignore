@@ -50,3 +50,6 @@ media/
 
 # Jupyter
 .ipynb_checkpoints/
+
+# CLOUDE
+.cloude/

@@ -16,10 +16,10 @@
   <div>
     <div class="panel">
       <h3>Новая группа</h3>
-      <form method="POST" action="/teacher/groups/add" class="form-grid">
+      <form method="POST" action="/teacher/groups/add" class="form-grid" autocomplete="off">
         <div class="field-group">
           <label>Название группы</label>
-          <input type="text" name="name" required placeholder="10А">
+          <input type="text" name="name" required autocomplete="off" placeholder="10А">
         </div>
         <button type="submit" class="btn btn-primary">Создать группу</button>
       </form>
@@ -29,7 +29,7 @@
     <div class="panel" style="margin-top:16px;">
       <h3 style="margin-bottom:10px;">Поиск</h3>
       <input type="text" id="search-input" placeholder="Группа или ФИО ученика..."
-             oninput="filterAll(this.value)" style="width:100%;">
+             oninput="filterAll(this.value)" autocomplete="off" style="width:100%;">
       <div id="search-counts" style="font-size:12px;color:var(--text-soft);margin-top:8px;"></div>
     </div>
     {% endif %}
@@ -66,15 +66,16 @@
           + Добавить ученика
         </summary>
         <form method="POST" action="/teacher/students/add"
-              style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:10px;">
+              style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:10px;"
+              autocomplete="off">
           <input type="hidden" name="group_id" value="{{ group.id }}">
           <div class="field-group" style="flex:2;min-width:160px;margin:0;">
             <label style="font-size:12px;">ФИО ученика</label>
-            <input type="text" name="full_name" required placeholder="Иванов Иван">
+            <input type="text" name="full_name" required autocomplete="off" placeholder="Иванов Иван">
           </div>
           <div class="field-group" style="flex:2;min-width:180px;margin:0;">
             <label style="font-size:12px;">Email (необязательно)</label>
-            <input type="email" name="email" placeholder="student@mail.ru">
+            <input type="email" name="email" autocomplete="off" placeholder="student@mail.ru">
           </div>
           <button type="submit" class="btn btn-success btn-sm">Добавить</button>
         </form>

@@ -1,0 +1,404 @@
+{% extends "base.html" %}
+{% block title %}Разбор предложения — {{ sentence.text[:40] }}{% endblock %}
+
+{% block head %}
+<style>
+.sa-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+.sa-sentence-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 20px;
+  font-size: 17px;
+  font-style: italic;
+  color: var(--text-main);
+  line-height: 1.6;
+  margin-bottom: 24px;
+}
+.sa-token-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px;
+  margin-bottom: 28px;
+}
+.sa-token-card {
+  background: var(--surface);
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  position: relative;
+  transition: border-color .15s;
+}
+.sa-token-card:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(99,102,241,.12);
+}
+.sa-token-word {
+  font-size: 20px;
+  font-weight: 800;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid var(--border);
+  color: var(--text-main);
+}
+.sa-token-word-color {
+  display: inline-block;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.sa-field {
+  margin-bottom: 8px;
+}
+.sa-field label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-soft);
+  display: block;
+  margin-bottom: 3px;
+}
+.sa-field input,
+.sa-field select,
+.sa-field textarea {
+  width: 100%;
+  font-size: 13px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-main);
+  box-sizing: border-box;
+}
+.sa-field select { cursor: pointer; }
+.sa-field textarea { min-height: 0; resize: vertical; line-height: 1.5; overflow: hidden; }
+.sa-pos-dot {
+  display: inline-block;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+.sa-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+.sa-save-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.sa-msg {
+  font-size: 13px;
+  padding: 6px 12px;
+  border-radius: 7px;
+  display: none;
+}
+.sa-msg.ok  { background: #dcfce7; color: #166534; }
+.sa-msg.err { background: #fef2f2; color: #991b1b; }
+.sa-refill-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-top: 6px;
+  font-size: 13px;
+  color: #1e40af;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="sa-topbar">
+  <a href="/teacher/trainers/{{ sentence.trainer_id }}" class="btn btn-secondary btn-sm">&larr; К тренажёру</a>
+  <span class="badge badge-blue">#{{ sentence.id }}</span>
+  {% if sentence.status == 'reviewed' %}
+  <span class="badge" style="background:#bbf7d0;color:#166534;">&#10003; проверено учителем</span>
+  {% else %}
+  <span class="badge" style="background:#dbeafe;color:#1e40af;" id="status-badge">&#129302; анализ ИИ</span>
+  {% endif %}
+  <span class="badge"
+        style="background:{{ level_colors.get(trainer.level, '#d1d5db') }};color:#1e293b;">
+    {{ level_labels.get(trainer.level, trainer.level) }}
+  </span>
+</div>
+
+<div class="sa-sentence-box">« {{ sentence.text }} »</div>
+
+<div class="sa-status-bar">
+  <span style="font-size:13px;color:var(--text-soft);">
+    Отредактируйте разбор при необходимости и нажмите «Сохранить».
+    Ваши правки заменят автоматический анализ для этого предложения.
+  </span>
+  <div style="margin-left:auto;">
+    <button type="button" class="btn btn-secondary btn-sm" onclick="resetToAI()">
+      ↺ Сбросить к ИИ
+    </button>
+  </div>
+</div>
+
+<form id="analysis-form" onsubmit="return false;">
+  <div class="sa-token-grid" id="token-grid">
+    {% for tok in tokens %}
+    <div class="sa-token-card" data-index="{{ tok.index }}">
+      <div class="sa-token-word">
+        <span class="sa-token-word-color"
+              style="background:{{ pos_colors.get(tok.pos, '#d1d5db') }};"></span>
+        {{ tok.word }}
+      </div>
+
+      <div class="sa-field">
+        <label>Часть речи</label>
+        <select class="f-pos" data-index="{{ tok.index }}"
+                data-original-pos="{{ tok.pos }}"
+                onchange="onPosChange(this)">
+          {% for pos in all_pos %}
+          <option value="{{ pos }}"{% if tok.pos == pos %} selected{% endif %}>
+            {{ pos }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      {% if trainer.level != 'introductory' %}
+      <div class="sa-field">
+        <label>Начальная форма (лемма)</label>
+        <input type="text" class="f-lemma" autocomplete="off" value="{{ tok.lemma }}"
+               placeholder="{{ tok.word|lower }}" data-index="{{ tok.index }}">
+      </div>
+
+      <div class="sa-field">
+        <label>Постоянные признаки</label>
+        <textarea class="f-const" data-index="{{ tok.index }}"
+                  placeholder="ключ: значение&#10;ключ: значение">{{ tok.const_features | featlines }}</textarea>
+      </div>
+
+      <div class="sa-field">
+        <label>Непостоянные признаки</label>
+        <textarea class="f-var" data-index="{{ tok.index }}"
+                  placeholder="ключ: значение&#10;ключ: значение">{{ tok.var_features | featlines }}</textarea>
+      </div>
+
+      <div class="sa-field">
+        <label>Синтаксическая роль</label>
+        <input type="text" class="f-syntax" autocomplete="off" value="{{ tok.syntax_role }}"
+               list="syntax-roles-list" data-index="{{ tok.index }}">
+      </div>
+      {% else %}
+      <input type="hidden" class="f-lemma"  value="{{ tok.lemma }}"       data-index="{{ tok.index }}">
+      <input type="hidden" class="f-const"  value="{{ tok.const_features | featlines }}" data-index="{{ tok.index }}">
+      <input type="hidden" class="f-var"    value="{{ tok.var_features | featlines }}"   data-index="{{ tok.index }}">
+      <input type="hidden" class="f-syntax" value="{{ tok.syntax_role }}"  data-index="{{ tok.index }}">
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+
+  <datalist id="syntax-roles-list">
+    <option value="подлежащее">
+    <option value="сказуемое">
+    <option value="дополнение">
+    <option value="определение">
+    <option value="обстоятельство">
+    <option value="приложение">
+    <option value="обращение">
+    <option value="вводное слово">
+    <option value="предлог">
+    <option value="союз">
+    <option value="частица">
+  </datalist>
+
+  <div class="sa-save-row">
+    <button type="button" class="btn btn-primary" onclick="saveAnalysis()">
+      Сохранить разбор
+    </button>
+    <a href="/teacher/trainers/{{ sentence.trainer_id }}" class="btn btn-secondary">
+      Отмена
+    </a>
+    <span class="sa-msg" id="sa-msg"></span>
+  </div>
+</form>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const POS_COLORS  = {{ pos_colors_json | safe }};
+const SENTENCE_ID = {{ sentence.id }};
+const AI_TOKENS   = {{ ai_tokens_json | safe }};
+
+// ── textarea auto-height ───────────────────────────────────────────────────────
+function fitTextarea(ta) {
+  ta.style.height = 'auto';
+  ta.style.height = (ta.scrollHeight) + 'px';
+}
+function fitAllTextareas() {
+  document.querySelectorAll('.sa-field textarea').forEach(ta => {
+    fitTextarea(ta);
+    ta.addEventListener('input', () => fitTextarea(ta));
+  });
+}
+
+// ── POS color dot ─────────────────────────────────────────────────────────────
+function updateWordColor(selectEl) {
+  const card = selectEl.closest('.sa-token-card');
+  card.querySelector('.sa-token-word-color').style.background =
+    POS_COLORS[selectEl.value] || '#d1d5db';
+}
+
+// ── POS change → offer AI refill ─────────────────────────────────────────────
+function onPosChange(selectEl) {
+  updateWordColor(selectEl);
+  const card   = selectEl.closest('.sa-token-card');
+  const newPos = selectEl.value;
+  const oldPos = selectEl.dataset.originalPos;
+
+  // remove previous banner if any
+  card.querySelector('.sa-refill-banner')?.remove();
+  if (newPos === oldPos) return;
+
+  const banner = document.createElement('div');
+  banner.className = 'sa-refill-banner';
+  banner.innerHTML =
+    `<span>Заполнить признаки для «${newPos}» по ИИ?</span>` +
+    `<button type="button" class="btn btn-primary btn-sm"
+             onclick="refillCard(this,'${newPos}')">Заполнить</button>` +
+    `<button type="button" class="btn btn-secondary btn-sm"
+             onclick="dismissRefill(this)">Оставить</button>`;
+  selectEl.closest('.sa-field').after(banner);
+}
+
+async function refillCard(btn, newPos) {
+  const card = btn.closest('.sa-token-card');
+  const word = card.querySelector('.sa-token-word').childNodes[2]?.textContent?.trim()
+               || card.querySelector('.sa-token-word').textContent.trim();
+  btn.disabled = true; btn.textContent = '⏳';
+  try {
+    const res  = await fetch('/teacher/api/word-features', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ word, pos: newPos }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      card.querySelector('.f-lemma').value = data.lemma || '';
+      setTextarea(card.querySelector('.f-const'), data.const_features);
+      setTextarea(card.querySelector('.f-var'),   data.var_features);
+      card.querySelector('.f-syntax').value = data.syntax_role || '';
+      card.querySelector('.f-pos').dataset.originalPos = newPos;
+      fitAllTextareas();
+    }
+  } catch {}
+  card.querySelector('.sa-refill-banner')?.remove();
+}
+
+function dismissRefill(btn) {
+  const card = btn.closest('.sa-token-card');
+  card.querySelector('.f-pos').dataset.originalPos =
+    card.querySelector('.f-pos').value;
+  card.querySelector('.sa-refill-banner')?.remove();
+}
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+function featsToLines(obj) {
+  if (!obj) return '';
+  return Object.entries(obj).map(([k, v]) => `${k}: ${v}`).join('\n');
+}
+function setTextarea(ta, obj) {
+  ta.value = featsToLines(obj);
+  fitTextarea(ta);
+}
+
+function parseFeats(text) {
+  const result = {};
+  for (const line of (text || '').split('\n')) {
+    const idx = line.indexOf(':');
+    if (idx === -1) continue;
+    const k = line.slice(0, idx).trim();
+    const v = line.slice(idx + 1).trim();
+    if (k && v) result[k] = v;
+  }
+  return result;
+}
+
+function collectTokens() {
+  return [...document.querySelectorAll('.sa-token-card')].map(card => ({
+    word:           card.querySelector('.sa-token-word').textContent.trim(),
+    index:          parseInt(card.dataset.index),
+    pos:            card.querySelector('.f-pos').value,
+    lemma:          card.querySelector('.f-lemma').value.trim(),
+    const_features: parseFeats(card.querySelector('.f-const').value),
+    var_features:   parseFeats(card.querySelector('.f-var').value),
+    syntax_role:    card.querySelector('.f-syntax').value.trim(),
+    explanation:    '',
+  }));
+}
+
+// ── save ──────────────────────────────────────────────────────────────────────
+async function saveAnalysis() {
+  const msg = document.getElementById('sa-msg');
+  msg.style.display = 'none';
+  try {
+    const res  = await fetch(`/teacher/sentences/${SENTENCE_ID}/save-analysis`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ tokens: collectTokens() }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      msg.textContent = 'Разбор сохранён';
+      msg.className = 'sa-msg ok';
+      msg.style.display = 'inline-block';
+      const badge = document.getElementById('status-badge');
+      if (badge) { badge.innerHTML = '&#10003; проверено учителем';
+                   badge.style.cssText = 'background:#bbf7d0;color:#166534;'; }
+      setTimeout(() => { msg.style.display = 'none'; }, 3000);
+    } else { throw new Error(data.error || 'Ошибка'); }
+  } catch (e) {
+    msg.textContent = 'Ошибка: ' + e.message;
+    msg.className = 'sa-msg err';
+    msg.style.display = 'inline-block';
+  }
+}
+
+// ── reset to AI ───────────────────────────────────────────────────────────────
+function resetToAI() {
+  if (!confirm('Сбросить все правки и восстановить автоматический анализ?')) return;
+  document.querySelectorAll('.sa-token-card').forEach(card => {
+    const tok = AI_TOKENS.find(t => t.index === parseInt(card.dataset.index));
+    if (!tok) return;
+    const sel = card.querySelector('.f-pos');
+    sel.value = tok.pos;
+    sel.dataset.originalPos = tok.pos;
+    card.querySelector('.f-lemma').value  = tok.lemma;
+    card.querySelector('.f-syntax').value = tok.syntax_role;
+    setTextarea(card.querySelector('.f-const'), tok.const_features);
+    setTextarea(card.querySelector('.f-var'),   tok.var_features);
+    updateWordColor(sel);
+    card.querySelector('.sa-refill-banner')?.remove();
+  });
+}
+
+document.addEventListener('DOMContentLoaded', fitAllTextareas);
+</script>
+{% endblock %}

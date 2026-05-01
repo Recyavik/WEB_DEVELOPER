@@ -55,7 +55,7 @@
     <div style="flex:1;color:var(--text-soft);font-size:14px;" id="hint-text">
       Выберите часть речи слева, затем нажмите на слово справа. Можно перетаскивать.
     </div>
-    <button class="btn-check" id="check-btn" disabled onclick="checkCurrentSentence()">
+    <button class="btn-check" id="check-btn" onclick="checkCurrentSentence()">
       Проверить
     </button>
     <button class="btn-next-ex" id="next-btn" style="display:none;" onclick="goNext()">
@@ -126,11 +126,11 @@ function loadSentence(idx) {
   wordsEl.innerHTML = '';
   s.words.forEach(w => wordsEl.appendChild(createWordSlot(w)));
 
-  checkBtn.disabled = true;
+  checkBtn.disabled = false;
   checkBtn.style.display = 'inline-flex';
   nextBtn.style.display = 'none';
   starsEl.style.display = 'none';
-  hintEl.textContent = 'Выберите часть речи слева, затем нажмите на слово справа. Можно перетаскивать.';
+  hintEl.textContent = 'Выберите часть речи слева, нажмите на слово. Проверить можно в любой момент.';
 
   document.querySelectorAll('.pos-badge').forEach(b => b.classList.remove('selected'));
 }
@@ -176,12 +176,6 @@ function applyPOS(wordEl, idx, posName) {
   wordEl.querySelector('.word-label').textContent = posName;
   wordEl.style.borderStyle = 'solid';
   currentAns[idx] = posName;
-  checkAllAnswered();
-}
-
-function checkAllAnswered() {
-  const allDone = SENTENCES[currentIdx].words.every(w => currentAns[w.index] !== undefined);
-  checkBtn.disabled = !allDone;
 }
 
 // ── Check current sentence ────────────────────────────────────────────────────
@@ -208,16 +202,16 @@ function checkCurrentSentence() {
     if (!slot) return;
     slot.classList.add('checked', correct ? 'correct' : 'incorrect');
 
+    const posColor = POS_COLORS[w.correct_pos];
     if (correct) {
-      slot.style.color = '#1e293b';
+      slot.style.background  = `linear-gradient(to right, ${posColor} 80%, #4ade80 80%)`;
+      slot.style.borderColor = posColor;
+      slot.style.color       = '#1e293b';
       slot.querySelector('.word-label').textContent = w.correct_pos + ' ✓';
     } else {
-      const correctColor = POS_COLORS[w.correct_pos];
-      const wrongColor   = POS_COLORS[studentPos] || '#d1d5db';
-      // Left 80% = correct color, right 20% = student's wrong color
-      slot.style.background   = `linear-gradient(to right, ${correctColor} 80%, ${wrongColor} 80%)`;
-      slot.style.borderColor  = correctColor;
-      slot.style.color        = '#1e293b';
+      slot.style.background  = `linear-gradient(to right, ${posColor} 80%, #ef4444 80%)`;
+      slot.style.borderColor = posColor;
+      slot.style.color       = '#1e293b';
       slot.querySelector('.word-label').innerHTML =
         `${studentPos || '—'} — ошибка<br>правильно: ${w.correct_pos}`;
     }

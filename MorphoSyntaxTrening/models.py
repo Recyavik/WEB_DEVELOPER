@@ -64,12 +64,37 @@ class Trainer(Base):
     name = Column(String(200), nullable=False)
     description = Column(Text, default="")
     time_limit = Column(Integer, default=300)
+    # introductory | elementary | basic | advanced | expert
+    level = Column(String(20), default="introductory")
+    # 0 = show all sentences; N > 0 = show only N sentences
+    max_sentences = Column(Integer, default=0)
+    # whether to randomise sentence order for each student
+    shuffle = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     teacher = relationship("Teacher", back_populates="trainers")
     sentences = relationship("Sentence", back_populates="trainer",
                              cascade="all, delete-orphan",
                              order_by="Sentence.order")
+    group_links = relationship("TrainerGroup", back_populates="trainer",
+                               cascade="all, delete-orphan")
+
+
+class TrainerGroup(Base):
+    """Many-to-many: trainer assigned to group.
+    If a trainer has no rows here → available to ALL groups of that teacher."""
+    __tablename__ = "trainer_groups"
+    __table_args__ = (
+        UniqueConstraint("trainer_id", "group_id", name="uq_trainer_group"),
+        Index("ix_tg_trainer_id", "trainer_id"),
+        Index("ix_tg_group_id",   "group_id"),
+    )
+    id         = Column(Integer, primary_key=True)
+    trainer_id = Column(Integer, ForeignKey("trainers.id"), nullable=False)
+    group_id   = Column(Integer, ForeignKey("groups.id"),   nullable=False)
+
+    trainer = relationship("Trainer", back_populates="group_links")
+    group   = relationship("Group")
 
 
 class Sentence(Base):
@@ -79,13 +104,35 @@ class Sentence(Base):
     trainer_id = Column(Integer, ForeignKey("trainers.id"), nullable=False)
     text = Column(Text, nullable=False)
     order = Column(Integer, default=0)
+    # kept for backward-compat with Ознакомительный level
     correct_pos_json = Column(Text, default="[]")
+    # draft | analyzed | reviewed
+    status = Column(String(20), default="analyzed")
+    # full morphological analysis (list[TokenAnalysis] as JSON)
+    analysis_json = Column(Text, default="[]")
+    # teacher corrections over ai analysis (same schema, nullable)
+    teacher_analysis_json = Column(Text, nullable=True)
 
     trainer = relationship("Trainer", back_populates="sentences")
 
     @property
     def correct_pos(self) -> list[dict]:
         return json.loads(self.correct_pos_json or "[]")
+
+    @property
+    def analysis(self) -> list[dict]:
+        return json.loads(self.analysis_json or "[]")
+
+    @property
+    def teacher_analysis(self) -> list[dict] | None:
+        if self.teacher_analysis_json is None:
+            return None
+        return json.loads(self.teacher_analysis_json)
+
+    @property
+    def final_analysis(self) -> list[dict]:
+        """Return teacher-corrected analysis if available, else AI analysis."""
+        return self.teacher_analysis or self.analysis
 
     @property
     def word_count(self) -> int:

@@ -46,12 +46,18 @@
 {% else %}
 <div style="margin-bottom:16px;">
   <input type="text" id="trainer-search" placeholder="Поиск по названию или ID..."
-         oninput="filterTrainers(this.value)" style="max-width:400px;">
+         oninput="filterTrainers(this.value)" autocomplete="off" style="max-width:400px;">
 </div>
 <div class="trainer-grid" id="trainer-grid">
   {% for t in trainers %}
   <div class="trainer-card" data-name="{{ t.name|lower }}" data-id="{{ t.id }}">
-    <div class="trainer-card-id">Тренажёр #{{ t.id }}</div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+      <div class="trainer-card-id" style="margin-bottom:0;">Тренажёр #{{ t.id }}</div>
+      <span class="badge"
+            style="background:{{ level_colors.get(t.level, '#d1d5db') }};color:#1e293b;font-size:10px;margin-left:auto;">
+        {{ level_labels.get(t.level, t.level) }}
+      </span>
+    </div>
     <div class="trainer-card-name">{{ t.name }}</div>
     {% if t.description %}<div class="trainer-card-meta">{{ t.description }}</div>{% endif %}
     <div class="trainer-card-meta">

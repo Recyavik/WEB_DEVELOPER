@@ -10,20 +10,20 @@
 
   <div class="panel">
     <h3>Добавить учителя</h3>
-    <form method="POST" action="/admin/teachers/add" class="form-grid">
+    <form method="POST" action="/admin/teachers/add" class="form-grid" autocomplete="off">
       <div class="field-group">
         <label>ФИО</label>
-        <input type="text" name="name" required placeholder="Иванов Иван Иванович">
+        <input type="text" name="name" required autocomplete="off" placeholder="Иванов Иван Иванович">
       </div>
       <div class="field-group">
         <label>Email</label>
-        <input type="email" name="email" required placeholder="teacher@school.ru">
+        <input type="email" name="email" required autocomplete="off" placeholder="teacher@school.ru">
       </div>
       <div class="field-group">
         <label>Пароль</label>
         <div style="display:flex;gap:8px;align-items:center;">
           <input type="text" name="password" id="new-teacher-pwd" required minlength="6"
-                 style="flex:1;" placeholder="Минимум 6 символов">
+                 autocomplete="off" style="flex:1;" placeholder="Минимум 6 символов">
           <button type="button" class="btn btn-secondary btn-sm"
                   onclick="genPwd('new-teacher-pwd')">Сгенерировать</button>
         </div>
@@ -39,7 +39,7 @@
     <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px;flex-wrap:wrap;">
       <h2 style="margin:0;">Список учителей</h2>
       <input type="text" id="teacher-search" placeholder="Поиск по коду, ФИО или email..."
-             oninput="filterTeachers(this.value)"
+             oninput="filterTeachers(this.value)" autocomplete="off"
              style="flex:1;min-width:200px;max-width:360px;">
     </div>
     {% if not teachers %}
@@ -93,7 +93,7 @@
               <form method="POST" action="/admin/teachers/{{ t.id }}/reset-password"
                     style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                 <input type="text" name="password" placeholder="Новый пароль" required minlength="6"
-                       id="reset-pwd-{{ t.id }}" style="width:200px;min-width:160px;">
+                       id="reset-pwd-{{ t.id }}" autocomplete="off" style="width:200px;min-width:160px;">
                 <button type="button" class="btn btn-secondary btn-sm"
                         onclick="genPwd('reset-pwd-{{ t.id }}')">Сгенерировать</button>
                 <button class="btn btn-primary btn-sm">Сохранить</button>

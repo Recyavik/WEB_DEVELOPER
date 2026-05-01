@@ -8,7 +8,7 @@
 
 <div class="panel" style="margin-bottom:20px;">
   <h3 style="margin-bottom:16px;">Фильтры</h3>
-  <form method="GET" style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;">
+  <form method="GET" autocomplete="off" style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;">
     <div class="field-group" style="flex:1;min-width:160px;">
       <label>Группа</label>
       <select name="group_id" id="filter-group" onchange="loadStudents(this.value)">
@@ -44,9 +44,10 @@
       <label>Дата по</label>
       <input type="date" name="date_to" value="{{ date_to }}">
     </div>
-    <div style="display:flex;gap:8px;">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
       <button type="submit" class="btn btn-primary">Применить</button>
       <a href="/teacher/stats" class="btn btn-secondary">Сбросить</a>
+      <a id="csv-link" href="/teacher/stats/export.csv" class="btn btn-secondary" download>&#8595;&nbsp;CSV</a>
     </div>
   </form>
 </div>
@@ -77,7 +78,7 @@
   <div class="table-wrap">
     <table>
       <thead>
-        <tr><th>Ученик</th><th>Группа</th><th>Тренажёр</th><th>Звёзды</th><th>Результат</th><th>Дата</th><th></th></tr>
+        <tr><th>Ученик</th><th>Группа</th><th>Тренажёр</th><th>Уровень</th><th>Звёзды</th><th>Результат</th><th>Дата</th><th></th></tr>
       </thead>
       <tbody>
         {% for r in results %}
@@ -85,6 +86,12 @@
           <td style="font-weight:600;">{{ r.student.full_name }}</td>
           <td>{{ r.student.group.name }}</td>
           <td>{{ r.trainer.name }}</td>
+          <td>
+            <span class="badge"
+                  style="background:{{ level_colors.get(r.trainer.level, '#d1d5db') }};color:#1e293b;font-size:10px;">
+              {{ level_labels.get(r.trainer.level, r.trainer.level) }}
+            </span>
+          </td>
           <td>{{ r.total_stars }} / {{ r.max_stars }}
             <span class="{% if r.percentage >= 85 %}star-green{% elif r.percentage >= 61 %}star-blue{% elif r.percentage >= 31 %}star-yellow{% else %}star-red{% endif %}">&#9733;</span>
           </td>
@@ -95,10 +102,13 @@
           </td>
           <td style="font-size:13px;color:var(--text-soft);">{{ r.completed_at.strftime('%d.%m.%Y %H:%M') }}</td>
           <td>
-            <form method="POST" action="/teacher/results/{{ r.id }}/delete"
-                  onsubmit="return confirm('Удалить этот результат?')">
-              <button class="btn btn-danger btn-sm">Удалить</button>
-            </form>
+            <div class="td-actions">
+              <a href="/teacher/results/{{ r.id }}" class="btn btn-secondary btn-sm">Детали</a>
+              <form method="POST" action="/teacher/results/{{ r.id }}/delete"
+                    onsubmit="return confirm('Удалить этот результат?')">
+                <button class="btn btn-danger btn-sm">Удалить</button>
+              </form>
+            </div>
           </td>
         </tr>
         {% endfor %}
@@ -120,6 +130,22 @@ async function loadStudents(groupId) {
     opt.value = s.id; opt.textContent = s.name;
     sel.appendChild(opt);
   });
+  updateCsvLink();
 }
+
+function updateCsvLink() {
+  const form = document.querySelector('.panel form[method="GET"]');
+  const params = new URLSearchParams(new FormData(form));
+  // remove empty values to keep URL clean
+  [...params.keys()].forEach(k => { if (!params.get(k)) params.delete(k); });
+  document.getElementById('csv-link').href =
+    '/teacher/stats/export.csv' + (params.toString() ? '?' + params.toString() : '');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  updateCsvLink();
+  document.querySelector('.panel form[method="GET"]')
+    .addEventListener('change', updateCsvLink);
+});
 </script>
 {% endblock %}

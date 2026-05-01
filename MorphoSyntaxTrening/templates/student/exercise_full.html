@@ -1,0 +1,886 @@
+{% extends "base.html" %}
+{% block title %}{{ trainer.name }} — MorphoTrening{% endblock %}
+{% block body_class %} class="exercise-body"{% endblock %}
+
+{% block head %}
+<style>
+/* ── Full-analysis exercise layout ───────────────────────────────────────────── */
+.ef-wrapper { display:flex; flex-direction:column; height:calc(100vh - 56px - 48px); }
+
+.ef-topbar {
+  display:flex; align-items:center; gap:14px; padding:10px 20px;
+  background:var(--surface); border-bottom:1px solid var(--border);
+  flex-shrink:0; flex-wrap:wrap;
+}
+.ef-topbar .timer { font-size:26px; font-weight:800; font-variant-numeric:tabular-nums;
+  min-width:68px; }
+.ef-topbar .timer.warning { color:#d97706; }
+.ef-topbar .timer.danger  { color:#dc2626; }
+.ef-progress-wrap { flex:1; min-width:100px; }
+.ef-progress-bar  { height:8px; background:var(--line); border-radius:4px; overflow:hidden; }
+.ef-progress-fill { height:100%; background:var(--accent); border-radius:4px;
+  transition:width .4s ease; }
+.ef-counter { font-size:14px; color:var(--text-soft); margin-top:4px; }
+.ef-trainer-name { font-size:15px; font-weight:700; color:var(--text-soft);
+  max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+.ef-sentence-panel {
+  padding:12px 20px; background:var(--bg); border-bottom:1px solid var(--border);
+  flex-shrink:0;
+}
+.ef-sentence-label { font-size:13px; text-transform:uppercase; letter-spacing:.06em;
+  color:var(--text-soft); margin-bottom:6px; }
+.ef-sentence-text { font-size:20px; line-height:1.7; font-style:italic;
+  color:var(--text-main); }
+
+.ef-body {
+  flex:1; display:flex; overflow:hidden;
+}
+
+/* ── Word chips track ──────────────────────────────────────────────────────── */
+.ef-words-track {
+  width:100%; padding:16px 20px; overflow-y:auto;
+  display:flex; flex-direction:column; gap:0;
+}
+.ef-chips-row {
+  display:flex; flex-wrap:wrap; gap:10px; padding-bottom:8px;
+}
+.ef-chip {
+  display:inline-flex; flex-direction:column; align-items:center;
+  border:2px solid var(--border); border-radius:12px;
+  padding:10px 18px; cursor:pointer; transition:all .15s;
+  background:var(--surface); min-width:72px;
+}
+.ef-chip:hover  { border-color:var(--accent); transform:translateY(-2px); }
+.ef-chip.active { border-color:var(--accent); box-shadow:0 0 0 3px rgba(99,102,241,.18); }
+.ef-chip.filled { border-style:solid; }
+.ef-chip.checked-ok  { border-color:#16a34a; background:#f0fdf4; }
+.ef-chip.checked-bad { border-color:#dc2626; background:#fef2f2; }
+.ef-chip.checked-partial { border-color:#d97706; background:#fffbeb; }
+.ef-chip-word  { font-size:18px; font-weight:700; color:var(--text-main); }
+.ef-chip-pos   { font-size:12px; color:#1e293b; border-radius:4px;
+  padding:2px 6px; margin-top:4px; display:none; }
+.ef-chip.filled .ef-chip-pos  { display:block; }
+.ef-chip-check { font-size:13px; font-weight:700; margin-top:3px; display:none; }
+.ef-chip.checked-ok   .ef-chip-check { display:block; color:#16a34a; }
+.ef-chip.checked-bad  .ef-chip-check { display:block; color:#dc2626; }
+.ef-chip.checked-partial .ef-chip-check { display:block; color:#d97706; }
+
+/* ── Detail panel ──────────────────────────────────────────────────────────── */
+.ef-detail-panel {
+  background:var(--surface); border:1px solid var(--border);
+  border-radius:14px; padding:18px 20px; margin-top:14px;
+  display:none;
+}
+.ef-detail-panel.open { display:block; }
+.ef-detail-nav {
+  display:flex; align-items:center; justify-content:space-between;
+  margin-bottom:12px;
+}
+.ef-detail-nav button { background:none; border:1px solid var(--border);
+  border-radius:8px; padding:6px 16px; cursor:pointer; font-size:15px; color:var(--text-soft); }
+.ef-detail-nav button:hover { border-color:var(--accent); color:var(--accent); }
+.ef-detail-word {
+  font-size:32px; font-weight:900; color:var(--text-main);
+  margin-bottom:16px; padding-bottom:12px; border-bottom:2px solid var(--border);
+}
+.ef-field-group { margin-bottom:16px; }
+.ef-field-group label {
+  display:block; font-size:13px; font-weight:700; text-transform:uppercase;
+  letter-spacing:.04em; color:var(--text-soft); margin-bottom:6px;
+}
+.ef-field-group select,
+.ef-field-group input {
+  width:100%; padding:10px 14px; border:1px solid var(--border);
+  border-radius:9px; font-size:16px; background:var(--bg);
+  color:var(--text-main); box-sizing:border-box;
+}
+.ef-features-grid {
+  display:grid; grid-template-columns:1fr 1fr; gap:12px;
+}
+.ef-done-btn {
+  width:100%; margin-top:14px; padding:12px 0; border:none;
+  border-radius:10px; background:var(--accent); color:#fff;
+  font-size:17px; font-weight:700; cursor:pointer; transition:opacity .15s;
+}
+.ef-done-btn:hover { opacity:.88; }
+
+/* ── Hint panel ─────────────────────────────────────────────────────────────── */
+.ef-hint-toggle {
+  margin-top:16px; width:100%; padding:9px 0; border:1px solid var(--border);
+  border-radius:9px; background:none; cursor:pointer; font-size:15px;
+  color:var(--text-soft); transition:border-color .15s;
+}
+.ef-hint-toggle:hover { border-color:var(--accent); color:var(--accent); }
+.ef-hint-panel {
+  margin-top:12px; padding:16px 18px; background:#f8faff;
+  border:1px solid #dbeafe; border-radius:12px; display:none;
+}
+.ef-hint-panel.open { display:block; }
+.ef-hint-def  { font-size:15px; color:var(--text-main); margin-bottom:10px; line-height:1.7; }
+.ef-hint-tips { list-style:disc; padding-left:20px; margin:0 0 10px;
+  font-size:14px; color:var(--text-soft); }
+.ef-hint-tips li { margin-bottom:5px; }
+.ef-hint-ex   { font-size:14px; color:var(--text-soft); font-style:italic; }
+
+/* ── After-check field feedback ─────────────────────────────────────────────── */
+.ef-field-result { font-size:13px; margin-top:5px; padding:5px 10px;
+  border-radius:6px; display:none; }
+.ef-field-result.ok  { display:block; background:#dcfce7; color:#166534; }
+.ef-field-result.err { display:block; background:#fef2f2; color:#991b1b; }
+
+/* ── Footer ─────────────────────────────────────────────────────────────────── */
+.ef-footer {
+  display:flex; align-items:center; gap:12px; padding:12px 20px;
+  background:var(--surface); border-top:1px solid var(--border);
+  flex-shrink:0; flex-wrap:wrap;
+}
+.ef-stars-display { font-size:26px; font-weight:800; }
+.ef-hint-text { flex:1; font-size:15px; color:var(--text-soft); }
+.alert.alert-error {
+  background:#fef2f2; color:#991b1b; border-radius:8px;
+  padding:8px 14px; font-size:13px;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="ef-wrapper">
+
+  <!-- Top bar -->
+  <div class="ef-topbar">
+    <div class="timer" id="timer">{{ '%02d:%02d' % (trainer.time_limit // 60, trainer.time_limit % 60) }}</div>
+    <div class="ef-progress-wrap">
+      <div class="ef-progress-bar">
+        <div class="ef-progress-fill" id="progress-fill" style="width:0%"></div>
+      </div>
+      <div class="ef-counter" id="sentence-counter">Предложение 1 / …</div>
+    </div>
+    <div class="ef-trainer-name" title="{{ trainer.name }}">{{ trainer.name }}</div>
+  </div>
+
+  <!-- Sentence -->
+  <div class="ef-sentence-panel">
+    <div class="ef-sentence-label">Предложение для разбора</div>
+    <div class="ef-sentence-text" id="sentence-text">Загрузка...</div>
+  </div>
+
+  <!-- Body: chips + detail -->
+  <div class="ef-body">
+    <div class="ef-words-track">
+      <div class="ef-chips-row" id="chips-row"></div>
+      <div class="ef-detail-panel" id="detail-panel">
+
+        <div class="ef-detail-nav">
+          <button onclick="selectPrev()">&#8592; Пред.</button>
+          <span id="detail-word-idx" style="font-size:15px;color:var(--text-soft);"></span>
+          <button onclick="selectNext()">След. &#8594;</button>
+        </div>
+
+        <div class="ef-detail-word" id="detail-word-text">—</div>
+
+        <!-- POS (always required) -->
+        <div class="ef-field-group" id="field-pos">
+          <label>Часть речи</label>
+          <select id="inp-pos" onchange="onPosChange()">
+            <option value="">— выберите —</option>
+            {% for pos in all_pos %}
+            <option value="{{ pos }}">{{ pos }}</option>
+            {% endfor %}
+          </select>
+          <div class="ef-field-result" id="res-pos"></div>
+        </div>
+
+        <!-- Lemma (elementary+) -->
+        <div class="ef-field-group" id="field-lemma" style="display:none">
+          <label>Начальная форма (лемма)</label>
+          <input type="text" id="inp-lemma" autocomplete="off" placeholder="в именительном падеже, ед.ч.">
+          <div class="ef-field-result" id="res-lemma"></div>
+        </div>
+
+        <!-- Variable features (basic+) -->
+        <div id="field-var" style="display:none">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;
+                      letter-spacing:.04em;color:var(--text-soft);margin-bottom:6px;">
+            Непостоянные признаки
+          </div>
+          <div class="ef-features-grid" id="var-inputs"></div>
+        </div>
+
+        <!-- Constant features (advanced+) -->
+        <div id="field-const" style="display:none">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;
+                      letter-spacing:.04em;color:var(--text-soft);margin:10px 0 6px;">
+            Постоянные признаки
+          </div>
+          <div class="ef-features-grid" id="const-inputs"></div>
+        </div>
+
+        <!-- Syntax role (advanced+) -->
+        <div class="ef-field-group" id="field-syntax" style="display:none">
+          <label>Синтаксическая роль</label>
+          <input type="text" id="inp-syntax" autocomplete="off" list="syntax-dl"
+                 placeholder="подлежащее, сказуемое…">
+          <div class="ef-field-result" id="res-syntax"></div>
+        </div>
+        <datalist id="syntax-dl">
+          <option value="подлежащее"><option value="сказуемое">
+          <option value="дополнение"><option value="определение">
+          <option value="обстоятельство"><option value="обращение">
+          <option value="вводное слово"><option value="предлог">
+          <option value="союз"><option value="частица">
+        </datalist>
+
+        <button class="ef-done-btn" id="done-btn" onclick="markDone()">Готово ✓</button>
+
+        <!-- Hint -->
+        <button class="ef-hint-toggle" id="hint-toggle" onclick="toggleHint()">
+          💡 Подсказка по части речи
+        </button>
+        <div class="ef-hint-panel" id="hint-panel">
+          <div class="ef-hint-def" id="hint-def"></div>
+          <ul class="ef-hint-tips" id="hint-tips"></ul>
+          <div class="ef-hint-ex" id="hint-ex"></div>
+        </div>
+
+      </div><!-- /detail-panel -->
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div class="ef-footer">
+    <div class="ef-stars-display" id="sentence-stars" style="display:none;"></div>
+    <div class="ef-hint-text" id="hint-text">Выберите слово, чтобы начать разбор.</div>
+    <button class="btn-check" id="check-btn" onclick="checkCurrentSentence()">
+      Проверить
+    </button>
+    <button class="btn-next-ex" id="next-btn" style="display:none;" onclick="goNext()">
+      Следующее &rarr;
+    </button>
+  </div>
+
+</div><!-- /ef-wrapper -->
+{% endblock %}
+
+{% block scripts %}
+<script>
+const SENTENCES  = {{ sentences_json | safe }};
+const POS_COLORS = {{ pos_colors_json | safe }};
+const TIME_LIMIT = {{ trainer.time_limit }};
+const TRAINER_ID = {{ trainer.id }};
+const LEVEL      = "{{ level }}";
+const REQ_FIELDS = {{ req_fields | tojson }};
+
+let currentIdx  = 0;
+let timerSec    = TIME_LIMIT;
+let timerHandle = null;
+let currentAns  = {};   // index → {pos, lemma, var_features, const_features, syntax_role}
+let activeWordIdx = null;
+let isChecked   = false;
+let allResults  = [];
+
+// ── POS form config (which features to show per POS) ─────────────────────────
+const POS_FORM = {
+  "Существительное": {
+    var: [
+      {k:"число",  l:"Число",  o:["единственное","множественное"]},
+      {k:"падеж",  l:"Падеж",  o:["именительный","родительный","дательный","винительный","творительный","предложный"]},
+    ],
+    con: [
+      {k:"род",           l:"Род",           o:["мужской","женский","средний","общий"]},
+      {k:"одушевлённость",l:"Одушевлённость",o:["одушевлённое","неодушевлённое"]},
+    ],
+  },
+  "Прилагательное": {
+    var: [
+      {k:"число", l:"Число",  o:["единственное","множественное"]},
+      {k:"род",   l:"Род",    o:["мужской","женский","средний"]},
+      {k:"падеж", l:"Падеж",  o:["именительный","родительный","дательный","винительный","творительный","предложный"]},
+    ],
+    con: [{k:"разряд", l:"Разряд", o:["качественное","относительное"]}],
+  },
+  "Глагол": {
+    var: [
+      {k:"время",  l:"Время",  o:["прошедшее","настоящее","будущее"]},
+      {k:"число",  l:"Число",  o:["единственное","множественное"]},
+      {k:"лицо",   l:"Лицо",   o:["1-е","2-е","3-е"]},
+      {k:"род",    l:"Род (прош.ед.)",o:["мужской","женский","средний"]},
+    ],
+    con: [
+      {k:"вид",          l:"Вид",          o:["совершенный","несовершенный"]},
+      {k:"переходность", l:"Переходность", o:["переходный","непереходный"]},
+    ],
+  },
+  "Причастие": {
+    var: [
+      {k:"число", l:"Число", o:["единственное","множественное"]},
+      {k:"род",   l:"Род",   o:["мужской","женский","средний"]},
+      {k:"падеж", l:"Падеж", o:["именительный","родительный","дательный","винительный","творительный","предложный"]},
+    ],
+    con: [
+      {k:"вид",   l:"Вид",   o:["совершенный","несовершенный"]},
+      {k:"залог", l:"Залог", o:["действительный","страдательный"]},
+    ],
+  },
+  "Деепричастие": {
+    var: [],
+    con: [{k:"вид", l:"Вид", o:["совершенный","несовершенный"]}],
+  },
+  "Местоимение": {
+    var: [
+      {k:"число", l:"Число", o:["единственное","множественное"]},
+      {k:"падеж", l:"Падеж", o:["именительный","родительный","дательный","винительный","творительный","предложный"]},
+    ],
+    con: [{k:"лицо", l:"Лицо", o:["1-е","2-е","3-е"]}],
+  },
+  "Числительное": {
+    var: [{k:"падеж", l:"Падеж", o:["именительный","родительный","дательный","винительный","творительный","предложный"]}],
+    con: [{k:"разряд", l:"Разряд", o:["количественное","порядковое"]}],
+  },
+};
+const EMPTY_FORM = { var: [], con: [] };
+
+// ── POS hints ─────────────────────────────────────────────────────────────────
+const POS_HINTS = {
+  "Существительное": {
+    d: "Обозначает <b>предмет</b>. Отвечает на вопросы: <b>кто? что?</b>",
+    t: ["Попробуйте заменить словом «он», «она», «оно»","Изменяется по падежам и числам"],
+    e: "дом, книга, учитель, вода, счастье",
+  },
+  "Прилагательное": {
+    d: "Обозначает <b>признак предмета</b>. Отвечает: <b>какой? какая? какое?</b>",
+    t: ["Зависит от существительного","Изменяется по роду, числу и падежу"],
+    e: "красивый, большой, деревянный, интересная",
+  },
+  "Глагол": {
+    d: "Обозначает <b>действие или состояние</b>. Отвечает: <b>что делать? что сделать?</b>",
+    t: ["Изменяется по временам, лицам, числам","В прошедшем времени — по родам"],
+    e: "читать, бежит, написал, думает",
+  },
+  "Наречие": {
+    d: "Обозначает <b>признак действия или признака</b>. Отвечает: <b>как? где? когда?</b>",
+    t: ["Не изменяется","Обычно относится к глаголу или прилагательному"],
+    e: "быстро, вчера, здесь, очень, по-русски",
+  },
+  "Местоимение": {
+    d: "Указывает на предмет, признак, не называя их. Заменяет существительное или прилагательное.",
+    t: ["Я, ты, он, она, оно, мы, вы, они — личные","этот, мой, который — указательные / притяжательные"],
+    e: "я, ты, он, мой, этот, никто, каждый",
+  },
+  "Предлог": {
+    d: "Служебная часть речи. Выражает зависимость существительного от других слов.",
+    t: ["Не изменяется","Не является членом предложения"],
+    e: "в, на, за, над, под, из, для, около",
+  },
+  "Союз": {
+    d: "Служебная часть речи. Связывает однородные члены или части сложного предложения.",
+    t: ["Не изменяется","Не является членом предложения"],
+    e: "и, но, а, или, что, чтобы, когда, потому что",
+  },
+  "Частица": {
+    d: "Служебная часть речи. Вносит дополнительные оттенки значения.",
+    t: ["Не изменяется","Примеры: бы, же, ли, не, ни, вот, ведь"],
+    e: "не, ни, бы, же, ли, вот, даже, именно",
+  },
+  "Причастие": {
+    d: "Обозначает <b>признак предмета по действию</b>. Отвечает: <b>какой?</b> (что делающий? сделавший?)",
+    t: ["Сочетает признаки глагола и прилагательного","Изменяется как прилагательное"],
+    e: "читающий, прочитанный, бегущий, сломанный",
+  },
+  "Деепричастие": {
+    d: "Обозначает <b>добавочное действие</b>. Отвечает: <b>как? что делая? что сделав?</b>",
+    t: ["Не изменяется","Всегда относится к глаголу"],
+    e: "читая, написав, улыбаясь, подумав",
+  },
+  "Числительное": {
+    d: "Обозначает <b>количество или порядок</b> предметов. Отвечает: <b>сколько? который?</b>",
+    t: ["Количественные: один, два, сто","Порядковые: первый, второй, сотый"],
+    e: "один, пять, тридцать, первый, сотый",
+  },
+  "Междометие": {
+    d: "Выражает <b>чувства или побуждение</b>, не называя их.",
+    t: ["Не изменяется","Обычно выделяется запятыми или !"],
+    e: "ах, ой, увы, браво, тссс, ура",
+  },
+};
+
+// ── Timer ─────────────────────────────────────────────────────────────────────
+const timerEl    = document.getElementById('timer');
+const counterEl  = document.getElementById('sentence-counter');
+const progressEl = document.getElementById('progress-fill');
+const sentenceEl = document.getElementById('sentence-text');
+const chipsRow   = document.getElementById('chips-row');
+const panel      = document.getElementById('detail-panel');
+const checkBtn   = document.getElementById('check-btn');
+const nextBtn    = document.getElementById('next-btn');
+const starsEl    = document.getElementById('sentence-stars');
+const hintTextEl = document.getElementById('hint-text');
+
+function startTimer() {
+  updateTimerDisplay();
+  timerHandle = setInterval(() => {
+    timerSec--;
+    updateTimerDisplay();
+    if (timerSec <= 0) { clearInterval(timerHandle); handleTimeout(); }
+  }, 1000);
+}
+function updateTimerDisplay() {
+  const s = Math.max(0, timerSec);
+  timerEl.textContent = `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
+  timerEl.className = timerSec<=30 ? 'timer danger' : timerSec<=60 ? 'timer warning' : 'timer';
+}
+
+// ── Sentence loading ──────────────────────────────────────────────────────────
+function loadSentence(idx) {
+  const s = SENTENCES[idx];
+  currentAns   = {};
+  activeWordIdx = null;
+  isChecked    = false;
+
+  sentenceEl.textContent = `«${s.text}»`;
+  counterEl.textContent  = `Предложение ${idx+1} / ${SENTENCES.length}`;
+  progressEl.style.width = `${(idx / SENTENCES.length) * 100}%`;
+
+  panel.classList.remove('open');
+  chipsRow.innerHTML = '';
+  s.words.forEach(w => chipsRow.appendChild(createChip(w)));
+
+  checkBtn.disabled       = false;
+  checkBtn.style.display  = 'inline-flex';
+  nextBtn.style.display   = 'none';
+  starsEl.style.display   = 'none';
+  hintTextEl.textContent  = 'Выберите слово для разбора. Проверить можно в любой момент.';
+}
+
+function createChip(wordObj) {
+  const el  = document.createElement('div');
+  el.className    = 'ef-chip';
+  el.dataset.index = wordObj.index;
+  el.innerHTML    = `<span class="ef-chip-word">${wordObj.word}</span>
+                     <span class="ef-chip-pos"></span>
+                     <span class="ef-chip-check"></span>`;
+  el.addEventListener('click', () => openWord(wordObj.index));
+  return el;
+}
+
+// ── Word detail panel ─────────────────────────────────────────────────────────
+function openWord(idx) {
+  const s   = SENTENCES[currentIdx];
+  const w   = s.words[idx];
+  activeWordIdx = idx;
+
+  // Nav label
+  document.getElementById('detail-word-idx').textContent =
+    `Слово ${idx+1} / ${s.words.length}`;
+
+  // Highlight active chip
+  document.querySelectorAll('.ef-chip').forEach(c =>
+    c.classList.toggle('active', parseInt(c.dataset.index) === idx));
+
+  // Word title
+  const wordEl = document.getElementById('detail-word-text');
+  const ans    = currentAns[idx] || {};
+  wordEl.textContent = w.word;
+  const posColor = POS_COLORS[ans.pos] || 'transparent';
+  wordEl.style.background = posColor ? posColor + '55' : 'transparent';
+  wordEl.style.borderRadius = '8px';
+  wordEl.style.padding = '4px 8px';
+
+  // Fill fields
+  document.getElementById('inp-pos').value    = ans.pos || '';
+  document.getElementById('inp-lemma').value  = ans.lemma || '';
+  document.getElementById('inp-syntax').value = ans.syntax_role || '';
+
+  // Show/hide fields based on level
+  document.getElementById('field-lemma').style.display   = REQ_FIELDS.includes('lemma')   ? '' : 'none';
+  document.getElementById('field-syntax').style.display  = REQ_FIELDS.includes('syntax_role') ? '' : 'none';
+
+  // Render feature inputs
+  renderFeatureInputs(ans.pos || '', ans.var_features || {}, ans.const_features || {});
+
+  // Show/hide feature sections based on level
+  document.getElementById('field-var').style.display   = REQ_FIELDS.includes('var_features')   ? '' : 'none';
+  document.getElementById('field-const').style.display = REQ_FIELDS.includes('const_features') ? '' : 'none';
+
+  // If checked: show feedback
+  if (isChecked) {
+    showFieldFeedback(idx);
+    document.getElementById('done-btn').style.display = 'none';
+    document.getElementById('hint-toggle').style.display = 'none';
+    document.getElementById('hint-panel').classList.remove('open');
+  } else {
+    clearFieldFeedback();
+    document.getElementById('done-btn').style.display = '';
+    document.getElementById('hint-toggle').style.display = '';
+  }
+
+  // Update hint based on current POS
+  updateHint(ans.pos || '');
+
+  panel.classList.add('open');
+  panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function renderFeatureInputs(pos, savedVar, savedConst) {
+  const cfg = POS_FORM[pos] || EMPTY_FORM;
+  const varEl   = document.getElementById('var-inputs');
+  const constEl = document.getElementById('const-inputs');
+
+  function buildSelect(f, savedMap) {
+    const div = document.createElement('div');
+    div.className = 'ef-field-group';
+    div.style.marginBottom = '0';
+    div.innerHTML = `<label>${f.l}</label>`;
+    const sel = document.createElement('select');
+    sel.dataset.key  = f.k;
+    sel.dataset.type = 'var'; // overridden below
+    sel.innerHTML    = `<option value="">—</option>` +
+      f.o.map(o => `<option value="${o}"${savedMap[f.k]===o?' selected':''}>${o}</option>`).join('');
+    const res = document.createElement('div');
+    res.className = 'ef-field-result';
+    res.dataset.key = f.k;
+    div.appendChild(sel);
+    div.appendChild(res);
+    return div;
+  }
+
+  varEl.innerHTML = '';
+  cfg.var.forEach(f => {
+    const d = buildSelect(f, savedVar);
+    d.querySelector('select').dataset.type = 'var';
+    varEl.appendChild(d);
+  });
+
+  constEl.innerHTML = '';
+  cfg.con.forEach(f => {
+    const d = buildSelect(f, savedConst);
+    d.querySelector('select').dataset.type = 'const';
+    constEl.appendChild(d);
+  });
+
+  // Hide sections if no features for this POS
+  if (REQ_FIELDS.includes('var_features'))
+    document.getElementById('field-var').style.display = cfg.var.length ? '' : 'none';
+  if (REQ_FIELDS.includes('const_features'))
+    document.getElementById('field-const').style.display = cfg.con.length ? '' : 'none';
+}
+
+function onPosChange() {
+  const pos = document.getElementById('inp-pos').value;
+  const ans = currentAns[activeWordIdx] || {};
+  renderFeatureInputs(pos, ans.var_features || {}, ans.const_features || {});
+  if (REQ_FIELDS.includes('var_features'))
+    document.getElementById('field-var').style.display = (POS_FORM[pos]?.var?.length) ? '' : 'none';
+  if (REQ_FIELDS.includes('const_features'))
+    document.getElementById('field-const').style.display = (POS_FORM[pos]?.con?.length) ? '' : 'none';
+  updateHint(pos);
+
+  // Update chip color preview
+  const chip = chipsRow.querySelector(`[data-index="${activeWordIdx}"]`);
+  if (chip) {
+    const posEl = chip.querySelector('.ef-chip-pos');
+    posEl.textContent = pos;
+    posEl.style.background = POS_COLORS[pos] || '#e5e7eb';
+    chip.style.borderColor = POS_COLORS[pos] || '';
+    chip.classList.add('filled');
+  }
+  const wordEl = document.getElementById('detail-word-text');
+  wordEl.style.background = pos ? (POS_COLORS[pos] || 'transparent') + '55' : 'transparent';
+}
+
+function markDone() {
+  if (activeWordIdx === null) return;
+  const pos    = document.getElementById('inp-pos').value;
+  const lemma  = document.getElementById('inp-lemma').value.trim();
+  const syntax = document.getElementById('inp-syntax').value.trim();
+
+  const varFeats = {};
+  document.querySelectorAll('#var-inputs select').forEach(s => {
+    if (s.dataset.key && s.value) varFeats[s.dataset.key] = s.value;
+  });
+  const constFeats = {};
+  document.querySelectorAll('#const-inputs select').forEach(s => {
+    if (s.dataset.key && s.value) constFeats[s.dataset.key] = s.value;
+  });
+
+  currentAns[activeWordIdx] = {
+    pos, lemma, var_features: varFeats, const_features: constFeats, syntax_role: syntax,
+  };
+
+  // Update chip
+  const chip = chipsRow.querySelector(`[data-index="${activeWordIdx}"]`);
+  if (chip && pos) {
+    const posEl = chip.querySelector('.ef-chip-pos');
+    posEl.textContent = pos;
+    posEl.style.background = POS_COLORS[pos] || '#e5e7eb';
+    chip.style.borderColor = POS_COLORS[pos] || '';
+    chip.classList.add('filled');
+  }
+
+  hintTextEl.textContent = `«${SENTENCES[currentIdx].words[activeWordIdx].word}» — сохранено`;
+
+  // Auto-advance to next unfilled word
+  const next = SENTENCES[currentIdx].words.find(
+    w => w.index > activeWordIdx && !currentAns[w.index]?.pos
+  );
+  if (next) {
+    setTimeout(() => openWord(next.index), 300);
+  }
+}
+
+
+// ── Hint panel ────────────────────────────────────────────────────────────────
+function updateHint(pos) {
+  const h = POS_HINTS[pos];
+  if (!h) return;
+  document.getElementById('hint-def').innerHTML = h.d;
+  document.getElementById('hint-tips').innerHTML = h.t.map(t => `<li>${t}</li>`).join('');
+  document.getElementById('hint-ex').textContent = 'Примеры: ' + h.e;
+}
+
+function toggleHint() {
+  const hp = document.getElementById('hint-panel');
+  hp.classList.toggle('open');
+  document.getElementById('hint-toggle').textContent =
+    hp.classList.contains('open') ? '▲ Скрыть подсказку' : '💡 Подсказка по части речи';
+}
+
+// ── Navigation ────────────────────────────────────────────────────────────────
+function selectPrev() {
+  if (activeWordIdx === null) return;
+  const words = SENTENCES[currentIdx].words;
+  const pos   = words.findIndex(w => w.index === activeWordIdx);
+  if (pos > 0) openWord(words[pos - 1].index);
+}
+function selectNext() {
+  if (activeWordIdx === null) return;
+  const words = SENTENCES[currentIdx].words;
+  const pos   = words.findIndex(w => w.index === activeWordIdx);
+  if (pos < words.length - 1) openWord(words[pos + 1].index);
+}
+
+// ── Check sentence ────────────────────────────────────────────────────────────
+function checkCurrentSentence() {
+  isChecked = true;
+  checkBtn.disabled = true;
+  const s     = SENTENCES[currentIdx];
+  let stars = 0, maxS = 0;
+  const wordDetails = [];
+
+  s.words.forEach(w => {
+    const ans    = currentAns[w.index] || {};
+    const result = scoreWord(w, ans);
+    stars += result.stars;
+    maxS  += result.max;
+    wordDetails.push({ word: w.word, ...result.detail });
+
+    // Color chip: 1 star = correct, 0 = wrong (no partial — scoring is per-word)
+    const chip    = chipsRow.querySelector(`[data-index="${w.index}"]`);
+    const checkEl = chip?.querySelector('.ef-chip-check');
+    chip?.classList.remove('filled');
+    if (result.stars === 1) {
+      chip?.classList.add('checked-ok');
+      if (checkEl) checkEl.textContent = '✓';
+    } else if (!currentAns[w.index]?.pos) {
+      chip?.classList.add('checked-bad');
+      if (checkEl) checkEl.textContent = '—';
+    } else {
+      chip?.classList.add('checked-bad');
+      if (checkEl) checkEl.textContent = '✗';
+    }
+  });
+
+  allResults.push({
+    sentence_id: s.id,
+    stars, max_stars: maxS,
+    answers: Object.fromEntries(
+      Object.entries(currentAns).map(([k,v]) => [k, v])
+    ),
+    word_details: wordDetails,
+  });
+
+  const pct = maxS > 0 ? Math.round(stars / maxS * 100) : 0;
+  const sc  = pct>=85?'#15803d' : pct>=61?'#1d4ed8' : pct>=31?'#d97706' : '#f87171';
+  starsEl.innerHTML = `<span style="font-size:28px;color:${sc}">&#9733;</span>
+    <strong style="font-size:16px;color:${sc}">${stars} / ${maxS}</strong>`;
+  starsEl.style.display = 'block';
+
+  checkBtn.style.display = 'none';
+  nextBtn.style.display  = 'inline-flex';
+  if (currentIdx >= SENTENCES.length - 1) {
+    nextBtn.textContent = 'Завершить ✔';
+    nextBtn.classList.add('finish-btn');
+    progressEl.style.width = '100%';
+  } else {
+    nextBtn.textContent = 'Следующее →';
+  }
+
+  // Show feedback for active word
+  if (activeWordIdx !== null) showFieldFeedback(activeWordIdx);
+  document.getElementById('done-btn').style.display = 'none';
+}
+
+// Client-side scoring: 1 point if ALL required fields correct, else 0. max always 1.
+function scoreWord(w, ans) {
+  const pos   = w.correct_pos;
+  const sPos  = ans.pos || '';
+  const fields = [];
+  let allOk = true;
+
+  function chk(field, correct, student) {
+    const ok = correct.trim().toLowerCase() === (student||'').trim().toLowerCase();
+    if (!ok) allOk = false;
+    fields.push({ field, ok, correct, student: student||'' });
+  }
+
+  chk('pos', pos, sPos);
+
+  if (REQ_FIELDS.includes('lemma'))
+    chk('lemma', w.correct_lemma || '', ans.lemma || '');
+
+  if (REQ_FIELDS.includes('var_features') && w.correct_var) {
+    const cv = w.correct_var, sv = ans.var_features || {};
+    (POS_VAR_KEYS[pos] || []).forEach(k => { if (cv[k]) chk(`var:${k}`, cv[k], sv[k]||''); });
+  }
+
+  if (REQ_FIELDS.includes('const_features') && w.correct_const) {
+    const cc = w.correct_const, sc2 = ans.const_features || {};
+    (POS_CONST_KEYS[pos] || []).forEach(k => { if (cc[k]) chk(`const:${k}`, cc[k], sc2[k]||''); });
+  }
+
+  if (REQ_FIELDS.includes('syntax_role'))
+    chk('syntax_role', w.correct_syntax || '', ans.syntax_role || '');
+
+  const stars = allOk ? 1 : 0;
+  return { stars, max: 1, detail: { student_pos: sPos, correct_pos: pos, field_results: fields } };
+}
+
+// Scored feature keys (must match server SCORED_*_FEATURES)
+const POS_VAR_KEYS = {
+  "Существительное": ["число","падеж"],
+  "Прилагательное":  ["число","падеж","род"],
+  "Глагол":          ["время","число","лицо","род"],
+  "Причастие":       ["число","падеж","род"],
+  "Деепричастие":    [],
+  "Местоимение":     ["число","падеж"],
+  "Числительное":    ["падеж"],
+};
+const POS_CONST_KEYS = {
+  "Существительное": ["род","одушевлённость"],
+  "Прилагательное":  ["разряд"],
+  "Глагол":          ["вид","переходность"],
+  "Причастие":       ["вид","залог"],
+  "Деепричастие":    ["вид"],
+  "Местоимение":     ["лицо"],
+  "Числительное":    ["разряд"],
+};
+
+function showFieldFeedback(idx) {
+  const s      = SENTENCES[currentIdx];
+  const w      = s.words[idx];
+  const result = scoreWord(w, currentAns[idx] || {});
+
+  function applyRes(elId, field) {
+    const el  = document.getElementById(elId);
+    if (!el) return;
+    const fr  = result.detail.field_results.find(f => f.field === field);
+    if (!fr) return;
+    el.textContent = fr.ok ? '✓ верно' : `✗ правильно: ${fr.correct}`;
+    el.className   = `ef-field-result ${fr.ok ? 'ok' : 'err'}`;
+  }
+  applyRes('res-pos', 'pos');
+  applyRes('res-lemma', 'lemma');
+  applyRes('res-syntax', 'syntax_role');
+
+  // Feature inputs (disable + color)
+  ['#var-inputs select', '#const-inputs select'].forEach(sel => {
+    document.querySelectorAll(sel).forEach(inp => {
+      inp.disabled = true;
+      const key  = inp.dataset.key;
+      const type = inp.dataset.type;
+      const fr   = result.detail.field_results.find(f => f.field === `${type}:${key}`);
+      if (fr) {
+        const res = inp.parentElement.querySelector('.ef-field-result');
+        if (res) {
+          res.textContent = fr.ok ? '✓' : `✗ → ${fr.correct}`;
+          res.className   = `ef-field-result ${fr.ok ? 'ok' : 'err'}`;
+        }
+      }
+    });
+  });
+  document.getElementById('inp-pos').disabled    = true;
+  document.getElementById('inp-lemma').disabled  = true;
+  document.getElementById('inp-syntax').disabled = true;
+}
+
+function clearFieldFeedback() {
+  ['res-pos','res-lemma','res-syntax'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) { el.textContent = ''; el.className = 'ef-field-result'; }
+  });
+  document.querySelectorAll('#var-inputs select, #const-inputs select,#inp-pos,#inp-lemma,#inp-syntax')
+    .forEach(el => { el.disabled = false; });
+}
+
+// ── Navigation ────────────────────────────────────────────────────────────────
+function goNext() {
+  if (currentIdx < SENTENCES.length - 1) {
+    currentIdx++;
+    loadSentence(currentIdx);
+  } else {
+    finishTrainer();
+  }
+}
+
+// ── Finish & submit ───────────────────────────────────────────────────────────
+async function finishTrainer() {
+  clearInterval(timerHandle);
+  nextBtn.textContent = 'Сохранение...';
+  nextBtn.disabled = true;
+  progressEl.style.width = '100%';
+
+  try {
+    const res = await fetch("/student/submit-exercise", {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body:    JSON.stringify({ trainer_id: TRAINER_ID, results: allResults }),
+    });
+    const data = await res.json();
+    window.location.href = `/student/results/${data.result_id}`;
+  } catch (err) {
+    nextBtn.textContent = 'Ошибка — попробуйте ещё раз';
+    nextBtn.disabled = false;
+  }
+}
+
+// ── Timeout ───────────────────────────────────────────────────────────────────
+function handleTimeout() {
+  SENTENCES[currentIdx].words.forEach(w => {
+    if (!currentAns[w.index]) currentAns[w.index] = { pos:'', lemma:'', var_features:{}, const_features:{}, syntax_role:'' };
+  });
+  for (let i = currentIdx + 1; i < SENTENCES.length; i++) {
+    allResults.push({
+      sentence_id: SENTENCES[i].id,
+      stars: 0, max_stars: SENTENCES[i].words.length,
+      answers: {},
+      word_details: SENTENCES[i].words.map(w => ({
+        word: w.word, student_pos:'', correct_pos: w.correct_pos, correct: false, field_results: []
+      })),
+    });
+  }
+  if (!isChecked) checkCurrentSentence();
+
+  const alert = document.createElement('div');
+  alert.className = 'alert alert-error';
+  alert.textContent = 'Время истекло! Результат сохраняется...';
+  document.querySelector('.ef-footer').prepend(alert);
+  setTimeout(finishTrainer, 2200);
+}
+
+// ── Bootstrap ─────────────────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', () => {
+  loadSentence(0);
+  startTimer();
+});
+</script>
+{% endblock %}

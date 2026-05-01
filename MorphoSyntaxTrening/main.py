@@ -1,4 +1,7 @@
+import csv
+import io
 import json
+import random
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -15,15 +18,89 @@ import smtp_settings
 from auth import (flash, generate_password, generate_teacher_code,
                   hash_password, pop_flashes, verify_password)
 from database import Base, SessionLocal, engine, get_db
-from models import Admin, Group, Sentence, Student, Teacher, Trainer, TrainerResult
-from morpho import ALL_POS, POS_COLORS, analyze_sentence
+from models import Admin, Group, Sentence, Student, Teacher, Trainer, TrainerGroup, TrainerResult
+from morpho import (ALL_POS, POS_COLORS, analyze_sentence, full_analyze,
+                    LEVEL_INTRODUCTORY, LEVEL_LABELS, LEVEL_COLORS,
+                    LEVEL_REQUIRED_FIELDS, SCORED_VAR_FEATURES, SCORED_CONST_FEATURES,
+                    analyze_word_as_pos)
 
 
 # ── App setup ──────────────────────────────────────────────────────────────────
 
+def _run_migrations():
+    """Apply incremental schema changes that SQLAlchemy create_all won't add
+    to existing databases (ALTER TABLE for new columns)."""
+    from sqlalchemy import text, inspect
+    with engine.connect() as conn:
+        inspector = inspect(engine)
+
+        # trainers: add level, max_sentences, shuffle columns
+        trainer_cols = {c["name"] for c in inspector.get_columns("trainers")}
+        if "level" not in trainer_cols:
+            conn.execute(text(
+                "ALTER TABLE trainers ADD COLUMN level VARCHAR(20) DEFAULT 'introductory'"
+            ))
+        if "max_sentences" not in trainer_cols:
+            conn.execute(text(
+                "ALTER TABLE trainers ADD COLUMN max_sentences INTEGER DEFAULT 0"
+            ))
+        if "shuffle" not in trainer_cols:
+            conn.execute(text(
+                "ALTER TABLE trainers ADD COLUMN shuffle INTEGER DEFAULT 1"
+            ))
+
+        # sentences: add status, analysis_json, teacher_analysis_json
+        sentence_cols = {c["name"] for c in inspector.get_columns("sentences")}
+        if "status" not in sentence_cols:
+            conn.execute(text(
+                "ALTER TABLE sentences ADD COLUMN status VARCHAR(20) DEFAULT 'analyzed'"
+            ))
+        if "analysis_json" not in sentence_cols:
+            conn.execute(text(
+                "ALTER TABLE sentences ADD COLUMN analysis_json TEXT DEFAULT '[]'"
+            ))
+        if "teacher_analysis_json" not in sentence_cols:
+            conn.execute(text(
+                "ALTER TABLE sentences ADD COLUMN teacher_analysis_json TEXT"
+            ))
+
+        # trainer_groups table (create if absent)
+        if not inspector.has_table("trainer_groups"):
+            conn.execute(text("""
+                CREATE TABLE trainer_groups (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    trainer_id INTEGER NOT NULL REFERENCES trainers(id) ON DELETE CASCADE,
+                    group_id   INTEGER NOT NULL REFERENCES groups(id)   ON DELETE CASCADE,
+                    UNIQUE (trainer_id, group_id)
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_tg_trainer_id ON trainer_groups(trainer_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_tg_group_id   ON trainer_groups(group_id)"))
+
+        conn.commit()
+
+    # Backfill analysis_json for existing sentences that have correct_pos_json
+    # but empty analysis_json (first migration only)
+    with SessionLocal() as db:
+        from sqlalchemy import text as sql_text
+        rows = db.execute(sql_text(
+            "SELECT id, text FROM sentences WHERE analysis_json IS NULL OR analysis_json = '[]'"
+        )).fetchall()
+        for row in rows:
+            try:
+                tokens = full_analyze(row.text, level=LEVEL_INTRODUCTORY)
+                db.execute(sql_text(
+                    "UPDATE sentences SET analysis_json = :aj WHERE id = :sid"
+                ), {"aj": json.dumps(tokens, ensure_ascii=False), "sid": row.id})
+            except Exception:
+                pass
+        db.commit()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
+    _run_migrations()
     with SessionLocal() as db:
         if not db.query(Admin).first():
             db.add(Admin(username="admin", password_hash=hash_password("admin123")))
@@ -39,11 +116,25 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
 
+def _featlines(d: dict) -> str:
+    """Jinja filter: convert {key: val} → 'key: val\nkey: val'"""
+    if not d:
+        return ""
+    return "\n".join(f"{k}: {v}" for k, v in d.items())
+
+templates.env.filters["featlines"] = _featlines
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def tpl(request: Request, name: str, ctx: dict | None = None) -> HTMLResponse:
-    context = {"request": request, "flashes": pop_flashes(request),
-                "email_enabled": smtp_settings.is_enabled()}
+    context = {
+        "request": request,
+        "flashes": pop_flashes(request),
+        "email_enabled": smtp_settings.is_enabled(),
+        "level_labels": LEVEL_LABELS,
+        "level_colors": LEVEL_COLORS,
+    }
     if ctx:
         context.update(ctx)
     return templates.TemplateResponse(name, context)
@@ -508,7 +599,10 @@ async def teacher_trainers(request: Request):
 async def add_trainer(request: Request,
                        name: str = Form(...),
                        description: str = Form(""),
-                       time_limit: int = Form(300)):
+                       time_limit: int = Form(300),
+                       level: str = Form("introductory"),
+                       max_sentences: int = Form(0),
+                       shuffle: Optional[str] = Form(None)):
     if g := guard_teacher(request): return g
     tid = request.session["teacher_id"]
     name = name.strip()
@@ -517,7 +611,9 @@ async def add_trainer(request: Request,
         return redir("/teacher/trainers")
     with db_session() as db:
         t = Trainer(teacher_id=tid, name=name,
-                    description=description.strip(), time_limit=time_limit)
+                    description=description.strip(), time_limit=time_limit,
+                    level=level, max_sentences=max(0, max_sentences),
+                    shuffle=(shuffle is not None))
         db.add(t)
         db.commit()
         db.refresh(t)
@@ -533,21 +629,55 @@ async def trainer_detail(request: Request, tid_: int):
     with db_session() as db:
         trainer = (db.query(Trainer)
                    .filter_by(id=tid_, teacher_id=teacher_id)
-                   .options(joinedload(Trainer.sentences))
+                   .options(joinedload(Trainer.sentences),
+                            joinedload(Trainer.group_links))
                    .first())
         if not trainer:
             flash(request, "Тренажёр не найден", "error")
             return redir("/teacher/trainers")
+        groups = db.query(Group).filter_by(teacher_id=teacher_id).order_by(Group.name).all()
+        assigned_group_ids = {lg.group_id for lg in trainer.group_links}
     return tpl(request, "teacher/trainer_detail.html",
                {"trainer": trainer, "pos_colors": POS_COLORS,
-                "book_loaded": booklib.book_exists(teacher_id)})
+                "book_loaded": booklib.book_exists(teacher_id),
+                "groups": groups,
+                "assigned_group_ids": assigned_group_ids})
+
+
+@app.post("/teacher/trainers/{tid_}/assign-groups")
+async def assign_groups(request: Request, tid_: int):
+    if g := guard_teacher(request): return g
+    teacher_id = request.session["teacher_id"]
+    form = await request.form()
+    # group_ids is a multi-value list of checked group IDs
+    group_ids = {int(v) for v in form.getlist("group_ids")}
+    with db_session() as db:
+        trainer = db.query(Trainer).filter_by(id=tid_, teacher_id=teacher_id).first()
+        if not trainer:
+            return redir("/teacher/trainers")
+        # Verify groups belong to this teacher
+        valid = {g.id for g in db.query(Group).filter_by(teacher_id=teacher_id).all()}
+        group_ids &= valid
+        # Replace all assignments
+        db.query(TrainerGroup).filter_by(trainer_id=tid_).delete()
+        for gid in group_ids:
+            db.add(TrainerGroup(trainer_id=tid_, group_id=gid))
+        db.commit()
+        if group_ids:
+            flash(request, f"Тренажёр назначен {len(group_ids)} группам", "success")
+        else:
+            flash(request, "Тренажёр доступен всем группам (без ограничений)", "success")
+    return redir(f"/teacher/trainers/{tid_}")
 
 
 @app.post("/teacher/trainers/{tid_}/update")
 async def update_trainer(request: Request, tid_: int,
                           name: str = Form(...),
                           description: str = Form(""),
-                          time_limit: int = Form(300)):
+                          time_limit: int = Form(300),
+                          level: str = Form("introductory"),
+                          max_sentences: int = Form(0),
+                          shuffle: Optional[str] = Form(None)):
     if g := guard_teacher(request): return g
     teacher_id = request.session["teacher_id"]
     with db_session() as db:
@@ -556,6 +686,9 @@ async def update_trainer(request: Request, tid_: int,
             t.name = name.strip() or t.name
             t.description = description.strip()
             t.time_limit = time_limit
+            t.level = level
+            t.max_sentences = max(0, max_sentences)
+            t.shuffle = shuffle is not None
             db.commit()
             flash(request, "Тренажёр обновлён", "success")
     return redir(f"/teacher/trainers/{tid_}")
@@ -586,13 +719,19 @@ async def add_sentence(request: Request, tid_: int, text: str = Form(...)):
         if not text:
             flash(request, "Введите текст предложения", "error")
         else:
+            level = trainer.level or LEVEL_INTRODUCTORY
             analysis = analyze_sentence(text)
+            full = full_analyze(text, level=level)
             if not analysis:
                 flash(request, "Предложение не содержит слов для анализа", "error")
             else:
                 order = db.query(Sentence).filter_by(trainer_id=tid_).count()
-                db.add(Sentence(trainer_id=tid_, text=text, order=order,
-                                correct_pos_json=json.dumps(analysis, ensure_ascii=False)))
+                db.add(Sentence(
+                    trainer_id=tid_, text=text, order=order,
+                    correct_pos_json=json.dumps(analysis, ensure_ascii=False),
+                    analysis_json=json.dumps(full, ensure_ascii=False),
+                    status="analyzed",
+                ))
                 db.commit()
                 flash(request, "Предложение добавлено", "success")
     return redir(f"/teacher/trainers/{tid_}")
@@ -604,11 +743,15 @@ async def edit_sentence(request: Request, sid: int, text: str = Form(...)):
     teacher_id = request.session["teacher_id"]
     with db_session() as db:
         s = (db.query(Sentence).join(Trainer)
-             .filter(Sentence.id == sid, Trainer.teacher_id == teacher_id).first())
+             .filter(Sentence.id == sid, Trainer.teacher_id == teacher_id)
+             .options(joinedload(Sentence.trainer)).first())
         if s and text.strip():
             s.text = text.strip()
-            s.correct_pos_json = json.dumps(
-                analyze_sentence(s.text), ensure_ascii=False)
+            level = s.trainer.level if s.trainer else LEVEL_INTRODUCTORY
+            s.correct_pos_json = json.dumps(analyze_sentence(s.text), ensure_ascii=False)
+            s.analysis_json = json.dumps(full_analyze(s.text, level=level), ensure_ascii=False)
+            s.teacher_analysis_json = None  # reset teacher corrections on text change
+            s.status = "analyzed"
             db.commit()
             flash(request, "Предложение обновлено", "success")
             return redir(f"/teacher/trainers/{s.trainer_id}")
@@ -631,6 +774,56 @@ async def delete_sentence(request: Request, sid: int):
     return redir("/teacher/trainers")
 
 
+@app.get("/teacher/sentences/{sid}/analysis", response_class=HTMLResponse)
+async def sentence_analysis_get(request: Request, sid: int):
+    if g := guard_teacher(request): return g
+    teacher_id = request.session["teacher_id"]
+    with db_session() as db:
+        s = (db.query(Sentence).join(Trainer)
+             .filter(Sentence.id == sid, Trainer.teacher_id == teacher_id)
+             .options(joinedload(Sentence.trainer)).first())
+        if not s:
+            flash(request, "Предложение не найдено", "error")
+            return redir("/teacher/trainers")
+        # Use teacher-corrected analysis if available, else AI analysis
+        tokens = s.final_analysis
+        ai_tokens = s.analysis
+        trainer = s.trainer
+    return tpl(request, "teacher/sentence_analysis.html", {
+        "sentence":      s,
+        "trainer":       trainer,
+        "tokens":        tokens,
+        "ai_tokens_json": json.dumps(ai_tokens, ensure_ascii=False),
+        "pos_colors":    POS_COLORS,
+        "pos_colors_json": json.dumps(POS_COLORS, ensure_ascii=False),
+        "all_pos":       ALL_POS,
+    })
+
+
+@app.post("/teacher/sentences/{sid}/save-analysis")
+async def sentence_analysis_save(request: Request, sid: int):
+    if request.session.get("role") != "teacher":
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"ok": False, "error": "Не авторизован"}, status_code=403)
+    teacher_id = request.session["teacher_id"]
+    body = await request.json()
+    tokens = body.get("tokens", [])
+    with db_session() as db:
+        s = (db.query(Sentence).join(Trainer)
+             .filter(Sentence.id == sid, Trainer.teacher_id == teacher_id).first())
+        if not s:
+            from fastapi.responses import JSONResponse
+            return JSONResponse({"ok": False, "error": "Предложение не найдено"}, status_code=404)
+        s.teacher_analysis_json = json.dumps(tokens, ensure_ascii=False)
+        s.status = "reviewed"
+        # Keep correct_pos_json in sync with teacher's POS choices
+        pos_only = [{"word": t["word"], "pos": t["pos"], "index": t["index"]}
+                    for t in tokens]
+        s.correct_pos_json = json.dumps(pos_only, ensure_ascii=False)
+        db.commit()
+    return {"ok": True}
+
+
 @app.post("/teacher/trainers/{tid_}/reanalyze")
 async def reanalyze_trainer(request: Request, tid_: int):
     if g := guard_teacher(request): return g
@@ -640,14 +833,49 @@ async def reanalyze_trainer(request: Request, tid_: int):
                    .filter_by(id=tid_, teacher_id=teacher_id)
                    .options(joinedload(Trainer.sentences)).first())
         if trainer:
+            level = trainer.level or LEVEL_INTRODUCTORY
             for s in trainer.sentences:
-                s.correct_pos_json = json.dumps(
-                    analyze_sentence(s.text), ensure_ascii=False)
+                s.correct_pos_json = json.dumps(analyze_sentence(s.text), ensure_ascii=False)
+                s.analysis_json = json.dumps(full_analyze(s.text, level=level), ensure_ascii=False)
+                s.status = "analyzed"
             db.commit()
             flash(request,
                   f"Разбор пересчитан для {len(trainer.sentences)} предложений",
                   "success")
     return redir(f"/teacher/trainers/{tid_}")
+
+
+@app.post("/teacher/trainers/{tid_}/analyze-all")
+async def analyze_all_sentences(request: Request, tid_: int):
+    """JSON endpoint: run full morphological analysis on all sentences
+    of a trainer and persist results.  Returns {ok, count, errors}."""
+    if request.session.get("role") != "teacher":
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"ok": False, "error": "Не авторизован"}, status_code=403)
+    teacher_id = request.session["teacher_id"]
+    with db_session() as db:
+        trainer = (db.query(Trainer)
+                   .filter_by(id=tid_, teacher_id=teacher_id)
+                   .options(joinedload(Trainer.sentences)).first())
+        if not trainer:
+            from fastapi.responses import JSONResponse
+            return JSONResponse({"ok": False, "error": "Тренажёр не найден"}, status_code=404)
+        level = trainer.level or LEVEL_INTRODUCTORY
+        count = 0
+        errors = []
+        for s in trainer.sentences:
+            try:
+                tokens = full_analyze(s.text, level=level)
+                pos_only = [{"word": t["word"], "pos": t["pos"], "index": t["index"]}
+                            for t in tokens]
+                s.analysis_json = json.dumps(tokens, ensure_ascii=False)
+                s.correct_pos_json = json.dumps(pos_only, ensure_ascii=False)
+                s.status = "analyzed"
+                count += 1
+            except Exception as exc:
+                errors.append({"sentence_id": s.id, "error": str(exc)})
+        db.commit()
+    return {"ok": True, "count": count, "errors": errors}
 
 
 # ── Teacher: book ──────────────────────────────────────────────────────────────
@@ -682,6 +910,21 @@ async def delete_book_route(request: Request):
     booklib.delete_book(request.session["teacher_id"])
     flash(request, "Книга удалена", "success")
     return redir("/teacher/book")
+
+
+@app.get("/teacher/api/debug-analyze")
+async def debug_analyze(request: Request, text: str = ""):
+    """Dev helper: run full_analyze on a sentence and return raw result + flags."""
+    if request.session.get("role") != "teacher":
+        return {"error": "Не авторизован"}
+    from morpho import NATASHA_AVAILABLE, MORPH_AVAILABLE
+    tokens = full_analyze(text, "advanced") if text else []
+    return {
+        "natasha_available": NATASHA_AVAILABLE,
+        "morph_available":   MORPH_AVAILABLE,
+        "text":   text,
+        "tokens": tokens,
+    }
 
 
 @app.get("/teacher/api/random-sentence")
@@ -750,6 +993,79 @@ async def teacher_stats(request: Request):
                 "date_from": date_from, "date_to": date_to})
 
 
+@app.get("/teacher/stats/export.csv")
+async def teacher_stats_csv(request: Request):
+    if g := guard_teacher(request): return g
+    teacher_id = request.session["teacher_id"]
+
+    group_id   = request.query_params.get("group_id", "")
+    student_id = request.query_params.get("student_id", "")
+    trainer_id = request.query_params.get("trainer_id", "")
+    date_from  = request.query_params.get("date_from", "")
+    date_to    = request.query_params.get("date_to", "")
+
+    with db_session() as db:
+        q = (db.query(TrainerResult)
+             .join(Student).join(Group)
+             .filter(Group.teacher_id == teacher_id)
+             .options(joinedload(TrainerResult.student).joinedload(Student.group),
+                      joinedload(TrainerResult.trainer)))
+        if group_id:
+            q = q.filter(Group.id == int(group_id))
+        if student_id:
+            q = q.filter(TrainerResult.student_id == int(student_id))
+        if trainer_id:
+            q = q.filter(TrainerResult.trainer_id == int(trainer_id))
+        if date_from:
+            q = q.filter(TrainerResult.completed_at >= date_from)
+        if date_to:
+            q = q.filter(TrainerResult.completed_at <= date_to + " 23:59:59")
+        results = q.order_by(TrainerResult.completed_at.desc()).all()
+
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(["ID", "Ученик", "Группа", "Тренажёр", "Уровень",
+                    "Звёзды", "Макс. звёзды", "Результат %", "Дата"])
+        for r in results:
+            level_label = LEVEL_LABELS.get(r.trainer.level, r.trainer.level)
+            w.writerow([
+                r.id,
+                r.student.full_name,
+                r.student.group.name,
+                r.trainer.name,
+                level_label,
+                r.total_stars,
+                r.max_stars,
+                r.percentage,
+                r.completed_at.strftime("%d.%m.%Y %H:%M"),
+            ])
+
+    content = "﻿" + buf.getvalue()  # BOM for Excel UTF-8
+    return Response(
+        content=content.encode("utf-8"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=\"results.csv\""},
+    )
+
+
+@app.get("/teacher/results/{rid}", response_class=HTMLResponse)
+async def teacher_result_detail(request: Request, rid: int):
+    if g := guard_teacher(request): return g
+    teacher_id = request.session["teacher_id"]
+    with db_session() as db:
+        r = (db.query(TrainerResult).join(Student).join(Group)
+             .filter(TrainerResult.id == rid, Group.teacher_id == teacher_id)
+             .options(joinedload(TrainerResult.student).joinedload(Student.group),
+                      joinedload(TrainerResult.trainer))
+             .first())
+        if not r:
+            flash(request, "Результат не найден", "error")
+            return redir("/teacher/stats")
+        details = json.loads(r.details_json or "[]")
+    return tpl(request, "teacher/result_detail.html",
+               {"result": r, "details": details, "pos_colors": POS_COLORS})
+
+
 @app.post("/teacher/results/{rid}/delete")
 async def delete_result(request: Request, rid: int):
     if g := guard_teacher(request): return g
@@ -778,6 +1094,19 @@ async def teacher_students_by_group(request: Request, group_id: int = 0):
         students = (db.query(Student).filter_by(group_id=group_id)
                     .order_by(Student.full_name).all())
     return [{"id": s.id, "name": s.full_name} for s in students]
+
+
+@app.post("/teacher/api/word-features")
+async def teacher_word_features(request: Request):
+    if request.session.get("role") != "teacher":
+        return {"ok": False}
+    body = await request.json()
+    word = (body.get("word") or "").strip()
+    pos  = (body.get("pos")  or "").strip()
+    if not word or not pos:
+        return {"ok": False, "error": "word and pos required"}
+    result = analyze_word_as_pos(word, pos)
+    return {"ok": True, **result}
 
 
 @app.post("/teacher/reset-sessions")
@@ -908,9 +1237,25 @@ async def student_dashboard(request: Request):
     with db_session() as db:
         student = (db.query(Student).options(joinedload(Student.group)).filter_by(id=sid).first())
         teacher_id = student.group.teacher_id
-        trainers = (db.query(Trainer).filter_by(teacher_id=teacher_id)
-                    .options(joinedload(Trainer.sentences))
-                    .order_by(Trainer.name).all())
+        group_id   = student.group_id
+
+        # Trainers available to this student:
+        # — trainers explicitly assigned to their group, OR
+        # — trainers with NO group assignments at all (available to everyone)
+        from sqlalchemy import exists, and_
+        assigned_to_group = (db.query(Trainer)
+                               .filter_by(teacher_id=teacher_id)
+                               .join(TrainerGroup,
+                                     and_(TrainerGroup.trainer_id == Trainer.id,
+                                          TrainerGroup.group_id == group_id))
+                               .options(joinedload(Trainer.sentences))
+                               .all())
+        unassigned = (db.query(Trainer)
+                        .filter_by(teacher_id=teacher_id)
+                        .filter(~exists().where(TrainerGroup.trainer_id == Trainer.id))
+                        .options(joinedload(Trainer.sentences))
+                        .all())
+        trainers = sorted(assigned_to_group + unassigned, key=lambda t: t.name)
         recent = (db.query(TrainerResult)
                   .filter_by(student_id=sid)
                   .options(joinedload(TrainerResult.trainer))
@@ -937,19 +1282,100 @@ async def student_exercise(request: Request, tid_: int):
         if not trainer.sentences:
             flash(request, "В этом тренажёре пока нет предложений", "error")
             return redir("/student/")
+
+        level = trainer.level or LEVEL_INTRODUCTORY
+        req_fields = LEVEL_REQUIRED_FIELDS.get(level, ["pos"])
         sentences_data = []
-        for s in trainer.sentences:
-            analysis = s.correct_pos
-            sentences_data.append({
-                "id": s.id, "text": s.text,
-                "words": [{"word": item["word"], "index": i, "correct_pos": item["pos"]}
-                          for i, item in enumerate(analysis)],
-            })
-    return tpl(request, "student/exercise.html",
-               {"trainer": trainer,
-                "sentences_json": json.dumps(sentences_data, ensure_ascii=False),
-                "pos_colors_json": json.dumps(POS_COLORS, ensure_ascii=False),
-                "all_pos": ALL_POS, "pos_colors": POS_COLORS})
+
+        sentences = list(trainer.sentences)
+        if trainer.shuffle:
+            random.shuffle(sentences)
+        limit = trainer.max_sentences or len(sentences)
+        sentences = sentences[:limit]
+
+        for s in sentences:
+            tokens = s.final_analysis if level != LEVEL_INTRODUCTORY else s.correct_pos
+            words = []
+            for i, tok in enumerate(tokens):
+                w: dict = {
+                    "word":        tok["word"] if isinstance(tok, dict) else tok["word"],
+                    "index":       i,
+                    "correct_pos": tok.get("pos", "") if isinstance(tok, dict) else tok["pos"],
+                }
+                if level != LEVEL_INTRODUCTORY and isinstance(tok, dict):
+                    w["correct_lemma"]  = tok.get("lemma", "")
+                    w["correct_var"]    = tok.get("var_features", {})
+                    w["correct_const"]  = tok.get("const_features", {})
+                    w["correct_syntax"] = tok.get("syntax_role", "")
+                words.append(w)
+            sentences_data.append({"id": s.id, "text": s.text, "words": words})
+
+    ctx = {
+        "trainer":          trainer,
+        "level":            level,
+        "req_fields":       req_fields,
+        "sentences_json":   json.dumps(sentences_data, ensure_ascii=False),
+        "pos_colors_json":  json.dumps(POS_COLORS, ensure_ascii=False),
+        "all_pos":          ALL_POS,
+        "pos_colors":       POS_COLORS,
+    }
+    template = "student/exercise.html" if level == LEVEL_INTRODUCTORY else "student/exercise_full.html"
+    return tpl(request, template, ctx)
+
+
+def _score_word(tok: dict, ans: dict, level: str) -> tuple[int, int, dict]:
+    """Score one word. Returns (1, 1, detail) if ALL required fields correct, else (0, 1, detail).
+    field_results is always populated for per-field feedback display."""
+    req    = LEVEL_REQUIRED_FIELDS.get(level, ["pos"])
+    pos_ru = tok.get("pos", "")
+    detail: dict = {
+        "word":          tok.get("word", ""),
+        "correct_pos":   pos_ru,
+        "student_pos":   ans.get("pos", "") if isinstance(ans, dict) else str(ans),
+        "correct":       False,
+        "field_results": [],
+    }
+
+    def _chk(field: str, correct_val, student_val) -> bool:
+        ok = str(correct_val).strip().lower() == str(student_val or "").strip().lower()
+        detail["field_results"].append({"field": field, "ok": ok,
+                                        "correct": correct_val, "student": student_val or ""})
+        return ok
+
+    student_pos = ans.get("pos", "") if isinstance(ans, dict) else str(ans)
+    all_ok = _chk("pos", pos_ru, student_pos)
+
+    if "lemma" in req:
+        detail["correct_lemma"] = tok.get("lemma", "")
+        detail["student_lemma"] = ans.get("lemma", "") if isinstance(ans, dict) else ""
+        all_ok &= _chk("lemma", tok.get("lemma", ""), detail["student_lemma"])
+
+    if "var_features" in req:
+        correct_var  = tok.get("var_features", {})
+        student_var  = ans.get("var_features", {}) if isinstance(ans, dict) else {}
+        detail["correct_var"] = correct_var
+        detail["student_var"] = student_var
+        for key in SCORED_VAR_FEATURES.get(pos_ru, []):
+            if key in correct_var:
+                all_ok &= _chk(f"var:{key}", correct_var[key], student_var.get(key, ""))
+
+    if "const_features" in req:
+        correct_const = tok.get("const_features", {})
+        student_const = ans.get("const_features", {}) if isinstance(ans, dict) else {}
+        detail["correct_const"] = correct_const
+        detail["student_const"] = student_const
+        for key in SCORED_CONST_FEATURES.get(pos_ru, []):
+            if key in correct_const:
+                all_ok &= _chk(f"const:{key}", correct_const[key], student_const.get(key, ""))
+
+    if "syntax_role" in req:
+        detail["correct_syntax"] = tok.get("syntax_role", "")
+        detail["student_syntax"] = ans.get("syntax_role", "") if isinstance(ans, dict) else ""
+        all_ok &= _chk("syntax_role", detail["correct_syntax"], detail["student_syntax"])
+
+    detail["correct"] = bool(all_ok)
+    # 1 point per word: fully correct = 1, otherwise 0; max always 1
+    return (1 if all_ok else 0), 1, detail
 
 
 @app.post("/student/submit-exercise")
@@ -962,27 +1388,42 @@ async def submit_exercise(request: Request):
     total_stars = max_stars = 0
     verified = []
     with db_session() as db:
+        trainer = db.query(Trainer).filter_by(id=trainer_id).first()
+        level = (trainer.level or LEVEL_INTRODUCTORY) if trainer else LEVEL_INTRODUCTORY
+
         for r in results_data:
             sentence = db.query(Sentence).filter_by(id=r.get("sentence_id")).first()
             if not sentence:
                 continue
-            correct = sentence.correct_pos
-            stars = 0
+            tokens = sentence.final_analysis if level != LEVEL_INTRODUCTORY else []
+            # Fall back to correct_pos for introductory
+            if not tokens or level == LEVEL_INTRODUCTORY:
+                tokens = [{"word": it["word"], "pos": it["pos"],
+                           "lemma": "", "var_features": {}, "const_features": {},
+                           "syntax_role": ""}
+                          for it in sentence.correct_pos]
+
+            stars = word_max = 0
             word_details = []
             answers = r.get("answers", {})
-            for i, item in enumerate(correct):
-                sp = answers.get(str(i), "")
-                ok = sp == item["pos"]
-                if ok:
-                    stars += 1
-                word_details.append({"word": item["word"], "student_pos": sp,
-                                     "correct_pos": item["pos"], "correct": ok})
+            for i, tok in enumerate(tokens):
+                ans = answers.get(str(i), {})
+                ws, wm, detail = _score_word(tok, ans, level)
+                stars += ws
+                word_max += wm
+                word_details.append(detail)
+
             total_stars += stars
-            max_stars += len(correct)
-            verified.append({"sentence_id": sentence.id,
-                              "sentence_text": sentence.text,
-                              "stars": stars, "max_stars": len(correct),
-                              "word_details": word_details})
+            max_stars += word_max
+            verified.append({
+                "sentence_id":   sentence.id,
+                "sentence_text": sentence.text,
+                "stars":         stars,
+                "max_stars":     word_max,
+                "level":         level,
+                "word_details":  word_details,
+            })
+
         pct = round(total_stars / max_stars * 100, 1) if max_stars else 0.0
         tr = TrainerResult(student_id=request.session["student_id"],
                            trainer_id=trainer_id,

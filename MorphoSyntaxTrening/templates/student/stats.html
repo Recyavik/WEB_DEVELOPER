@@ -26,11 +26,17 @@
   <h3>История попыток</h3>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Тренажёр</th><th>Звёзды</th><th>Результат</th><th>Дата</th><th></th></tr></thead>
+      <thead><tr><th>Тренажёр</th><th>Уровень</th><th>Звёзды</th><th>Результат</th><th>Дата</th><th></th></tr></thead>
       <tbody>
         {% for r in results %}
         <tr>
           <td style="font-weight:600;">{{ r.trainer.name }}</td>
+          <td>
+            <span class="badge"
+                  style="background:{{ level_colors.get(r.trainer.level,'#d1d5db') }};color:#1e293b;font-size:10px;">
+              {{ level_labels.get(r.trainer.level, r.trainer.level) }}
+            </span>
+          </td>
           <td>{{ r.total_stars }} / {{ r.max_stars }}
             <span class="{% if r.percentage >= 85 %}star-green{% elif r.percentage >= 61 %}star-blue{% elif r.percentage >= 31 %}star-yellow{% else %}star-red{% endif %}">&#9733;</span>
           </td>

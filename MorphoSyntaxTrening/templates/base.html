@@ -14,6 +14,7 @@
       <a class="nav-brand" href="/">MorphoSyntaxTrening</a>
       <div class="nav-links">
         {% set role = request.session.get('role') %}
+        <a href="/"{% if request.url.path == '/' %} class="active"{% endif %}>Главная</a>
         {% if role == 'admin' %}
           <a href="/admin/"{% if request.url.path == '/admin/' %} class="active"{% endif %}>Панель</a>
           <a href="/admin/teachers"{% if '/admin/teachers' in request.url.path %} class="active"{% endif %}>Учителя</a>
@@ -52,7 +53,7 @@
   </div>
 
   <footer class="site-footer">
-    <p>MorphoSyntaxTrening &mdash; Интерактивный тренажёр морфосинтаксического анализа &nbsp;&bull;&nbsp; Хакатон 2026 &nbsp;&bull;&nbsp; <span style="color:var(--text-soft);">v2.1</span></p>
+    <p>MorphoSyntaxTrening &mdash; Интерактивный тренажёр морфосинтаксического анализа &nbsp;&bull;&nbsp; Хакатон 2026 &nbsp;&bull;&nbsp; <span style="color:var(--text-soft);">v3.0.5</span></p>
   </footer>
 
   {% block scripts %}{% endblock %}

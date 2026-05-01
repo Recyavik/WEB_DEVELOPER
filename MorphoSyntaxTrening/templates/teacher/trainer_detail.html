@@ -13,10 +13,10 @@
   <div>
     <div class="panel">
       <h3>Настройки тренажёра</h3>
-      <form method="POST" action="/teacher/trainers/{{ trainer.id }}/update" class="form-grid">
+      <form method="POST" action="/teacher/trainers/{{ trainer.id }}/update" class="form-grid" autocomplete="off">
         <div class="field-group">
           <label>Название</label>
-          <input name="name" type="text" value="{{ trainer.name }}" required>
+          <input name="name" type="text" autocomplete="off" value="{{ trainer.name }}" required>
         </div>
         <div class="field-group">
           <label>Описание</label>
@@ -25,6 +25,36 @@
         <div class="field-group">
           <label>Время выполнения (секунды)</label>
           <input name="time_limit" type="number" min="30" max="3600" value="{{ trainer.time_limit }}">
+        </div>
+        <div class="field-group">
+          <label>Уровень тренажёра</label>
+          <select name="level">
+            {% for val, label in level_labels.items() %}
+            <option value="{{ val }}"{% if trainer.level == val %} selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field-group">
+          <label>Показывать предложений ученику</label>
+          <input name="max_sentences" type="number" min="0" autocomplete="off"
+                 value="{{ trainer.max_sentences or 0 }}">
+          <span style="font-size:12px;color:var(--text-soft);">
+            0 = все {{ trainer.sentences|length }} предложений
+            {%- if trainer.max_sentences and trainer.max_sentences < trainer.sentences|length %}
+            · сейчас: {{ trainer.max_sentences }} из {{ trainer.sentences|length }}
+            {%- endif %}
+          </span>
+        </div>
+        <div class="field-group">
+          <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-weight:700;">
+            <input type="checkbox" name="shuffle" value="1"
+                   {% if trainer.shuffle %}checked{% endif %}
+                   style="width:18px;height:18px;cursor:pointer;flex-shrink:0;">
+            Перемешивать порядок предложений
+          </label>
+          <span style="font-size:12px;color:var(--text-soft);padding-left:28px;">
+            Каждый ученик получает свой случайный порядок
+          </span>
         </div>
         <button type="submit" class="btn btn-primary">Сохранить</button>
       </form>
@@ -39,10 +69,42 @@
       {% endif %}
     </div>
 
+    <!-- Group assignment -->
+    <div class="panel">
+      <h3>Доступ по группам</h3>
+      <form method="POST" action="/teacher/trainers/{{ trainer.id }}/assign-groups">
+        {% if groups %}
+        <p style="font-size:12px;color:var(--text-soft);margin:0 0 10px;">
+          Без галочек — тренажёр доступен <strong>всем</strong> группам.
+          Выберите группы — только им.
+        </p>
+        {% for g in groups %}
+        <label style="display:flex;align-items:center;gap:8px;font-size:14px;
+                      padding:6px 0;cursor:pointer;">
+          <input type="checkbox" name="group_ids" value="{{ g.id }}"
+                 {% if g.id in assigned_group_ids %}checked{% endif %}
+                 style="width:16px;height:16px;cursor:pointer;">
+          {{ g.name }}
+          {% if g.id in assigned_group_ids %}
+          <span class="badge badge-green" style="font-size:10px;">активно</span>
+          {% endif %}
+        </label>
+        {% endfor %}
+        {% else %}
+        <p style="font-size:13px;color:var(--text-soft);">
+          Сначала создайте группы в разделе <a href="/teacher/groups">Ученики</a>.
+        </p>
+        {% endif %}
+        <button type="submit" class="btn btn-primary btn-sm" style="margin-top:10px;width:100%;">
+          Сохранить доступ
+        </button>
+      </form>
+    </div>
+
     <!-- Manual add -->
     <div class="panel">
       <h3>Добавить вручную</h3>
-      <form method="POST" action="/teacher/trainers/{{ trainer.id }}/add-sentence" class="form-grid">
+      <form method="POST" action="/teacher/trainers/{{ trainer.id }}/add-sentence" class="form-grid" autocomplete="off">
         <div class="field-group">
           <label>Предложение на русском языке</label>
           <textarea name="text" id="manual-text"
@@ -125,9 +187,17 @@
   <!-- Main: sentences list -->
   <div>
     <div class="panel">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
         <h2 style="margin:0;">Предложения тренажёра</h2>
-        <span class="badge badge-blue">{{ trainer.sentences|length }} предложений</span>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <span class="badge badge-blue">{{ trainer.sentences|length }} предложений</span>
+          {% if trainer.sentences and trainer.level != 'introductory' %}
+          <button type="button" class="btn btn-secondary btn-sm" id="analyze-all-btn"
+                  onclick="analyzeAll({{ trainer.id }})">
+            &#129302;&nbsp;Анализировать все
+          </button>
+          {% endif %}
+        </div>
       </div>
 
       {% if not trainer.sentences %}
@@ -149,9 +219,21 @@
           </div>
           {% endfor %}
         </div>
-        <p style="font-size:12px;color:var(--text-soft);margin:6px 0 0;">{{ s.word_count }} слов</p>
+        <div style="display:flex;align-items:center;gap:8px;margin:6px 0 0;flex-wrap:wrap;">
+          <span style="font-size:12px;color:var(--text-soft);">{{ s.word_count }} слов</span>
+          {% if s.status == 'reviewed' %}
+          <span class="badge" style="background:#bbf7d0;color:#166534;font-size:10px;">&#10003; проверено</span>
+          {% elif s.status == 'analyzed' %}
+          <span class="badge" style="background:#dbeafe;color:#1e40af;font-size:10px;">&#129302; анализ ИИ</span>
+          {% else %}
+          <span class="badge" style="background:#f3f4f6;color:#6b7280;font-size:10px;">черновик</span>
+          {% endif %}
+        </div>
 
         <div class="sentence-actions">
+          <a href="/teacher/sentences/{{ s.id }}/analysis" class="btn btn-primary btn-sm">
+            {% if trainer.level == 'introductory' %}Разбор{% else %}Полный разбор{% endif %}
+          </a>
           <button class="btn btn-secondary btn-sm"
                   onclick="toggleEdit('{{ s.id }}')">Редактировать</button>
           <form method="POST" action="/teacher/sentences/{{ s.id }}/delete"
@@ -162,7 +244,7 @@
 
         <form method="POST" action="/teacher/sentences/{{ s.id }}/edit"
               class="sentence-edit-form" id="edit-{{ s.id }}">
-          <input name="text" type="text" value="{{ s.text }}" required style="flex:1;">
+          <input name="text" type="text" autocomplete="off" value="{{ s.text }}" required style="flex:1;">
           <button type="submit" class="btn btn-primary btn-sm">Сохранить</button>
           <button type="button" class="btn btn-secondary btn-sm"
                   onclick="toggleEdit('{{ s.id }}')">Отмена</button>
@@ -218,6 +300,27 @@ function copyToManual() {
   if (text) {
     document.getElementById('manual-text').value = text;
     document.getElementById('manual-text').focus();
+  }
+}
+
+async function analyzeAll(trainerId) {
+  const btn = document.getElementById('analyze-all-btn');
+  if (!confirm('Запустить полный морфологический анализ для всех предложений тренажёра? Ручные правки будут сброшены.')) return;
+  btn.disabled = true;
+  btn.textContent = '⏳ Анализируется...';
+  try {
+    const res = await fetch(`/teacher/trainers/${trainerId}/analyze-all`, { method: 'POST' });
+    const data = await res.json();
+    if (data.ok) {
+      btn.textContent = `✓ Готово (${data.count})`;
+      setTimeout(() => location.reload(), 900);
+    } else {
+      btn.textContent = 'Ошибка';
+      btn.disabled = false;
+    }
+  } catch {
+    btn.textContent = 'Ошибка соединения';
+    btn.disabled = false;
   }
 }
 </script>
