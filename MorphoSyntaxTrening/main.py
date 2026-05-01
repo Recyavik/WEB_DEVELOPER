@@ -336,10 +336,9 @@ async def admin_settings_post(request: Request,
                                smtp_port: int = Form(465),
                                smtp_user: str = Form(""),
                                smtp_password: str = Form(""),
-                               smtp_from: str = Form(""),
                                smtp_tls: str = Form("ssl")):
     if g := guard_admin(request): return g
-    smtp_settings.save(smtp_host, smtp_port, smtp_user, smtp_password, smtp_from, smtp_tls)
+    smtp_settings.save(smtp_host, smtp_port, smtp_user, smtp_password, smtp_tls)
     flash(request, "Настройки почты сохранены", "success")
     return redir("/admin/settings")
 

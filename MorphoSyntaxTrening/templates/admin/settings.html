@@ -72,16 +72,7 @@
           Для Яндекса — пароль приложения с id.yandex.ru, не пароль от ящика
         </div>
       </div>
-      <div class="field-group">
-        <label>Имя отправителя <span style="color:var(--text-soft);font-weight:400;">(необязательно)</span></label>
-        <input type="text" name="smtp_from" id="f-from" autocomplete="off" value="{{ s.smtp_from }}"
-               placeholder="MorphoSyntaxTrening &lt;noreply@school.ru&gt;">
-        <div style="font-size:12px;color:var(--text-soft);margin-top:4px;">
-          Пример: <code>MorphoSyntaxTrening &lt;noreply@school.ru&gt;</code> — или оставьте пустым
-        </div>
-      </div>
-
-      <div style="display:flex;align-items:center;gap:12px;">
+<div style="display:flex;align-items:center;gap:12px;">
         {% if email_enabled %}
           <span class="badge badge-green">&#10003; Почта активна</span>
         {% else %}
@@ -132,10 +123,6 @@
         <tr>
           <td style="color:var(--text-soft);padding:5px 0;">Пароль</td>
           <td style="font-weight:600;">{{ '●●●●●●●●' if s.smtp_password else '—' }}</td>
-        </tr>
-        <tr>
-          <td style="color:var(--text-soft);padding:5px 0;">От кого</td>
-          <td style="font-weight:600;">{{ s.smtp_from or s.smtp_user or '—' }}</td>
         </tr>
       </table>
     </div>

@@ -1,35 +1,16 @@
-import re
 import smtplib
 import ssl
-from email.header import Header
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from email.utils import parseaddr, formataddr
 import smtp_settings
 
-
-def _encode_from(from_addr: str) -> str:
-    name, addr = parseaddr(from_addr)
-    if not addr:
-        # Нестандартный формат — ищем email по символу @
-        m = re.search(r'\S+@\S+', from_addr)
-        if not m:
-            return from_addr
-        addr = m.group(0)
-        name = from_addr.replace(addr, '').strip()
-    if name:
-        try:
-            name.encode('ascii')
-            return formataddr((name, addr))
-        except UnicodeEncodeError:
-            return formataddr((str(Header(name, 'utf-8')), addr))
-    return addr
+SENDER_NAME = "MorphoSyntaxTrening"
 
 
 def _make_msg(subject: str, from_addr: str, to: str, html: str):
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
-    msg["From"] = _encode_from(from_addr)
+    msg["From"] = from_addr
     msg["To"] = to
     msg.attach(MIMEText(html, "html", "utf-8"))
     return msg
@@ -58,7 +39,7 @@ def _send(to: str, subject: str, html: str) -> bool:
     s = smtp_settings.load()
     if not (s["smtp_host"] and s["smtp_user"] and s["smtp_password"]):
         return False
-    from_addr = s["smtp_from"] or s["smtp_user"]
+    from_addr = f"{SENDER_NAME} <{s['smtp_user']}>"
     try:
         msg = _make_msg(subject, from_addr, to, html)
         with _connect(s) as srv:
@@ -72,7 +53,7 @@ def send_test(to: str) -> tuple[bool, str]:
     s = smtp_settings.load()
     if not (s["smtp_host"] and s["smtp_user"] and s["smtp_password"]):
         return False, "SMTP не настроен — заполните настройки почты"
-    from_addr = s["smtp_from"] or s["smtp_user"]
+    from_addr = f"{SENDER_NAME} <{s['smtp_user']}>"
     try:
         msg = _make_msg(
             "Тест почты — MorphoSyntaxTrening", from_addr, to,

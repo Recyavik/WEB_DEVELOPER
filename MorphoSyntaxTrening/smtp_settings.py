@@ -9,7 +9,6 @@ _DEFAULTS = {
     "smtp_port": int(os.environ.get("SMTP_PORT", "465")),
     "smtp_user": os.environ.get("SMTP_USER", ""),
     "smtp_password": os.environ.get("SMTP_PASSWORD", ""),
-    "smtp_from": os.environ.get("SMTP_FROM", ""),
     "smtp_tls": os.environ.get("SMTP_TLS", "ssl"),  # "ssl" | "starttls"
 }
 
@@ -26,15 +25,13 @@ def load() -> dict:
     return dict(_DEFAULTS)
 
 
-def save(host: str, port: int, user: str, password: str,
-         from_addr: str, tls: str = "ssl") -> None:
+def save(host: str, port: int, user: str, password: str, tls: str = "ssl") -> None:
     _SETTINGS_FILE.parent.mkdir(exist_ok=True)
     data = {
         "smtp_host": host.strip(),
         "smtp_port": port,
         "smtp_user": user.strip(),
         "smtp_password": password,
-        "smtp_from": from_addr.strip() or user.strip(),
         "smtp_tls": tls if tls in ("ssl", "starttls") else "ssl",
     }
     _SETTINGS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2),
