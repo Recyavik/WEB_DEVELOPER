@@ -18,6 +18,14 @@
   --surface:      #ffffff;
   --border:       #dbe4f0;
   --bg:           #f4f7fb;
+  /* inner sub-cards (used in about, index) */
+  --inner-card:   #f8fafc;
+  /* level card backgrounds + borders */
+  --lv-intro-bg: #f8fafc; --lv-intro-bd: #d1d5db;
+  --lv-elem-bg:  #eff6ff; --lv-elem-bd:  #bfdbfe;
+  --lv-basic-bg: #f0fdf4; --lv-basic-bd: #bbf7d0;
+  --lv-adv-bg:   #fff7ed; --lv-adv-bd:   #fed7aa;
+  --lv-exp-bg:   #faf5ff; --lv-exp-bd:   #e9d5ff;
 }
 
 /* ── Dark theme ─────────────────────────────────────────────────────────── */
@@ -29,7 +37,7 @@ html[data-theme="dark"] {
   --line:         #334155;
   --accent:       #3b82f6;
   --accent-soft:  #1e3a5f;
-  --success:      #4ade80;
+  --success:      #15803d;
   --success-soft: #14532d;
   --danger:       #f87171;
   --danger-soft:  #7f1d1d;
@@ -39,6 +47,12 @@ html[data-theme="dark"] {
   --surface:      #1e293b;
   --border:       #334155;
   --bg:           #0f172a;
+  --inner-card:   #162032;
+  --lv-intro-bg: #1e293b; --lv-intro-bd: #475569;
+  --lv-elem-bg:  #1e3a5f; --lv-elem-bd:  #2563eb;
+  --lv-basic-bg: #14532d; --lv-basic-bd: #166534;
+  --lv-adv-bg:   #431407; --lv-adv-bd:   #9a3412;
+  --lv-exp-bg:   #2d1f63; --lv-exp-bd:   #7c3aed;
 }
 html[data-theme="dark"] body {
   background:
@@ -62,6 +76,8 @@ html[data-theme="dark"] input::placeholder,
 html[data-theme="dark"] textarea::placeholder { color: #475569; }
 html[data-theme="dark"] .btn-secondary { background: #334155; color: #f1f5f9; }
 html[data-theme="dark"] .btn-secondary:hover { filter: brightness(1.15); }
+html[data-theme="dark"] .btn-success { background: #16a34a; color: #fff; }
+html[data-theme="dark"] .btn-nav-logout { background: #fee2e2 !important; color: #dc2626 !important; }
 html[data-theme="dark"] th { background: #162032; }
 html[data-theme="dark"] tr:hover td { background: #1e3a5f22; }
 html[data-theme="dark"] .pwd { background: #334155; color: #f1f5f9; }
