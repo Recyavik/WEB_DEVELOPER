@@ -1,3 +1,4 @@
+import re
 import smtplib
 import ssl
 from email.header import Header
@@ -10,14 +11,19 @@ import smtp_settings
 def _encode_from(from_addr: str) -> str:
     name, addr = parseaddr(from_addr)
     if not addr:
-        return from_addr
+        # Нестандартный формат — ищем email по символу @
+        m = re.search(r'\S+@\S+', from_addr)
+        if not m:
+            return from_addr
+        addr = m.group(0)
+        name = from_addr.replace(addr, '').strip()
     if name:
         try:
             name.encode('ascii')
-            return from_addr
+            return formataddr((name, addr))
         except UnicodeEncodeError:
             return formataddr((str(Header(name, 'utf-8')), addr))
-    return from_addr
+    return addr
 
 
 def _make_msg(subject: str, from_addr: str, to: str, html: str):
