@@ -96,8 +96,47 @@
   color:var(--text-main); box-sizing:border-box;
 }
 .ef-features-grid {
-  display:grid; grid-template-columns:1fr 1fr; gap:8px;
+  display:grid; grid-template-columns:repeat(auto-fill, minmax(148px, 1fr)); gap:6px;
 }
+.ef-features-grid .ef-field-group label {
+  font-size:10px; margin-bottom:2px;
+}
+.ef-features-grid .ef-field-group select {
+  padding:5px 8px; font-size:13px;
+}
+.ef-check-pos-btn {
+  width:100%; margin-top:8px; padding:6px 0;
+  border:1px solid var(--accent); border-radius:8px;
+  background:none; color:var(--accent); cursor:pointer;
+  font-size:13px; font-weight:600; transition:all .15s;
+}
+.ef-check-pos-btn:hover { background:var(--accent-soft); }
+.ef-word-warning {
+  margin-top:8px; padding:10px 12px; background:#fef3c7;
+  border:1px solid #fcd34d; border-radius:8px; display:none;
+  font-size:13px; line-height:1.5;
+}
+.ef-word-warning.open { display:block; }
+.ef-word-warning .ef-warn-btns { margin-top:8px; display:flex; gap:6px; flex-wrap:wrap; }
+.ef-word-warning .ef-warn-btns button {
+  padding:4px 12px; border-radius:6px; border:1px solid var(--border);
+  font-size:12px; cursor:pointer; background:var(--surface); color:var(--text-main);
+}
+.ef-word-warning .ef-warn-btns button:hover { border-color:var(--accent); color:var(--accent); }
+.ef-fullcheck-overlay {
+  position:fixed; inset:0; background:rgba(0,0,0,.45);
+  display:none; align-items:center; justify-content:center; z-index:999;
+}
+.ef-fullcheck-overlay.open { display:flex; }
+.ef-fullcheck-dialog {
+  background:var(--surface); border-radius:14px; padding:24px 28px;
+  max-width:380px; width:92%; box-shadow:0 8px 40px rgba(0,0,0,.28);
+}
+.ef-fullcheck-dialog h4 { margin:0 0 10px; font-size:17px; }
+.ef-fullcheck-dialog p  { font-size:14px; color:var(--text-soft); margin:0 0 18px; line-height:1.6; }
+.ef-fullcheck-dialog .ef-warn-btns { display:flex; gap:8px; justify-content:flex-end; }
+html[data-theme="dark"] .ef-word-warning { background:#451a03; border-color:#d97706; color:#fde68a; }
+html[data-theme="dark"] .ef-word-warning .ef-warn-btns button { background:var(--surface); }
 .ef-done-btn {
   display:block; margin-top:10px; margin-left:auto;
   padding:7px 22px; border:none;
@@ -245,6 +284,17 @@ html[data-theme="dark"] .ef-footer { background:var(--surface); }
           <div class="ef-field-result" id="res-syntax"></div>
         </div>
 
+        <button class="ef-check-pos-btn" id="check-pos-btn" onclick="checkPOS()">
+          Проверить часть речи
+        </button>
+        <div class="ef-word-warning" id="word-warning">
+          <span class="ef-warn-text"></span>
+          <div class="ef-warn-btns">
+            <button onclick="dismissWordWarning()">Вернуться к разбору</button>
+            <button onclick="dismissWordWarning(); selectNext()">Следующее слово →</button>
+          </div>
+        </div>
+
         <button class="ef-done-btn" id="done-btn" onclick="markDone()">Готово ✓</button>
 
         <!-- Hint -->
@@ -265,8 +315,8 @@ html[data-theme="dark"] .ef-footer { background:var(--surface); }
   <div class="ef-footer">
     <div class="ef-stars-display" id="sentence-stars" style="display:none;"></div>
     <div class="ef-hint-text" id="hint-text">Выберите слово, чтобы начать разбор.</div>
-    <button class="btn-check" id="check-btn" onclick="checkCurrentSentence()">
-      Проверить
+    <button class="btn-check" id="check-btn" onclick="requestFullCheck()">
+      Полная проверка ✔
     </button>
     <button class="btn-next-ex" id="next-btn" style="display:none;" onclick="goNext()">
       Следующее &rarr;
@@ -274,6 +324,20 @@ html[data-theme="dark"] .ef-footer { background:var(--surface); }
   </div>
 
 </div><!-- /ef-wrapper -->
+
+<!-- Full-check incomplete warning modal -->
+<div class="ef-fullcheck-overlay" id="fullcheck-overlay">
+  <div class="ef-fullcheck-dialog">
+    <h4>Не все слова разобраны</h4>
+    <p class="ef-warn-count"></p>
+    <p>Провести полную проверку или вернуться к разбору?</p>
+    <div class="ef-warn-btns">
+      <button class="btn btn-secondary btn-sm" onclick="cancelFullCheck()">Вернуться к разбору</button>
+      <button class="btn btn-primary btn-sm" onclick="confirmFullCheck()">Всё равно проверить</button>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 
 {% block scripts %}
@@ -534,11 +598,15 @@ function openWord(idx) {
   if (isChecked) {
     showFieldFeedback(idx);
     document.getElementById('done-btn').style.display = 'none';
+    document.getElementById('check-pos-btn').style.display = 'none';
+    document.getElementById('word-warning').classList.remove('open');
     document.getElementById('hint-toggle').style.display = 'none';
     document.getElementById('hint-panel').classList.remove('open');
   } else {
     clearFieldFeedback();
     document.getElementById('done-btn').style.display = '';
+    document.getElementById('check-pos-btn').style.display = '';
+    document.getElementById('word-warning').classList.remove('open');
     document.getElementById('hint-toggle').style.display = '';
   }
 
@@ -596,6 +664,10 @@ function renderFeatureInputs(pos, savedVar, savedConst) {
 function onPosChange() {
   const pos = document.getElementById('inp-pos').value;
   const ans = currentAns[activeWordIdx] || {};
+  // Reset pos feedback and word warning when POS changes
+  const rp = document.getElementById('res-pos');
+  rp.textContent = ''; rp.className = 'ef-field-result';
+  document.getElementById('word-warning').classList.remove('open');
   renderFeatureInputs(pos, ans.var_features || {}, ans.const_features || {});
   if (REQ_FIELDS.includes('var_features'))
     document.getElementById('field-var').style.display = (POS_FORM[pos]?.var?.length) ? '' : 'none';
@@ -807,6 +879,101 @@ const POS_CONST_KEYS = {
   "Местоимение":     ["разряд","лицо"],
   "Числительное":    ["разряд"],
 };
+
+// ── Partial POS check ─────────────────────────────────────────────────────────
+function checkPOS() {
+  if (activeWordIdx === null) return;
+  const w   = SENTENCES[currentIdx].words[activeWordIdx];
+  const pos = document.getElementById('inp-pos').value;
+  const ok  = pos.trim().toLowerCase() === w.correct_pos.trim().toLowerCase();
+  const rp  = document.getElementById('res-pos');
+  rp.textContent = ok ? '✓ верно' : `✗ правильно: ${w.correct_pos}`;
+  rp.className   = `ef-field-result ${ok ? 'ok' : 'err'}`;
+
+  const missing = getMissingFields(w, currentAns[activeWordIdx] || {}, pos);
+  const warnEl  = document.getElementById('word-warning');
+  if (missing.length > 0) {
+    warnEl.querySelector('.ef-warn-text').textContent =
+      `Не заполнено: ${missing.join(', ')}.`;
+    warnEl.classList.add('open');
+  } else {
+    warnEl.classList.remove('open');
+  }
+}
+
+function getMissingFields(w, ans, currentPos) {
+  const pos = currentPos || ans.pos || '';
+  const missing = [];
+  if (!pos) { return ['часть речи']; }
+
+  if (REQ_FIELDS.includes('lemma') && !INVARIABLE_POS.has(w.correct_pos)) {
+    if (!(document.getElementById('inp-lemma').value || ans.lemma || '').trim())
+      missing.push('начальная форма');
+  }
+  if (REQ_FIELDS.includes('var_features')) {
+    const cfg = POS_FORM[pos] || EMPTY_FORM;
+    cfg.var.forEach(f => {
+      const sel = document.querySelector(`#var-inputs select[data-key="${f.k}"]`);
+      if (sel && !sel.value) missing.push(f.l.toLowerCase());
+    });
+  }
+  if (REQ_FIELDS.includes('const_features')) {
+    const cfg = POS_FORM[pos] || EMPTY_FORM;
+    cfg.con.forEach(f => {
+      const sel = document.querySelector(`#const-inputs select[data-key="${f.k}"]`);
+      if (sel && !sel.value) missing.push(f.l.toLowerCase());
+    });
+  }
+  if (REQ_FIELDS.includes('syntax_role') && !SERVICE_POS.has(w.correct_pos)) {
+    if (!document.getElementById('inp-syntax').value)
+      missing.push('синтаксическая роль');
+  }
+  return missing;
+}
+
+function dismissWordWarning() {
+  document.getElementById('word-warning').classList.remove('open');
+}
+
+// ── Full-check with incomplete guard ─────────────────────────────────────────
+function requestFullCheck() {
+  const s = SENTENCES[currentIdx];
+  let incomplete = 0;
+  s.words.forEach(w => {
+    const ans = currentAns[w.index] || {};
+    const pos = ans.pos || '';
+    if (!pos) { incomplete++; return; }
+    if (REQ_FIELDS.includes('lemma') && !INVARIABLE_POS.has(w.correct_pos)
+        && !(ans.lemma || '').trim()) { incomplete++; return; }
+    const cfg = POS_FORM[pos] || EMPTY_FORM;
+    if (REQ_FIELDS.includes('var_features')
+        && cfg.var.some(f => !ans.var_features?.[f.k])) { incomplete++; return; }
+    if (REQ_FIELDS.includes('const_features')
+        && cfg.con.some(f => !ans.const_features?.[f.k])) { incomplete++; return; }
+    if (REQ_FIELDS.includes('syntax_role') && !SERVICE_POS.has(w.correct_pos)
+        && !ans.syntax_role) { incomplete++; }
+  });
+
+  if (incomplete > 0) {
+    const ov = document.getElementById('fullcheck-overlay');
+    const r = incomplete % 10;
+    const plural = (incomplete >= 11 && incomplete <= 14) ? 'слов' :
+                   r === 1 ? 'слово' : (r >= 2 && r <= 4) ? 'слова' : 'слов';
+    ov.querySelector('.ef-warn-count').textContent =
+      `${incomplete} ${plural} разобрано не полностью.`;
+    ov.classList.add('open');
+  } else {
+    checkCurrentSentence();
+  }
+}
+
+function confirmFullCheck() {
+  document.getElementById('fullcheck-overlay').classList.remove('open');
+  checkCurrentSentence();
+}
+function cancelFullCheck() {
+  document.getElementById('fullcheck-overlay').classList.remove('open');
+}
 
 function showFieldFeedback(idx) {
   const s      = SENTENCES[currentIdx];
