@@ -296,15 +296,11 @@ async def admin_send_invite(request: Request, tid: int):
     with db_session() as db:
         t = db.query(Teacher).filter_by(id=tid).first()
         if t:
-            new_pwd = generate_password()
-            t.password_hash = hash_password(new_pwd)
-            db.commit()
-            sent = email_service.send_teacher_welcome(t.email, t.name, t.code, new_pwd)
+            sent = email_service.send_teacher_invite_reminder(t.email, t.name, t.code)
             if sent:
                 flash(request, f"Приглашение отправлено на {t.email}", "success")
             else:
-                flash(request,
-                      f"Email не настроен. Новый пароль для {t.name}: {new_pwd}", "warning")
+                flash(request, f"Email не настроен. Код учителя: {t.code}", "warning")
     return redir("/admin/teachers")
 
 

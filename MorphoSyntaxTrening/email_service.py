@@ -139,6 +139,22 @@ def send_teacher_password_reset(to: str, teacher_name: str, new_password: str) -
     return _send(to, "Новый пароль учителя — MorphoSyntaxTrening", html)
 
 
+def send_teacher_invite_reminder(to: str, teacher_name: str, teacher_code: str) -> bool:
+    html = f"""
+    <h2>Напоминание о входе, {teacher_name}!</h2>
+    <p>Ваш аккаунт учителя в системе <b>MorphoSyntaxTrening</b> активен.</p>
+    <p>Данные для входа:</p>
+    <ul>
+      <li><b>Сайт:</b> <a href="{SITE_URL}">{SITE_URL}</a></li>
+      <li><b>Email:</b> {to}</li>
+    </ul>
+    <p>Ваш код учителя (сообщите ученикам для входа):</p>
+    <p style="font-size:28px;font-weight:bold;letter-spacing:6px;color:#1d4ed8;">{teacher_code}</p>
+    <p>Если вы забыли пароль, обратитесь к администратору.</p>
+    """
+    return _send(to, f"Напоминание о входе — MorphoSyntaxTrening", html)
+
+
 def send_teacher_status_change(to: str, teacher_name: str, is_active: bool) -> bool:
     status_text = "активирован" if is_active else "деактивирован"
     status_color = "#15803d" if is_active else "#dc2626"

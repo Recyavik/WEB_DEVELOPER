@@ -76,10 +76,10 @@
               </form>
               <button class="btn btn-secondary btn-sm"
                       onclick="toggleReset('{{ t.id }}', this)">
-                Сброс пароля
+                Новый пароль
               </button>
               <form method="POST" action="/admin/teachers/{{ t.id }}/send-invite"
-                    onsubmit="return confirm('Сгенерировать новый пароль и отправить приглашение на {{ t.email }}?')">
+                    onsubmit="return confirm('Отправить напоминание о входе на {{ t.email }}?')">
                 <button class="btn btn-invite btn-sm">&#9993; Пригласить</button>
               </form>
               <form method="POST" action="/admin/teachers/{{ t.id }}/delete"
@@ -127,7 +127,7 @@ function toggleReset(id, btn) {
   const row = document.getElementById('reset-' + id);
   const visible = row.style.display !== 'none';
   row.style.display = visible ? 'none' : 'table-row';
-  if (btn) btn.textContent = visible ? 'Сброс пароля' : 'Скрыть';
+  if (btn) btn.textContent = visible ? 'Новый пароль' : 'Скрыть';
 }
 
 function filterTeachers(q) {
