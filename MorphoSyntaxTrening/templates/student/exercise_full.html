@@ -95,6 +95,21 @@
   border-radius:8px; font-size:14px; background:var(--bg);
   color:var(--text-main); box-sizing:border-box;
 }
+/* Compact grid for ALL field groups (top fields + features) */
+.ef-compact-grid {
+  display:grid; grid-template-columns:repeat(auto-fill, minmax(148px, 1fr)); gap:6px;
+  margin-bottom:8px;
+}
+.ef-compact-grid .ef-field-group {
+  margin-bottom:0;
+}
+.ef-compact-grid .ef-field-group label {
+  font-size:10px; margin-bottom:2px;
+}
+.ef-compact-grid .ef-field-group select,
+.ef-compact-grid .ef-field-group input {
+  padding:5px 8px; font-size:13px;
+}
 .ef-features-grid {
   display:grid; grid-template-columns:repeat(auto-fill, minmax(148px, 1fr)); gap:6px;
 }
@@ -104,11 +119,15 @@
 .ef-features-grid .ef-field-group select {
   padding:5px 8px; font-size:13px;
 }
+.ef-section-label {
+  font-size:11px; font-weight:700; text-transform:uppercase;
+  letter-spacing:.04em; color:var(--text-soft); margin:8px 0 4px;
+}
 .ef-check-pos-btn {
-  width:100%; margin-top:8px; padding:6px 0;
-  border:1px solid var(--accent); border-radius:8px;
-  background:none; color:var(--accent); cursor:pointer;
-  font-size:13px; font-weight:600; transition:all .15s;
+  display:block; margin-top:10px; margin-left:auto;
+  padding:7px 22px; border:2px solid var(--accent);
+  border-radius:9px; background:none; color:var(--accent);
+  font-size:14px; font-weight:700; cursor:pointer; transition:all .15s;
 }
 .ef-check-pos-btn:hover { background:var(--accent-soft); }
 .ef-word-warning {
@@ -230,61 +249,57 @@ html[data-theme="dark"] .ef-footer { background:var(--surface); }
 
         <div class="ef-detail-word" id="detail-word-text">—</div>
 
-        <!-- POS (always required) -->
-        <div class="ef-field-group" id="field-pos">
-          <label>Часть речи</label>
-          <select id="inp-pos" onchange="onPosChange()">
-            <option value="">— выберите —</option>
-            {% for pos in all_pos %}
-            <option value="{{ pos }}">{{ pos }}</option>
-            {% endfor %}
-          </select>
-          <div class="ef-field-result" id="res-pos"></div>
-        </div>
+        <!-- Top fields: POS + Lemma + Syntax role — compact 3-col grid -->
+        <div class="ef-compact-grid">
 
-        <!-- Lemma (elementary+) -->
-        <div class="ef-field-group" id="field-lemma" style="display:none">
-          <label>Начальная форма (лемма)</label>
-          <input type="text" id="inp-lemma" autocomplete="off" placeholder="в именительном падеже, ед.ч.">
-          <div class="ef-field-result" id="res-lemma"></div>
+          <div class="ef-field-group" id="field-pos">
+            <label>Часть речи</label>
+            <select id="inp-pos" onchange="onPosChange()">
+              <option value="">— выберите —</option>
+              {% for pos in all_pos %}
+              <option value="{{ pos }}">{{ pos }}</option>
+              {% endfor %}
+            </select>
+            <div class="ef-field-result" id="res-pos"></div>
+          </div>
+
+          <div class="ef-field-group" id="field-lemma" style="display:none">
+            <label>Нач. форма</label>
+            <input type="text" id="inp-lemma" autocomplete="off" placeholder="им. пад., ед. ч.">
+            <div class="ef-field-result" id="res-lemma"></div>
+          </div>
+
+          <div class="ef-field-group" id="field-syntax" style="display:none">
+            <label>Синт. роль</label>
+            <select id="inp-syntax">
+              <option value="">— выберите —</option>
+              <option value="подлежащее">подлежащее</option>
+              <option value="сказуемое">сказуемое</option>
+              <option value="дополнение">дополнение</option>
+              <option value="определение">определение</option>
+              <option value="обстоятельство">обстоятельство</option>
+              <option value="приложение">приложение</option>
+              <option value="обращение">обращение</option>
+              <option value="вводное слово">вводное слово</option>
+            </select>
+            <div class="ef-field-result" id="res-syntax"></div>
+          </div>
+
         </div>
 
         <!-- Variable features (basic+) -->
         <div id="field-var" style="display:none">
-          <div style="font-size:11px;font-weight:700;text-transform:uppercase;
-                      letter-spacing:.04em;color:var(--text-soft);margin-bottom:6px;">
-            Непостоянные признаки
-          </div>
+          <div class="ef-section-label">Непостоянные признаки</div>
           <div class="ef-features-grid" id="var-inputs"></div>
         </div>
 
         <!-- Constant features (advanced+) -->
         <div id="field-const" style="display:none">
-          <div style="font-size:11px;font-weight:700;text-transform:uppercase;
-                      letter-spacing:.04em;color:var(--text-soft);margin:10px 0 6px;">
-            Постоянные признаки
-          </div>
+          <div class="ef-section-label">Постоянные признаки</div>
           <div class="ef-features-grid" id="const-inputs"></div>
         </div>
 
-        <!-- Syntax role (advanced+) -->
-        <div class="ef-field-group" id="field-syntax" style="display:none">
-          <label>Синтаксическая роль</label>
-          <select id="inp-syntax">
-            <option value="">— выберите —</option>
-            <option value="подлежащее">подлежащее</option>
-            <option value="сказуемое">сказуемое</option>
-            <option value="дополнение">дополнение</option>
-            <option value="определение">определение</option>
-            <option value="обстоятельство">обстоятельство</option>
-            <option value="приложение">приложение</option>
-            <option value="обращение">обращение</option>
-            <option value="вводное слово">вводное слово</option>
-          </select>
-          <div class="ef-field-result" id="res-syntax"></div>
-        </div>
-
-        <button class="ef-check-pos-btn" id="check-pos-btn" onclick="checkPOS()">
+        <button class="ef-check-pos-btn" id="check-pos-btn" onclick="checkPOS()" style="display:none">
           Проверить часть речи
         </button>
         <div class="ef-word-warning" id="word-warning">
@@ -604,8 +619,9 @@ function openWord(idx) {
     document.getElementById('hint-panel').classList.remove('open');
   } else {
     clearFieldFeedback();
-    document.getElementById('done-btn').style.display = '';
-    document.getElementById('check-pos-btn').style.display = '';
+    const alreadySaved = !!currentAns[idx]?.pos;
+    document.getElementById('done-btn').style.display      = alreadySaved ? 'none' : '';
+    document.getElementById('check-pos-btn').style.display = alreadySaved ? ''     : 'none';
     document.getElementById('word-warning').classList.remove('open');
     document.getElementById('hint-toggle').style.display = '';
   }
@@ -668,6 +684,11 @@ function onPosChange() {
   const rp = document.getElementById('res-pos');
   rp.textContent = ''; rp.className = 'ef-field-result';
   document.getElementById('word-warning').classList.remove('open');
+  // If word was already saved, switch back to Готово (require re-save after POS change)
+  if (activeWordIdx !== null && currentAns[activeWordIdx]?.pos) {
+    document.getElementById('done-btn').style.display      = '';
+    document.getElementById('check-pos-btn').style.display = 'none';
+  }
   renderFeatureInputs(pos, ans.var_features || {}, ans.const_features || {});
   if (REQ_FIELDS.includes('var_features'))
     document.getElementById('field-var').style.display = (POS_FORM[pos]?.var?.length) ? '' : 'none';
@@ -718,6 +739,11 @@ function markDone() {
   }
 
   hintTextEl.textContent = `«${SENTENCES[currentIdx].words[activeWordIdx].word}» — сохранено`;
+
+  // Swap: hide Готово, show Проверить часть речи
+  document.getElementById('done-btn').style.display      = 'none';
+  document.getElementById('check-pos-btn').style.display = '';
+  document.getElementById('word-warning').classList.remove('open');
 
   // Auto-advance to next unfilled word
   const next = SENTENCES[currentIdx].words.find(
