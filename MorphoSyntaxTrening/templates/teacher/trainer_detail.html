@@ -69,6 +69,23 @@
       {% endif %}
     </div>
 
+    <div class="panel" style="margin-top:16px;">
+      <h3 style="margin-bottom:8px;">Поделиться тренажёром</h3>
+      <p style="font-size:13px;color:var(--text-soft);margin-bottom:12px;line-height:1.5;">
+        Создаёт полную копию тренажёра со всеми предложениями и разборами у другого учителя.
+      </p>
+      <form method="POST" action="/teacher/trainers/{{ trainer.id }}/share"
+            onsubmit="return confirm('Скопировать тренажёр «{{ trainer.name }}» другому учителю?')"
+            class="form-grid" autocomplete="off">
+        <div class="field-group">
+          <label>Код учителя</label>
+          <input type="text" name="teacher_code" placeholder="6-значный код"
+                 required maxlength="6" autocomplete="off">
+        </div>
+        <button type="submit" class="btn btn-secondary">&#8599; Скопировать тренажёр</button>
+      </form>
+    </div>
+
     <!-- Group assignment -->
     <div class="panel">
       <h3>Доступ по группам</h3>

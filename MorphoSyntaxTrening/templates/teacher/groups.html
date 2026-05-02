@@ -53,11 +53,26 @@
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <a href="/teacher/groups/{{ group.id }}/export" target="_blank"
              class="btn btn-secondary btn-sm">&#128196; Экспорт списка</a>
+          <button type="button" class="btn btn-secondary btn-sm"
+                  onclick="document.getElementById('transfer-{{ group.id }}').style.display=document.getElementById('transfer-{{ group.id }}').style.display==='none'?'block':'none'">
+            &#8599; Передать
+          </button>
           <form method="POST" action="/teacher/groups/{{ group.id }}/delete"
                 onsubmit="return confirm('Удалить группу «{{ group.name }}» со всеми учениками?')">
             <button class="btn btn-danger btn-sm">Удалить группу</button>
           </form>
         </div>
+      </div>
+
+      <div id="transfer-{{ group.id }}" style="display:none;margin-top:12px;padding:12px 14px;background:var(--inner-card);border-radius:10px;border:1px dashed var(--border);">
+        <div style="font-size:13px;font-weight:600;margin-bottom:8px;color:var(--text-soft);">Передать группу другому учителю</div>
+        <form method="POST" action="/teacher/groups/{{ group.id }}/transfer"
+              onsubmit="return confirm('Передать группу «{{ group.name }}» другому учителю? Вы потеряете доступ к этой группе.')"
+              style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <input type="text" name="teacher_code" placeholder="Код учителя (6 цифр)"
+                 required maxlength="6" autocomplete="off" style="width:170px;">
+          <button type="submit" class="btn btn-primary btn-sm">Передать</button>
+        </form>
       </div>
 
       <!-- Add student -->

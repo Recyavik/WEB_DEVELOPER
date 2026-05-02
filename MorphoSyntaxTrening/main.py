@@ -478,6 +478,37 @@ async def delete_group(request: Request, gid: int):
     return redir("/teacher/groups")
 
 
+@app.post("/teacher/groups/{gid}/transfer")
+async def transfer_group(request: Request, gid: int,
+                          teacher_code: str = Form(...)):
+    if g := guard_teacher(request): return g
+    my_id = request.session["teacher_id"]
+    code  = teacher_code.strip()
+    with db_session() as db:
+        grp = db.query(Group).filter_by(id=gid, teacher_id=my_id).first()
+        if not grp:
+            flash(request, "Группа не найдена", "error")
+            return redir("/teacher/groups")
+        target = db.query(Teacher).filter_by(code=code).first()
+        if not target:
+            flash(request, f"Учитель с кодом «{code}» не найден", "error")
+            return redir("/teacher/groups")
+        if target.id == my_id:
+            flash(request, "Нельзя передать самому себе", "error")
+            return redir("/teacher/groups")
+        if db.query(Group).filter_by(teacher_id=target.id, name=grp.name).first():
+            flash(request, f"У учителя {target.name} уже есть группа «{grp.name}». Переименуйте перед передачей.", "error")
+            return redir("/teacher/groups")
+        grp_name = grp.name
+        target_name = target.name
+        # Remove cross-teacher trainer assignments for this group
+        db.query(TrainerGroup).filter_by(group_id=gid).delete()
+        grp.teacher_id = target.id
+        db.commit()
+        flash(request, f"Группа «{grp_name}» передана учителю {target_name}", "success")
+    return redir("/teacher/groups")
+
+
 @app.post("/teacher/students/add")
 async def add_student(request: Request,
                        group_id: int = Form(...),
@@ -641,6 +672,55 @@ async def trainer_detail(request: Request, tid_: int):
                 "book_loaded": booklib.book_exists(teacher_id),
                 "groups": groups,
                 "assigned_group_ids": assigned_group_ids})
+
+
+@app.post("/teacher/trainers/{tid_}/share")
+async def share_trainer(request: Request, tid_: int,
+                         teacher_code: str = Form(...)):
+    if g := guard_teacher(request): return g
+    my_id = request.session["teacher_id"]
+    code  = teacher_code.strip()
+    with db_session() as db:
+        trainer = (db.query(Trainer)
+                   .filter_by(id=tid_, teacher_id=my_id)
+                   .options(joinedload(Trainer.sentences))
+                   .first())
+        if not trainer:
+            flash(request, "Тренажёр не найден", "error")
+            return redir("/teacher/trainers")
+        target = db.query(Teacher).filter_by(code=code).first()
+        if not target:
+            flash(request, f"Учитель с кодом «{code}» не найден", "error")
+            return redir(f"/teacher/trainers/{tid_}")
+        if target.id == my_id:
+            flash(request, "Нельзя поделиться с самим собой", "error")
+            return redir(f"/teacher/trainers/{tid_}")
+        new_trainer = Trainer(
+            teacher_id=target.id,
+            name=trainer.name,
+            description=trainer.description,
+            time_limit=trainer.time_limit,
+            level=trainer.level,
+            max_sentences=trainer.max_sentences,
+            shuffle=trainer.shuffle,
+        )
+        db.add(new_trainer)
+        db.flush()
+        for s in trainer.sentences:
+            db.add(Sentence(
+                trainer_id=new_trainer.id,
+                text=s.text,
+                order=s.order,
+                correct_pos_json=s.correct_pos_json,
+                status=s.status,
+                analysis_json=s.analysis_json,
+                teacher_analysis_json=s.teacher_analysis_json,
+            ))
+        target_name = target.name
+        trainer_name = trainer.name
+        db.commit()
+        flash(request, f"Тренажёр «{trainer_name}» скопирован учителю {target_name}", "success")
+    return redir(f"/teacher/trainers/{tid_}")
 
 
 @app.post("/teacher/trainers/{tid_}/assign-groups")
