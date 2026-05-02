@@ -130,18 +130,15 @@
   font-size:14px; font-weight:700; cursor:pointer; transition:all .15s;
 }
 .ef-check-pos-btn:hover { background:var(--accent-soft); }
-.ef-word-warning {
-  margin-top:8px; padding:10px 12px; background:#fef3c7;
-  border:1px solid #fcd34d; border-radius:8px; display:none;
-  font-size:13px; line-height:1.5;
+.ef-bottom-nav {
+  display:flex; gap:8px; margin-top:14px;
 }
-.ef-word-warning.open { display:block; }
-.ef-word-warning .ef-warn-btns { margin-top:8px; display:flex; gap:6px; flex-wrap:wrap; }
-.ef-word-warning .ef-warn-btns button {
-  padding:4px 12px; border-radius:6px; border:1px solid var(--border);
-  font-size:12px; cursor:pointer; background:var(--surface); color:var(--text-main);
+.ef-bottom-nav button {
+  flex:1; background:none; border:1px solid var(--border); border-radius:8px;
+  padding:7px 10px; cursor:pointer; font-size:14px; color:var(--text-soft);
+  transition:all .15s;
 }
-.ef-word-warning .ef-warn-btns button:hover { border-color:var(--accent); color:var(--accent); }
+.ef-bottom-nav button:hover { border-color:var(--accent); color:var(--accent); }
 .ef-fullcheck-overlay {
   position:fixed; inset:0; background:rgba(0,0,0,.45);
   display:none; align-items:center; justify-content:center; z-index:999;
@@ -154,8 +151,6 @@
 .ef-fullcheck-dialog h4 { margin:0 0 10px; font-size:17px; }
 .ef-fullcheck-dialog p  { font-size:14px; color:var(--text-soft); margin:0 0 18px; line-height:1.6; }
 .ef-fullcheck-dialog .ef-warn-btns { display:flex; gap:8px; justify-content:flex-end; }
-html[data-theme="dark"] .ef-word-warning { background:#451a03; border-color:#d97706; color:#fde68a; }
-html[data-theme="dark"] .ef-word-warning .ef-warn-btns button { background:var(--surface); }
 .ef-done-btn {
   display:block; margin-top:10px; margin-left:auto;
   padding:7px 22px; border:none;
@@ -299,18 +294,10 @@ html[data-theme="dark"] .ef-footer { background:var(--surface); }
           <div class="ef-features-grid" id="const-inputs"></div>
         </div>
 
+        <button class="ef-done-btn" id="done-btn" onclick="markDone()">Готово ✓</button>
         <button class="ef-check-pos-btn" id="check-pos-btn" onclick="checkPOS()" style="display:none">
           Проверить часть речи
         </button>
-        <div class="ef-word-warning" id="word-warning">
-          <span class="ef-warn-text"></span>
-          <div class="ef-warn-btns">
-            <button onclick="dismissWordWarning()">Вернуться к разбору</button>
-            <button onclick="dismissWordWarning(); selectNext()">Следующее слово →</button>
-          </div>
-        </div>
-
-        <button class="ef-done-btn" id="done-btn" onclick="markDone()">Готово ✓</button>
 
         <!-- Hint -->
         <button class="ef-hint-toggle" id="hint-toggle" onclick="toggleHint()">
@@ -322,6 +309,12 @@ html[data-theme="dark"] .ef-footer { background:var(--surface); }
           <div class="ef-hint-ex" id="hint-ex"></div>
         </div>
 
+        <!-- Bottom navigation (repeated) -->
+        <div class="ef-bottom-nav">
+          <button onclick="selectPrev()">&#8592; Предыдущее</button>
+          <button onclick="selectNext()">Следующее &#8594;</button>
+        </div>
+
       </div><!-- /detail-panel -->
     </div>
   </div>
@@ -331,14 +324,27 @@ html[data-theme="dark"] .ef-footer { background:var(--surface); }
     <div class="ef-stars-display" id="sentence-stars" style="display:none;"></div>
     <div class="ef-hint-text" id="hint-text">Выберите слово, чтобы начать разбор.</div>
     <button class="btn-check" id="check-btn" onclick="requestFullCheck()">
-      Полная проверка ✔
+      Проверить все слова
     </button>
     <button class="btn-next-ex" id="next-btn" style="display:none;" onclick="goNext()">
-      Следующее &rarr;
+      Далее &rarr;
     </button>
   </div>
 
 </div><!-- /ef-wrapper -->
+
+<!-- Word partial-check modal -->
+<div class="ef-fullcheck-overlay" id="wordcheck-overlay">
+  <div class="ef-fullcheck-dialog">
+    <h4>Форма заполнена не полностью</h4>
+    <p class="ef-warn-missing" style="color:#dc2626;font-size:13px;margin-bottom:8px;"></p>
+    <p>Вернуться к разбору или продолжить с частичной проверкой?</p>
+    <div class="ef-warn-btns">
+      <button class="btn btn-secondary btn-sm" onclick="cancelWordCheck()">Вернуться к разбору</button>
+      <button class="btn btn-primary btn-sm" onclick="confirmPartialWordCheck()">Продолжить проверку</button>
+    </div>
+  </div>
+</div>
 
 <!-- Full-check incomplete warning modal -->
 <div class="ef-fullcheck-overlay" id="fullcheck-overlay">
@@ -373,6 +379,7 @@ let currentAns  = {};   // index → {pos, lemma, var_features, const_features, 
 let activeWordIdx = null;
 let isChecked   = false;
 let allResults  = [];
+let wordChecked = new Set();  // indices of words checked via "Проверить часть речи"
 
 // ── POS form config (which features to show per POS) ─────────────────────────
 const POS_FORM = {
@@ -541,6 +548,7 @@ function loadSentence(idx) {
   currentAns   = {};
   activeWordIdx = null;
   isChecked    = false;
+  wordChecked  = new Set();
 
   sentenceEl.textContent = `«${s.text}»`;
   counterEl.textContent  = `Предложение ${idx+1} / ${SENTENCES.length}`;
@@ -609,21 +617,20 @@ function openWord(idx) {
   document.getElementById('field-var').style.display   = REQ_FIELDS.includes('var_features')   ? '' : 'none';
   document.getElementById('field-const').style.display = REQ_FIELDS.includes('const_features') ? '' : 'none';
 
-  // If checked: show feedback
-  if (isChecked) {
+  // Show/hide buttons and feedback by state
+  if (isChecked || wordChecked.has(idx)) {
+    // Fully or partially checked — show feedback, lock inputs, no edit buttons
     showFieldFeedback(idx);
-    document.getElementById('done-btn').style.display = 'none';
+    document.getElementById('done-btn').style.display      = 'none';
     document.getElementById('check-pos-btn').style.display = 'none';
-    document.getElementById('word-warning').classList.remove('open');
-    document.getElementById('hint-toggle').style.display = 'none';
+    document.getElementById('hint-toggle').style.display   = 'none';
     document.getElementById('hint-panel').classList.remove('open');
   } else {
     clearFieldFeedback();
     const alreadySaved = !!currentAns[idx]?.pos;
     document.getElementById('done-btn').style.display      = alreadySaved ? 'none' : '';
     document.getElementById('check-pos-btn').style.display = alreadySaved ? ''     : 'none';
-    document.getElementById('word-warning').classList.remove('open');
-    document.getElementById('hint-toggle').style.display = '';
+    document.getElementById('hint-toggle').style.display   = '';
   }
 
   // Update hint based on current POS
@@ -683,7 +690,6 @@ function onPosChange() {
   // Reset pos feedback and word warning when POS changes
   const rp = document.getElementById('res-pos');
   rp.textContent = ''; rp.className = 'ef-field-result';
-  document.getElementById('word-warning').classList.remove('open');
   // If word was already saved, switch back to Готово (require re-save after POS change)
   if (activeWordIdx !== null && currentAns[activeWordIdx]?.pos) {
     document.getElementById('done-btn').style.display      = '';
@@ -743,15 +749,6 @@ function markDone() {
   // Swap: hide Готово, show Проверить часть речи
   document.getElementById('done-btn').style.display      = 'none';
   document.getElementById('check-pos-btn').style.display = '';
-  document.getElementById('word-warning').classList.remove('open');
-
-  // Auto-advance to next unfilled word
-  const next = SENTENCES[currentIdx].words.find(
-    w => w.index > activeWordIdx && !currentAns[w.index]?.pos
-  );
-  if (next) {
-    setTimeout(() => openWord(next.index), 300);
-  }
 }
 
 
@@ -842,7 +839,7 @@ function checkCurrentSentence() {
     nextBtn.classList.add('finish-btn');
     progressEl.style.width = '100%';
   } else {
-    nextBtn.textContent = 'Следующее →';
+    nextBtn.textContent = 'Далее →';
   }
 
   // Show feedback for active word
@@ -906,32 +903,60 @@ const POS_CONST_KEYS = {
   "Числительное":    ["разряд"],
 };
 
-// ── Partial POS check ─────────────────────────────────────────────────────────
+// ── Word-level check ──────────────────────────────────────────────────────────
 function checkPOS() {
   if (activeWordIdx === null) return;
   const w   = SENTENCES[currentIdx].words[activeWordIdx];
+  const ans = currentAns[activeWordIdx] || {};
   const pos = document.getElementById('inp-pos').value;
-  const ok  = pos.trim().toLowerCase() === w.correct_pos.trim().toLowerCase();
-  const rp  = document.getElementById('res-pos');
-  rp.textContent = ok ? '✓ верно' : `✗ правильно: ${w.correct_pos}`;
-  rp.className   = `ef-field-result ${ok ? 'ok' : 'err'}`;
-
-  const missing = getMissingFields(w, currentAns[activeWordIdx] || {}, pos);
-  const warnEl  = document.getElementById('word-warning');
-  if (missing.length > 0) {
-    warnEl.querySelector('.ef-warn-text').textContent =
-      `Не заполнено: ${missing.join(', ')}.`;
-    warnEl.classList.add('open');
+  const missing = getMissingFields(w, ans, pos);
+  if (missing.length === 0) {
+    doWordCheck(activeWordIdx);
   } else {
-    warnEl.classList.remove('open');
+    const ov = document.getElementById('wordcheck-overlay');
+    ov.querySelector('.ef-warn-missing').textContent =
+      `Не заполнено: ${missing.join(', ')}.`;
+    ov.classList.add('open');
   }
+}
+
+function doWordCheck(idx) {
+  wordChecked.add(idx);
+  showFieldFeedback(idx);   // shows feedback AND disables all inputs
+  document.getElementById('check-pos-btn').style.display = 'none';
+  document.getElementById('done-btn').style.display      = 'none';
+  document.getElementById('hint-toggle').style.display   = 'none';
+  document.getElementById('hint-panel').classList.remove('open');
+  // Update chip
+  const w = SENTENCES[currentIdx].words[idx];
+  const result = scoreWord(w, currentAns[idx] || {});
+  const chip   = chipsRow.querySelector(`[data-index="${idx}"]`);
+  const checkEl = chip?.querySelector('.ef-chip-check');
+  chip?.classList.remove('filled','checked-ok','checked-bad','checked-partial');
+  if (result.stars === result.max && result.max > 0) {
+    chip?.classList.add('checked-ok');    if (checkEl) checkEl.textContent = '✓';
+  } else if (result.stars > 0) {
+    chip?.classList.add('checked-partial');
+    if (checkEl) checkEl.textContent = `${result.stars}/${result.max}`;
+  } else {
+    chip?.classList.add('checked-bad');
+    if (checkEl) checkEl.textContent = '✗';
+  }
+  hintTextEl.textContent = `«${w.word}» — проверено`;
+}
+
+function cancelWordCheck() {
+  document.getElementById('wordcheck-overlay').classList.remove('open');
+}
+function confirmPartialWordCheck() {
+  document.getElementById('wordcheck-overlay').classList.remove('open');
+  doWordCheck(activeWordIdx);
 }
 
 function getMissingFields(w, ans, currentPos) {
   const pos = currentPos || ans.pos || '';
   const missing = [];
   if (!pos) { return ['часть речи']; }
-
   if (REQ_FIELDS.includes('lemma') && !INVARIABLE_POS.has(w.correct_pos)) {
     if (!(document.getElementById('inp-lemma').value || ans.lemma || '').trim())
       missing.push('начальная форма');
@@ -957,15 +982,12 @@ function getMissingFields(w, ans, currentPos) {
   return missing;
 }
 
-function dismissWordWarning() {
-  document.getElementById('word-warning').classList.remove('open');
-}
-
 // ── Full-check with incomplete guard ─────────────────────────────────────────
 function requestFullCheck() {
   const s = SENTENCES[currentIdx];
   let incomplete = 0;
   s.words.forEach(w => {
+    if (wordChecked.has(w.index)) return;  // already word-checked
     const ans = currentAns[w.index] || {};
     const pos = ans.pos || '';
     if (!pos) { incomplete++; return; }
@@ -979,7 +1001,6 @@ function requestFullCheck() {
     if (REQ_FIELDS.includes('syntax_role') && !SERVICE_POS.has(w.correct_pos)
         && !ans.syntax_role) { incomplete++; }
   });
-
   if (incomplete > 0) {
     const ov = document.getElementById('fullcheck-overlay');
     const r = incomplete % 10;
@@ -992,7 +1013,6 @@ function requestFullCheck() {
     checkCurrentSentence();
   }
 }
-
 function confirmFullCheck() {
   document.getElementById('fullcheck-overlay').classList.remove('open');
   checkCurrentSentence();
