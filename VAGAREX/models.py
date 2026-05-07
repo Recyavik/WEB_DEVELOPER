@@ -81,7 +81,7 @@ class UserSettings(Base):
 
     # Движение
     move_speed         = Column(Integer,     default=40)
-    turn_angle         = Column(Integer,     default=35)
+    turn_angle         = Column(Integer,     default=36)
 
     # Калибровка
     wheel_circ_cm      = Column(Float,       default=28.3)

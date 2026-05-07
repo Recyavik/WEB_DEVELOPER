@@ -456,7 +456,9 @@ class RobotCanvas {
       const p = this.worldToCanvas(path[i][0], path[i][1]);
       ctx.lineTo(p.x, p.y);
     }
-    ctx.strokeStyle = 'rgba(63,185,80,0.5)';
+    // Зелёный, на 10% светлее var(--accent2) #3fb950 (rgb 63,185,80)
+    // = смешан с белым 10%: rgb(82, 192, 97).
+    ctx.strokeStyle = 'rgba(82, 192, 97, 0.55)';
     ctx.lineWidth   = 1.5;
     ctx.setLineDash([3, 4]);
     ctx.stroke();

@@ -45,8 +45,6 @@ class WorldXY:
     danger_zones: List[DangerZoneXY]    = field(default_factory=list)
     path_history: List[Tuple[float, float]] = field(default_factory=list)
 
-    MAX_PATH = 600
-
     def add_danger_zone(self, x: float, y: float,
                         radius: float = 50.0, label: str = "Опасная зона",
                         db_id: Optional[int] = None,
@@ -87,9 +85,10 @@ class WorldXY:
         return None
 
     def add_path(self, x: float, y: float):
+        # Без обрезания «хвоста» — пользователь хочет видеть весь путь
+        # с самого начала. Чекбокс «Путь» в тулбаре полностью скрывает или
+        # показывает траекторию.
         self.path_history.append((x, y))
-        if len(self.path_history) > self.MAX_PATH:
-            self.path_history.pop(0)
 
     def clear_path(self):
         self.path_history.clear()

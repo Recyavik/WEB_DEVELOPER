@@ -912,6 +912,45 @@ class UserSession:
                 return
 
             target_heading = math.degrees(math.atan2(dx, dy)) % 360
+            # Угол между текущим курсом и направлением на цель: ∈ [-180, 180]
+            bearing = (target_heading - s.heading + 540.0) % 360.0 - 180.0
+            STRAIGHT_TOL = 30.0    # ±30° считаем «почти по курсу»
+
+            # Shortcut 1: цель почти ПЕРЕД носом → едем сразу вперёд, без поворота.
+            if abs(bearing) < STRAIGHT_TOL:
+                if attempt == 1:
+                    await self.push_message(
+                        f"В точку ({target_x:.0f}, {target_y:.0f}): "
+                        f"цель прямо ({bearing:+.0f}°), еду вперёд {distance:.0f} см.",
+                        "info")
+                await self._run_forward(distance, self.cfg.move_speed)
+                # переходим к проверке достижения ниже
+                dx2 = float(target_x) - s.x
+                dy2 = float(target_y) - s.y
+                dist2 = math.hypot(dx2, dy2)
+                if dist2 < TOL_CM:
+                    return
+                if attempt < MAX_ATTEMPTS:
+                    await self._run_back(BACKOFF_CM, self.cfg.move_speed)
+                continue
+
+            # Shortcut 2: цель почти ЗА СПИНОЙ → едем задом, без 180° K-turn.
+            if abs(bearing) > 180.0 - STRAIGHT_TOL:
+                if attempt == 1:
+                    await self.push_message(
+                        f"В точку ({target_x:.0f}, {target_y:.0f}): "
+                        f"цель за спиной ({bearing:+.0f}°), еду задом {distance:.0f} см.",
+                        "info")
+                await self._run_back(distance, self.cfg.move_speed)
+                dx2 = float(target_x) - s.x
+                dy2 = float(target_y) - s.y
+                dist2 = math.hypot(dx2, dy2)
+                if dist2 < TOL_CM:
+                    return
+                if attempt < MAX_ATTEMPTS:
+                    await self._run_forward(BACKOFF_CM, self.cfg.move_speed)
+                continue
+
             if attempt == 1:
                 await self.push_message(
                     f"В точку ({target_x:.0f}, {target_y:.0f}): "
