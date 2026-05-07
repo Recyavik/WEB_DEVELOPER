@@ -2343,8 +2343,13 @@ def report_position():
                 args_for_cmp = ""
             else:
                 args_for_cmp = self._norm_args(args_raw)
-            if pending == (fn_for_cmp, args_for_cmp):
-                # Тело совпало с предыдущим маркером — это его «родное» тело.
+            # Дедуп маркер ↔ тело: совпало имя функции И ЛИБО аргументы
+            # тоже совпали, ЛИБО маркер был без аргументов (так пишутся
+            # circle/figure_eight/turn_around — направление хранится в raw).
+            # Это критично: иначе одна восьмёрка превращается в две команды
+            # (маркер + неотсеянное тело cmd_figure_eight(-1)).
+            if pending is not None and pending[0] == fn_for_cmp and (
+               pending[1] == args_for_cmp or pending[1] == ""):
                 pending = None
                 continue
             parsed = self._parse_dsl_line(fn_raw, args_raw)
