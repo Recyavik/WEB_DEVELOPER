@@ -1,11 +1,20 @@
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
 # override=True — пользовательские правки в .env через UI должны побеждать
 # жёстко прописанные значения в docker-compose.yml environment:.
 load_dotenv(override=True)
 
-DATABASE_URL     = os.getenv("DATABASE_URL", "sqlite:///./vegarex.db")
+# Папка с пользовательскими данными (БД, загруженные файлы и т. п.).
+# В Docker/Coolify сюда монтируется persistent volume — переживает rebuild.
+BASE_DIR     = Path(__file__).parent
+INSTANCE_DIR = BASE_DIR / "instance"
+INSTANCE_DIR.mkdir(exist_ok=True)
+
+# По-умолчанию SQLite в instance/. Для Postgres задай DATABASE_URL в env.
+DATABASE_URL     = os.getenv("DATABASE_URL",
+                             f"sqlite:///{INSTANCE_DIR / 'vegarex.db'}")
 REX_SERVER_HOST  = os.getenv("REX_SERVER_HOST", "192.168.1.100")
 REX_SERVER_PORT  = int(os.getenv("REX_SERVER_PORT", "8765"))
 SIMULATION_MODE  = os.getenv("SIMULATION_MODE", "1") == "1"

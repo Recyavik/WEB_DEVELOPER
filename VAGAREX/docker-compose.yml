@@ -37,7 +37,9 @@ services:
       REX_SERVER_HOST: "192.168.1.100"
       REX_SERVER_PORT: "8765"
     volumes:
-      - .:/app          # hot-reload в разработке
+      - .:/app                  # hot-reload в разработке
+      - app_data:/app/instance  # persistent для SQLite/файлов (если без db)
 
 volumes:
   pgdata:
+  app_data:
