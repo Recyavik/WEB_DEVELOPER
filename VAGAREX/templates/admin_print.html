@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>VEGAREX — Список пользователей для печати</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 2rem; color: #000; background: #fff; }
+    h1 { font-size: 1.4rem; margin-bottom: 1rem; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 1rem; }
+    th, td { border: 1px solid #888; padding: 0.5rem 0.75rem; text-align: left; }
+    th { background: #f0f0f0; }
+    .pwd { font-family: monospace; font-size: 1.05rem; font-weight: bold; }
+    .empty { color: #999; font-style: italic; }
+    .actions { margin-bottom: 1.5rem; }
+    .actions button { padding: 0.5rem 1rem; font-size: 1rem; cursor: pointer; }
+    .meta { margin-bottom: 1rem; color: #555; font-size: 0.9rem; }
+    @media print {
+      .actions { display: none; }
+      body { padding: 0.5rem; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="actions">
+  <button onclick="window.print()">🖨 Печать</button>
+  <button onclick="window.close()">Закрыть</button>
+</div>
+
+<h1>VEGAREX — Список пользователей</h1>
+<div class="meta">Всего: {{ users|length }}. Печать со страницы /admin/print</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>Логин</th>
+      <th>Временный пароль</th>
+      <th>Админ</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for u in users %}
+    <tr>
+      <td>{{ loop.index }}</td>
+      <td><strong>{{ u.username }}</strong></td>
+      <td>
+        {% if u.temp_password and not u.password_changed_by_user %}
+          <span class="pwd">{{ u.temp_password }}</span>
+        {% else %}
+          <span class="empty">— пользователь сменил пароль сам —</span>
+        {% endif %}
+      </td>
+      <td>{% if u.is_admin %}да{% else %}—{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<p style="margin-top: 2rem; color: #555; font-size: 0.85rem;">
+  Передавайте пароли каждому пользователю лично. После того, как ученик сменит свой пароль через
+  «Сменить пароль», его временный пароль очистится из системы.
+</p>
+
+</body>
+</html>

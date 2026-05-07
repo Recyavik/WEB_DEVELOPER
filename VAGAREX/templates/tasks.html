@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block title %}VEGAREX — Задания{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Задания</h1>
+  <p class="subtitle">
+    Готовые упражнения для отработки голосового управления роботом.
+    Нажмите «Начать», чтобы перейти к управлению с уже выставленной целью.
+  </p>
+</div>
+
+<div class="training-layout">
+
+  <section class="card">
+    {% if missions %}
+    <div class="missions-list">
+      {% for m in missions %}
+      <div class="mission-card mission-card--{{ m.difficulty }}">
+        <div class="mission-card__header">
+          <span class="mission-card__title">{{ m.title }}</span>
+          <span class="difficulty-badge difficulty-badge--{{ m.difficulty }}">
+            {% if m.difficulty == 'easy' %}★ Легко
+            {% elif m.difficulty == 'medium' %}★★ Средне
+            {% else %}★★★ Сложно{% endif %}
+          </span>
+        </div>
+        <p class="mission-card__desc">{{ m.description }}</p>
+        <div class="mission-card__meta">
+          <span>🎯 Цель: ({{ m.target_x|int }}, {{ m.target_y|int }})</span>
+          <span>⏱ Лимит: {{ m.time_limit }} сек</span>
+        </div>
+        <a href="/?mission={{ m.id }}" class="btn btn--primary btn--sm">Начать</a>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty-hint">Нет доступных заданий.</p>
+    {% endif %}
+  </section>
+
+</div>
+{% endblock %}

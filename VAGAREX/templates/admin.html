@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+
+{% block title %}VEGAREX — Админ{% endblock %}
+
+{% block content %}
+<div class="admin-layout">
+
+  <section class="card">
+    <div class="card__title-row">
+      <h3 class="card__title">Регистрация новых пользователей</h3>
+      <form method="POST" action="/admin/registration_toggle" style="margin:0">
+        {% if registration_open %}
+        <button type="submit" class="btn btn--xs btn--danger">🚫 Закрыть регистрацию</button>
+        {% else %}
+        <button type="submit" class="btn btn--xs btn--primary">✅ Открыть регистрацию</button>
+        {% endif %}
+      </form>
+    </div>
+    <p class="hint">
+      {% if registration_open %}
+      Сейчас регистрация <strong>открыта</strong> — любой может создать аккаунт через <code>/register</code>.
+      {% else %}
+      Сейчас регистрация <strong>закрыта</strong>. Новых пользователей создавайте через форму ниже.
+      {% endif %}
+    </p>
+  </section>
+
+  <section class="card">
+    <h3 class="card__title">Создать пользователя</h3>
+    <form method="POST" action="/admin/users/create" class="admin-create-form">
+      <input type="text" name="username" class="settings-input"
+             placeholder="логин" minlength="3" maxlength="64"
+             pattern="[A-Za-z0-9_\-\.]+" required>
+      <input type="text" name="password" class="settings-input"
+             placeholder="пароль (пусто = сгенерировать)">
+      <label class="toggle">
+        <input type="checkbox" name="is_admin" value="1">
+        <span>админ</span>
+      </label>
+      <button type="submit" class="btn btn--primary">Создать</button>
+    </form>
+  </section>
+
+  <section class="card">
+    <div class="card__title-row">
+      <h3 class="card__title">Пользователи ({{ users|length }})</h3>
+      <a href="/admin/print" target="_blank" class="btn btn--xs">📄 Печать списка</a>
+    </div>
+
+    <table class="admin-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Логин</th>
+          <th>Пароль</th>
+          <th>Роль</th>
+          <th>Сессия</th>
+          <th>Создан</th>
+          <th>Действия</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for u in users %}
+        <tr>
+          <td>{{ u.id }}</td>
+          <td><strong>{{ u.username }}</strong></td>
+          <td class="admin-password-cell">
+            {% if u.temp_password and not u.password_changed_by_user %}
+              <code class="admin-pwd">{{ u.temp_password }}</code>
+              <span class="hint">(временный)</span>
+            {% else %}
+              <span class="hint">— пользователь сменил сам —</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if u.is_admin %}
+              <span class="badge badge--sim">админ</span>
+            {% else %}
+              <span class="hint">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if u.id in active_session_ids %}
+              <span class="badge badge--online">● онлайн</span>
+            {% else %}
+              <span class="hint">офлайн</span>
+            {% endif %}
+          </td>
+          <td><span class="hint">{{ u.created_at.strftime('%Y-%m-%d %H:%M') if u.created_at else '—' }}</span></td>
+          <td class="admin-actions">
+            <form method="POST" action="/admin/users/{{ u.id }}/reset_password" style="display:inline-flex;gap:.25rem">
+              <input type="text" name="new_password" placeholder="новый или пусто = сгенерить"
+                     class="settings-input settings-input--inline">
+              <button type="submit" class="btn btn--xs">🔑 Сбросить</button>
+            </form>
+            {% if u.id != current_user.id %}
+            <form method="POST" action="/admin/users/{{ u.id }}/toggle_admin" style="display:inline">
+              <button type="submit" class="btn btn--xs"
+                      title="{% if u.is_admin %}Снять права админа{% else %}Сделать админом{% endif %}">
+                {% if u.is_admin %}↓ юзер{% else %}↑ админ{% endif %}
+              </button>
+            </form>
+            <form method="POST" action="/admin/users/{{ u.id }}/delete" style="display:inline"
+                  onsubmit="return confirm('Удалить пользователя «{{ u.username }}» вместе со всеми его данными?')">
+              <button type="submit" class="btn btn--xs btn--danger">✕ Удалить</button>
+            </form>
+            {% else %}
+            <span class="hint">(это вы)</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <p class="hint" style="margin-top:1rem">
+      Колонка «Пароль» показывает <strong>временный пароль</strong>, заданный при создании или сбросе.
+      Как только пользователь сменит его сам через «Сменить пароль» — поле очищается, и админ его больше не видит.
+    </p>
+  </section>
+
+</div>
+{% endblock %}

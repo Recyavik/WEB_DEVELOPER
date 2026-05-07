@@ -1,0 +1,43 @@
+services:
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       vegarex
+      POSTGRES_USER:     vegarex
+      POSTGRES_PASSWORD: vegarex
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vegarex"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL:    postgresql+psycopg2://vegarex:vegarex@db/vegarex
+      SIMULATION_MODE: "1"
+      WHISPER_MODEL:   base
+      TRY_CUDA:        "0"
+      WORLD_WIDTH_CM:  "500"
+      WORLD_HEIGHT_CM: "500"
+      MOVE_SPEED:      "40"
+      TURN_ANGLE:      "35"
+      # Реальный робот: укажи IP после сборки машинки
+      REX_SERVER_HOST: "192.168.1.100"
+      REX_SERVER_PORT: "8765"
+    volumes:
+      - .:/app          # hot-reload в разработке
+
+volumes:
+  pgdata:

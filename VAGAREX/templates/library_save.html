@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block title %}VEGAREX — Сохранить маршрут{% endblock %}
+
+{% block content %}
+<div class="library-layout">
+
+  <section class="card">
+    <div class="card__title-row">
+      <h3 class="card__title">💾 Сохранить текущую программу</h3>
+      <a href="/library" class="btn btn--xs">← к списку</a>
+    </div>
+    <p class="hint">
+      Это личный маршрут — видите только вы. Можно потом загрузить
+      обратно или опубликовать в общую библиотеку.
+    </p>
+
+    {% if cmd_count == 0 %}
+    <div class="auth-error" style="margin-top:1rem">
+      В вашей программе нет ни одной команды. Сначала наберите программу
+      на главной кнопками управления.
+    </div>
+    {% endif %}
+
+    <form method="POST" action="/library/save" class="settings-form" style="margin-top:1rem">
+      <div class="settings-grid">
+        <label class="settings-label">Название</label>
+        <input class="settings-input" type="text" name="title"
+               maxlength="120" required minlength="3"
+               placeholder="Например: Объезд квадрата (черновик)">
+
+        <label class="settings-label">Описание (опционально)</label>
+        <textarea class="settings-input" name="description" rows="3" maxlength="2000"
+                  placeholder="Краткая заметка для себя"></textarea>
+      </div>
+
+      <input type="hidden" name="code" id="save-code">
+
+      <div class="settings-actions">
+        <button type="submit" class="btn btn--primary"
+                {% if cmd_count == 0 %}disabled{% endif %}>
+          💾 Сохранить ({{ cmd_count }} команд)
+        </button>
+        <a href="/" class="btn btn--sm">Отмена</a>
+      </div>
+    </form>
+  </section>
+
+  <section class="card">
+    <h3 class="card__title">Что будет сохранено (можно подправить)</h3>
+    <textarea id="save-code-preview" class="program-code" rows="20">{{ code }}</textarea>
+  </section>
+
+</div>
+
+<script>
+  document.querySelector('form[action="/library/save"]').addEventListener('submit', () => {
+    const preview = document.getElementById('save-code-preview');
+    const hidden  = document.getElementById('save-code');
+    if (preview && hidden) hidden.value = preview.value;
+  });
+</script>
+{% endblock %}

@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block title %}VEGAREX — Регистрация{% endblock %}
+
+{% block content %}
+<div class="auth-layout">
+  <form method="POST" action="/register" class="auth-form">
+    <h2 class="auth-title">Регистрация</h2>
+
+    {% if error %}
+    <div class="auth-error">{{ error }}</div>
+    {% endif %}
+
+    <label class="settings-label">Логин</label>
+    <input class="settings-input" type="text" name="username" required autofocus
+           minlength="3" maxlength="64" value="{{ username or '' }}"
+           pattern="[A-Za-z0-9_\-\.]+"
+           title="Только латиница, цифры, _ - .">
+
+    <label class="settings-label">Пароль</label>
+    <input class="settings-input" type="password" name="password" required minlength="4">
+
+    <label class="settings-label">Повторите пароль</label>
+    <input class="settings-input" type="password" name="password2" required minlength="4">
+
+    <button type="submit" class="btn btn--primary" style="margin-top:1rem">Создать аккаунт</button>
+
+    <div class="auth-alt">
+      Уже есть аккаунт? <a href="/login">Войти</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

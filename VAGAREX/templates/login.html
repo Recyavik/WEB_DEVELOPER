@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+
+{% block title %}VEGAREX — Вход{% endblock %}
+
+{% block content %}
+<div class="auth-layout">
+  <form method="POST" action="/login" class="auth-form">
+    <h2 class="auth-title">Вход</h2>
+
+    {% if error %}
+    <div class="auth-error">{{ error }}</div>
+    {% endif %}
+
+    <label class="settings-label">Логин</label>
+    <input class="settings-input" type="text" name="username" required autofocus value="{{ username or '' }}">
+
+    <label class="settings-label">Пароль</label>
+    <input class="settings-input" type="password" name="password" required>
+
+    <button type="submit" class="btn btn--primary" style="margin-top:1rem">Войти</button>
+
+    <div class="auth-alt">
+      Нет аккаунта? <a href="/register">Зарегистрироваться</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

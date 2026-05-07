@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block title %}VEGAREX — Публикация маршрута{% endblock %}
+
+{% block content %}
+<div class="library-layout">
+
+  <section class="card">
+    <div class="card__title-row">
+      <h3 class="card__title">📤 Публикация маршрута</h3>
+      <a href="/library" class="btn btn--xs">← к списку</a>
+    </div>
+    <p class="hint">
+      Сейчас вы публикуете программу, которая лежит у вас в текстовом поле «Python код» на главной.
+      Дайте ей короткое название и опишите что робот делает.
+    </p>
+
+    {% if cmd_count == 0 %}
+    <div class="auth-error" style="margin-top:1rem">
+      В вашей программе сейчас нет ни одной команды. Сначала наберите программу
+      кнопками управления на главной странице, потом возвращайтесь сюда.
+    </div>
+    {% endif %}
+
+    <form method="POST" action="/library/publish" class="settings-form" style="margin-top:1rem">
+      <div class="settings-grid">
+        <label class="settings-label">Название</label>
+        <input class="settings-input" type="text" name="title"
+               maxlength="120" required minlength="3"
+               placeholder="Например: Объезд квадрата">
+
+        <label class="settings-label">Описание</label>
+        <textarea class="settings-input" name="description" rows="4"
+                  maxlength="2000"
+                  placeholder="Что делает робот, какие настройки нужны..."></textarea>
+      </div>
+
+      <input type="hidden" name="parent_id" value="{{ parent_id }}">
+      <input type="hidden" name="code" id="publish-code">
+
+      <div class="settings-actions">
+        <button type="submit" class="btn btn--primary"
+                {% if cmd_count == 0 %}disabled{% endif %}>
+          📤 Опубликовать ({{ cmd_count }} команд)
+        </button>
+        <a href="/" class="btn btn--sm">Отмена</a>
+      </div>
+    </form>
+  </section>
+
+  <section class="card">
+    <h3 class="card__title">Что будет опубликовано (превью)</h3>
+    <p class="hint">Можно подправить код прямо здесь — изменения уйдут в публикацию.</p>
+    <textarea id="publish-code-preview" class="program-code" rows="20">{{ code }}</textarea>
+  </section>
+
+</div>
+
+<script>
+  // Перед отправкой формы — копируем содержимое preview-textarea в hidden input
+  document.querySelector('form[action="/library/publish"]').addEventListener('submit', (e) => {
+    const preview = document.getElementById('publish-code-preview');
+    const hidden  = document.getElementById('publish-code');
+    if (preview && hidden) hidden.value = preview.value;
+  });
+</script>
+{% endblock %}

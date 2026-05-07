@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+
+{% block title %}VEGAREX — {{ route.title }}{% endblock %}
+
+{% block content %}
+<div class="library-layout">
+
+  <section class="card">
+    <div class="card__title-row">
+      <h3 class="card__title">
+        {% if kind == "saved" %}💾{% else %}🌐{% endif %}
+        {{ route.title }}
+      </h3>
+      <a href="/library" class="btn btn--xs">← к списку</a>
+    </div>
+    <div class="library-card__meta" style="margin-top:.5rem">
+      {% if kind == "published" %}
+      <span>👤 {{ route.author.username if route.author else 'удалён' }}</span>
+      <span>🕒 опубликован {{ route.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+      {% if route.parent_id and route.parent %}
+      <span>↘ форк <a href="/library/published/{{ route.parent_id }}">«{{ route.parent.title }}»</a></span>
+      {% endif %}
+      {% else %}
+      <span>💾 ваш личный маршрут</span>
+      <span>🕒 изменён {{ route.updated_at.strftime('%Y-%m-%d %H:%M') }}</span>
+      {% endif %}
+      <span>🧩 {{ route.cmd_count }} команд</span>
+    </div>
+    {% if route.description %}
+    <p class="library-detail__desc">{{ route.description }}</p>
+    {% endif %}
+
+    <div class="library-detail__actions">
+      <a href="/library/{{ kind }}/{{ route.id }}/load" class="btn btn--primary">📥 Загрузить себе</a>
+      {% if kind == "published" %}
+      <a href="/library/publish/new?from={{ route.id }}" class="btn">↗ Создать форк</a>
+      {% endif %}
+      {% if is_owner %}
+      <form method="POST" action="/library/{{ kind }}/{{ route.id }}/delete" style="display:inline"
+            onsubmit="return confirm('Удалить «{{ route.title|e }}»?')">
+        <button type="submit" class="btn btn--danger">✕ Удалить</button>
+      </form>
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="card">
+    <h3 class="card__title">Python-код</h3>
+    <p class="hint">Можно скопировать или загрузить себе и редактировать.</p>
+    <pre class="library-code"><code>{{ route.code }}</code></pre>
+  </section>
+
+</div>
+{% endblock %}

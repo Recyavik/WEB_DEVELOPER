@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+
+{% block title %}VEGAREX — Библиотека{% endblock %}
+
+{% block content %}
+<div class="library-layout">
+
+  <section class="card">
+    <div class="card__title-row">
+      <h3 class="card__title">📚 Библиотека маршрутов</h3>
+      <div style="display:flex;gap:.4rem">
+        <a href="/library/save/new"    class="btn btn--xs">💾 Сохранить текущий</a>
+        <a href="/library/publish/new" class="btn btn--xs btn--primary">📤 Опубликовать</a>
+      </div>
+    </div>
+    <p class="hint">
+      Слева — ваши личные сохранения (видны только вам).
+      Справа — то, что опубликовали другие пользователи.
+      При загрузке любого маршрута вам предложат сохранить текущую программу.
+    </p>
+  </section>
+
+  <div class="library-columns">
+
+    {# ── Левая колонка: свои ────────────────────────────────────────────── #}
+    <section class="card">
+      <h3 class="card__title">💾 Мои маршруты <span class="hint">({{ saved_routes|length }})</span></h3>
+
+      {% if not saved_routes %}
+      <p class="hint" style="padding:1rem 0">
+        Ничего не сохранено. Наберите программу на главной, нажмите
+        «💾 Сохранить текущий» — она появится здесь и её можно будет
+        загрузить обратно.
+      </p>
+      {% else %}
+      <div class="library-list">
+        {% for r in saved_routes %}
+        <article class="library-card">
+          <div class="library-card__title">
+            <a href="/library/saved/{{ r.id }}">{{ r.title }}</a>
+          </div>
+          <div class="library-card__meta">
+            <span title="Команд">🧩 {{ r.cmd_count }}</span>
+            <span title="Изменён">🕒 {{ r.updated_at.strftime('%Y-%m-%d %H:%M') }}</span>
+          </div>
+          {% if r.description %}
+          <div class="library-card__desc">{{ r.description }}</div>
+          {% endif %}
+          <div class="library-card__actions">
+            <a href="/library/saved/{{ r.id }}/load" class="btn btn--xs btn--primary">📥 Загрузить</a>
+            <a href="/library/saved/{{ r.id }}"      class="btn btn--xs">👁</a>
+            <form method="POST" action="/library/saved/{{ r.id }}/delete" style="display:inline"
+                  onsubmit="return confirm('Удалить «{{ r.title|e }}» из своих сохранений?')">
+              <button type="submit" class="btn btn--xs btn--danger">✕</button>
+            </form>
+          </div>
+        </article>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </section>
+
+    {# ── Правая колонка: опубликованные другими ─────────────────────────── #}
+    <section class="card">
+      <h3 class="card__title">🌐 Опубликованные <span class="hint">({{ public_routes|length }})</span></h3>
+
+      {% if not public_routes %}
+      <p class="hint" style="padding:1rem 0">
+        Пока никто ничего не опубликовал. Стань первым: «📤 Опубликовать» сверху.
+      </p>
+      {% else %}
+      <div class="library-list">
+        {% for r in public_routes %}
+        <article class="library-card">
+          <div class="library-card__title">
+            <a href="/library/published/{{ r.id }}">{{ r.title }}</a>
+          </div>
+          <div class="library-card__meta">
+            <span title="Автор">👤 {{ r.author.username if r.author else 'удалён' }}</span>
+            <span title="Команд">🧩 {{ r.cmd_count }}</span>
+            <span title="Опубликовано">🕒 {{ r.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+            {% if r.parent_id %}
+            <span title="Форк" class="badge badge--sim">↘ форк</span>
+            {% endif %}
+          </div>
+          {% if r.description %}
+          <div class="library-card__desc">{{ r.description }}</div>
+          {% endif %}
+          <div class="library-card__actions">
+            <a href="/library/published/{{ r.id }}/load" class="btn btn--xs btn--primary">📥 Загрузить</a>
+            <a href="/library/published/{{ r.id }}"      class="btn btn--xs">👁</a>
+            {% if current_user and (r.author_id == current_user.id or current_user.is_admin) %}
+            <form method="POST" action="/library/published/{{ r.id }}/delete" style="display:inline"
+                  onsubmit="return confirm('Удалить опубликованный маршрут «{{ r.title|e }}»?')">
+              <button type="submit" class="btn btn--xs btn--danger">✕</button>
+            </form>
+            {% endif %}
+          </div>
+        </article>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </section>
+
+  </div>
+
+</div>
+{% endblock %}

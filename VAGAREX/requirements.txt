@@ -1,0 +1,19 @@
+fastapi==0.136.1
+uvicorn[standard]==0.46.0
+starlette==1.0.0
+jinja2==3.1.6
+python-multipart==0.0.27
+sqlalchemy==2.0.49
+psycopg2-binary==2.9.12
+python-dotenv==1.2.2
+numpy==1.26.4
+websockets==16.0
+itsdangerous==2.2.0
+passlib==1.7.4
+
+# Голосовое распознавание (только на хосте, не в Docker)
+# faster-whisper
+# pyaudio
+# pyttsx3
+# scikit-learn
+# colorama

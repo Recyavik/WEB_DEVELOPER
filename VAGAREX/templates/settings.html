@@ -1,0 +1,217 @@
+{% extends "base.html" %}
+
+{% block title %}VEGAREX — Настройки{% endblock %}
+
+{% block content %}
+<div class="settings-layout">
+
+  <form method="POST" action="/api/settings" class="settings-form">
+
+    <!-- Соединение -->
+    <section class="card">
+      <h3 class="card__title">Соединение с роботом</h3>
+      <div class="settings-grid">
+        <label class="settings-label">Адрес (IP/hostname)</label>
+        <input class="settings-input" type="text" name="host" value="{{ cfg.host }}"
+               placeholder="192.168.1.100" required>
+
+        <label class="settings-label">Порт</label>
+        <input class="settings-input" type="number" name="port" value="{{ cfg.port }}"
+               min="1" max="65535" required>
+
+        <label class="settings-label">Режим симулятора</label>
+        <label class="toggle settings-toggle">
+          <input type="checkbox" name="simulation" value="1"
+                 {% if cfg.simulation %}checked{% endif %}>
+          <span>Включить симулятор (без реального робота)</span>
+        </label>
+      </div>
+      <p class="hint" style="margin-top:.5rem">
+        При изменении адреса/порта/режима соединение будет переустановлено автоматически.
+      </p>
+    </section>
+
+    <!-- Движение -->
+    <section class="card">
+      <h3 class="card__title">Движение</h3>
+      <div class="settings-grid">
+        <label class="settings-label">Скорость по умолчанию, %</label>
+        <input class="settings-input" type="number" name="move_speed"
+               value="{{ cfg.move_speed }}" min="5" max="100" required>
+
+        <label class="settings-label">Угол руля, °</label>
+        <input class="settings-input" type="number" name="turn_angle"
+               value="{{ cfg.turn_angle }}" min="5" max="45" required>
+        <span class="settings-hint">Аппаратный предел 1T REX — 45°. Рекомендуется ≤36°.</span>
+      </div>
+    </section>
+
+    <!-- Калибровка -->
+    <section class="card">
+      <h3 class="card__title">Калибровка физики</h3>
+      <div class="settings-grid">
+        <label class="settings-label">Длина окружности колеса, см</label>
+        <input class="settings-input" type="number" name="wheel_circ" step="0.1"
+               value="{{ cfg.wheel_circ }}" min="1" required>
+        <span class="settings-hint">Колесо D90: π × 9 ≈ 28.3 см</span>
+
+        <label class="settings-label">Скорость при 100%, см/с</label>
+        <input class="settings-input" type="number" name="speed_at_100" step="0.5"
+               value="{{ cfg.speed_at_100 }}" min="1" required>
+
+        <label class="settings-label">Изменение курса за оборот колеса, °</label>
+        <input class="settings-input" type="number" name="heading_per_rot" step="0.1"
+               value="{{ cfg.heading_per_rot }}" min="0.1" required>
+        <span class="settings-hint">Зависит от колёсной базы — уточнить при калибровке.</span>
+
+        <label class="settings-label">Эталонная скорость поворота, %</label>
+        <input class="settings-input" type="number" name="turn_speed_ref"
+               value="{{ cfg.turn_speed_ref }}" min="5" max="100" required>
+        <span class="settings-hint">При этой скорости калибровался радиус поворота. Ниже — теснее, выше — шире.</span>
+      </div>
+    </section>
+
+    <!-- Зоны опасности -->
+    <section class="card">
+      <h3 class="card__title">Зоны опасности</h3>
+      <div class="settings-grid">
+        <label class="settings-label">Радиус зоны по умолчанию, см</label>
+        <input class="settings-input" type="number" name="danger_zone_radius" step="1"
+               value="{{ cfg.danger_zone_radius }}" min="1" max="500" required>
+        <span class="settings-hint">Радиус красного круга при отметке опасного места. Рекомендуется 10–50 см.</span>
+      </div>
+    </section>
+
+    <!-- Батарея -->
+    <section class="card">
+      <h3 class="card__title">Батарея робота (симулятор)</h3>
+      <div class="settings-grid">
+        <label class="settings-label">На сколько минут хватает заряда, мин</label>
+        <input class="settings-input" type="number" name="battery_minutes" step="1"
+               value="{{ cfg.battery_minutes }}" min="1" max="720" required>
+        <span class="settings-hint">
+          Это время <em>непрерывной езды</em> от полной зарядки до 0%.
+          В простое заряд тратится в <strong>10 раз медленнее</strong>
+          (60 мин активной = ≈10 ч в покое). Таймер привязан к нажатиям кнопки
+          «🔋 Зарядить» и сохраняется между сессиями и рестартами сервера.
+          По умолчанию — 60 минут активной езды.
+          При низком заряде скорость робота падает (≥50% — без потерь,
+          ≥20% — до 70%, &lt;20% — до 30%).
+        </span>
+      </div>
+    </section>
+
+    <!-- Размер робота -->
+    <section class="card">
+      <h3 class="card__title">Размер робота</h3>
+      <div class="settings-grid">
+        <label class="settings-label">Длина, см</label>
+        <input class="settings-input" type="number" name="robot_length" step="0.5"
+               value="{{ cfg.robot_length }}" min="1" max="200" required>
+        <span class="settings-hint">От носа до кормы. Учитывается при движении задом — стоп срабатывает по корме.</span>
+
+        <label class="settings-label">Ширина, см</label>
+        <input class="settings-input" type="number" name="robot_width" step="0.5"
+               value="{{ cfg.robot_width }}" min="1" max="200" required>
+      </div>
+    </section>
+
+    <!-- Стартовая точка -->
+    <section class="card">
+      <h3 class="card__title">Стартовая точка</h3>
+      <div class="settings-grid">
+        <label class="settings-label">X, см</label>
+        <input class="settings-input" type="number" name="start_x" step="1"
+               value="{{ cfg.start_x }}" required>
+        <span class="settings-hint">Координата носа робота при сбросе поля и в начале программы.</span>
+
+        <label class="settings-label">Y, см</label>
+        <input class="settings-input" type="number" name="start_y" step="1"
+               value="{{ cfg.start_y }}" required>
+
+        <label class="settings-label">Курс, °</label>
+        <input class="settings-input" type="number" name="start_heading" step="1"
+               value="{{ cfg.start_heading }}" min="0" max="359" required>
+        <span class="settings-hint">Куда смотрит нос. 0° — вверх, 90° — вправо.</span>
+      </div>
+    </section>
+
+    <!-- Поле -->
+    <section class="card">
+      <h3 class="card__title">Размер поля</h3>
+      <div class="settings-grid">
+        <label class="settings-label">Ширина, см</label>
+        <input class="settings-input" type="number" name="world_w" step="10"
+               value="{{ cfg.world_w }}" min="100" required>
+
+        <label class="settings-label">Высота, см</label>
+        <input class="settings-input" type="number" name="world_h" step="10"
+               value="{{ cfg.world_h }}" min="100" required>
+
+        <label class="settings-label">Толщина стенок, см</label>
+        <input class="settings-input" type="number" name="wall_thickness" step="0.5"
+               value="{{ cfg.wall_thickness }}" min="0.5" max="50" required>
+        <span class="settings-hint">Датчик останавливает движение за это расстояние до стены.</span>
+      </div>
+    </section>
+
+    <!-- Датчик расстояния -->
+    <section class="card">
+      <h3 class="card__title">Датчик расстояния</h3>
+      <div class="settings-grid">
+        <label class="settings-label">Тип датчика</label>
+        <select class="settings-input" name="sensor_type" id="sensor_type_select"
+                onchange="toggleSonarFields(this.value)">
+          <option value="laser" {% if cfg.sensor_type == "laser" %}selected{% endif %}>Лазер</option>
+          <option value="sonar" {% if cfg.sensor_type == "sonar" %}selected{% endif %}>Эхолокатор (US)</option>
+        </select>
+
+        <label class="settings-label" id="lbl_sonar_interval">Интервал импульсов, мс</label>
+        <div>
+          <input class="settings-input" type="number" name="sonar_interval_ms" id="sonar_interval_ms"
+                 value="{{ cfg.sonar_interval_ms }}" min="10" max="1000">
+          <span class="settings-hint">HC-SR04 ≈ 60 мс, SRF05 ≈ 50 мс. Реалистичный диапазон 50–200 мс.</span>
+        </div>
+      </div>
+    </section>
+
+    <script>
+      function toggleSonarFields(type) {
+        const show = type === 'sonar';
+        document.getElementById('lbl_sonar_interval').style.display  = show ? '' : 'none';
+        document.getElementById('sonar_interval_ms').closest('div').style.display = show ? '' : 'none';
+      }
+      toggleSonarFields(document.getElementById('sensor_type_select').value);
+    </script>
+
+    <div class="settings-actions">
+      <button type="submit" class="btn btn--primary">Сохранить настройки</button>
+      <a href="/" class="btn btn--sm">Отмена</a>
+    </div>
+
+  </form>
+
+  <!-- ── Инструкция: подключение реального 1T REX ─────────────────── -->
+  <section class="card">
+    <h3 class="card__title">Подключение 1T REX (реальный робот)</h3>
+    <ol class="steps-list">
+      <li>Подключите Rex-Board к компьютеру по USB Type-C.</li>
+      <li>Запустите <code>server.py</code> (из комплекта 1T REX).</li>
+      <li>Введите Wi-Fi SSID и пароль робота, нажмите «Применить» в его утилите.</li>
+      <li>Отключите USB, переведите тумблер питания в положение ВКЛ.</li>
+      <li>Дождитесь сообщения <code>Rexboard started</code> в логах робота.</li>
+      <li>Выше в разделе «Соединение с роботом» укажите его адрес и порт,
+          снимите галочку «Режим симулятора».</li>
+      <li>Сохраните настройки — соединение установится автоматически,
+          в шапке индикатор «● Симулятор» сменится на «● Онлайн».</li>
+    </ol>
+    <p class="note">
+      <strong>Python API робота:</strong>
+      <code>robot.move(speed)</code>, <code>robot.set_angle(angle)</code>,
+      <code>robot.get_laser()</code> и другие — задокументированы в
+      <code>robot_driver.py</code>.
+    </p>
+  </section>
+
+</div>
+{% endblock %}

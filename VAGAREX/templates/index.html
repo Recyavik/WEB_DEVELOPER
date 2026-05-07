@@ -1,0 +1,264 @@
+{% extends "base.html" %}
+
+{% block title %}VEGAREX — Управление{% endblock %}
+
+{% block content %}
+<div class="control-layout">
+
+  <!-- ── Левая панель: статус и команды ───────────────────────── -->
+  <aside class="side-panel">
+
+    <!-- ── Закреплённый верх: состояние всегда на виду ────────── -->
+    <div class="side-panel__sticky">
+
+      <section class="card card--state">
+        <h3 class="card__title">Состояние робота</h3>
+        <div class="state-grid">
+          <div class="state-item">
+            <span class="state-label">X</span>
+            <span class="state-value" id="st-x">0</span><span class="state-unit">см</span>
+          </div>
+          <div class="state-item">
+            <span class="state-label">Y</span>
+            <span class="state-value" id="st-y">0</span><span class="state-unit">см</span>
+          </div>
+          <div class="state-item">
+            <span class="state-label">Курс</span>
+            <span class="state-value" id="st-heading">0</span><span class="state-unit">°</span>
+          </div>
+          <div class="state-item">
+            <span class="state-label">Скорость</span>
+            <span class="state-value" id="st-speed">0</span><span class="state-unit">%</span>
+          </div>
+          <div class="state-item">
+            <span class="state-label">Руль</span>
+            <span class="state-value" id="st-steer">0</span><span class="state-unit">°</span>
+          </div>
+          <div class="state-item">
+            <span class="state-label">Осталось</span>
+            <span class="state-value" id="st-dist">—</span><span class="state-unit">см</span>
+          </div>
+          <div class="state-item">
+            <span class="state-label">Дальномер</span>
+            <span class="state-value" id="st-laser">—</span><span class="state-unit">см</span>
+          </div>
+          <div class="state-item">
+            <span class="state-label">Режим</span>
+            <span class="state-value" id="st-mode">инспектор</span>
+          </div>
+          <div class="state-item state-item--battery">
+            <span class="state-label">Зарядка</span>
+            <div class="battery-gauge" title="Текущий заряд батареи">
+              <div class="battery-gauge__fill" id="st-battery-fill"></div>
+              <span class="battery-gauge__pct" id="st-battery">100%</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Аварийный «Стоп» — всегда виден -->
+      <button class="btn btn--stop btn--stop-big" data-cmd="Вега стоп" title="Стоп (немедленно)">
+        ■ СТОП
+      </button>
+
+    </div>
+
+    <!-- ── Прокручиваемая часть ─────────────────────────────────── -->
+    <div class="side-panel__scroll">
+
+      <section class="card">
+        <h3 class="card__title">Голосовое управление</h3>
+        <p class="hint">Скажите <strong>«Вега»</strong> + команда</p>
+        <button id="btn-voice" class="btn btn--voice">🎙 Слушать</button>
+        <div id="voice-status" class="voice-status">Ожидание…</div>
+      </section>
+
+      <section class="card">
+        <h3 class="card__title">Текстовая команда</h3>
+        <form id="cmd-form" class="cmd-form">
+          <input id="cmd-input" type="text" class="cmd-input"
+                 placeholder="Вега вперёд" autocomplete="off">
+          <button type="submit" class="btn btn--primary">▶</button>
+        </form>
+      </section>
+
+      <section class="card card--ctrl">
+        <h3 class="card__title">Управление и манёвры</h3>
+
+        <!-- Руль -->
+        <details class="ctrl-group" open>
+          <summary>Руль</summary>
+          <div class="quick-extra">
+            <button class="btn btn--xs" data-cmd="Вега налево" title="Налево">◄</button>
+            <button class="btn btn--xs" data-cmd="Вега левее" title="Левее на 13°">13°</button>
+            <button class="btn btn--xs btn--center" data-cmd="Вега прямо" title="Прямо">⊙</button>
+            <button class="btn btn--xs" data-cmd="Вега правее" title="Правее на 13°">13°</button>
+            <button class="btn btn--xs" data-cmd="Вега направо" title="Направо">►</button>
+          </div>
+        </details>
+
+        <!-- Расстояние -->
+        <details class="ctrl-group" open>
+          <summary>Расстояние</summary>
+          <div class="quick-extra">
+            <button class="btn btn--xs" data-cmd="Вега вперёд 20 см">↑20</button>
+            <button class="btn btn--xs" data-cmd="Вега вперёд 50 см">↑50</button>
+            <button class="btn btn--xs" data-cmd="Вега вперёд 100 см">↑100</button>
+            <button class="btn btn--xs" data-cmd="Вега назад 20 см">↓20</button>
+            <button class="btn btn--xs" data-cmd="Вега назад 50 см">↓50</button>
+            <button class="btn btn--xs" data-cmd="Вега назад 100 см">↓100</button>
+          </div>
+        </details>
+
+        <!-- Скорость -->
+        <details class="ctrl-group" open>
+          <summary>Скорость</summary>
+          <div class="quick-extra">
+            <button class="btn btn--xs" data-cmd="Вега медленно" title="20%">Медленно</button>
+            <button class="btn btn--xs" data-cmd="Вега спокойно" title="40%">Спокойно</button>
+            <button class="btn btn--xs" data-cmd="Вега быстро" title="80%">Быстро</button>
+            <button class="btn btn--xs" data-cmd="Вега скорость 20 процентов">20%</button>
+            <button class="btn btn--xs" data-cmd="Вега скорость 40 процентов">40%</button>
+            <button class="btn btn--xs" data-cmd="Вега скорость 60 процентов">60%</button>
+            <button class="btn btn--xs" data-cmd="Вега скорость 80 процентов">80%</button>
+          </div>
+        </details>
+
+        <!-- Манёвры -->
+        <details class="ctrl-group" open>
+          <summary>Манёвры</summary>
+          <div class="quick-extra">
+            <button class="btn btn--xs" data-cmd="Вега разворот">↺ Разворот</button>
+            <button class="btn btn--xs" data-cmd="Вега разворот на месте" title="Разворот на месте (3 шага)">↺ На месте</button>
+            <button class="btn btn--xs" data-cmd="Вега вперёд до упора">▲▲ До упора</button>
+            <button class="btn btn--xs" data-cmd="Вега назад до упора">▼▼ Назад до упора</button>
+            <button class="btn btn--xs" data-cmd="Вега тормоз" title="Тормоз (в очереди)">|| Тормоз</button>
+          </div>
+        </details>
+
+        <!-- Сложные траектории -->
+        <details class="ctrl-group" open>
+          <summary>Траектории</summary>
+          <div class="quick-extra">
+            <button class="btn btn--xs" data-cmd="Вега вокруг" title="Один круг при максимальном повороте руля">⭕ Круг</button>
+            <button class="btn btn--xs" data-cmd="Вега восьмёрка" title="Круг вправо + круг влево">∞ Восьмёрка</button>
+            <button class="btn btn--xs" data-cmd="Вега спираль наружу" title="2 оборота, радиус растёт (36°→24°)">🌀 Спираль ▸</button>
+            <button class="btn btn--xs" data-cmd="Вега спираль внутрь" title="2 оборота, радиус сужается (24°→36°)">🌀 Спираль ◂</button>
+            <button class="btn btn--xs" data-cmd="Вега объезд справа" title="S-волна: сначала вправо, потом обратно. Объезжает препятствие справа.">↪ Объезд справа</button>
+            <button class="btn btn--xs" data-cmd="Вега объезд слева"  title="S-волна: сначала влево, потом обратно. Объезжает препятствие слева.">↩ Объезд слева</button>
+          </div>
+        </details>
+
+        <!-- Навигация -->
+        <details class="ctrl-group" open>
+          <summary>Навигация</summary>
+          <div class="quick-extra">
+            <button class="btn btn--xs" data-cmd="Вега домой" title="Возврат в стартовую точку и стартовый курс">🏠 Домой</button>
+            <button class="btn btn--xs" id="btn-goto" title="В произвольную точку (X Y) — поворот к цели и прямая дуга">📍 В точку…</button>
+            <button class="btn btn--xs" id="btn-set-zone" title="Установить алгоритмическую жёлтую зону в (X Y): робот доедет туда и пометит зону">📍 Установить зону…</button>
+            <button class="btn btn--xs" id="btn-remove-zone" title="Удалить зону (красную или жёлтую), в которую попадает точка. Пусто = под роботом.">✕ Убрать зону…</button>
+            <button class="btn btn--xs" data-cmd="Вега где робот" title="Текущие координаты и курс">❓ Где робот</button>
+            <button class="btn btn--xs" data-cmd="Вега статус робота" title="Полный статус: позиция, курс, скорость, руль, режим, дальномер, заряд, зоны, поле">📊 Статус</button>
+          </div>
+        </details>
+
+        <!-- Пауза -->
+        <details class="ctrl-group" open>
+          <summary>Пауза</summary>
+          <div class="quick-extra">
+            <button class="btn btn--xs" data-cmd="Вега пауза 1"  title="Стоять 1 секунду">⏸ 1с</button>
+            <button class="btn btn--xs" data-cmd="Вега пауза 2"  title="Стоять 2 секунды">⏸ 2с</button>
+            <button class="btn btn--xs" data-cmd="Вега пауза 4"  title="Стоять 4 секунды">⏸ 4с</button>
+            <button class="btn btn--xs" data-cmd="Вега пауза 8"  title="Стоять 8 секунд">⏸ 8с</button>
+            <button class="btn btn--xs" data-cmd="Вега пауза 16" title="Стоять 16 секунд">⏸ 16с</button>
+          </div>
+        </details>
+
+        <!-- Стороны света: компас 3×3 -->
+        <details class="ctrl-group" open>
+          <summary>Стороны света (поворот на месте)</summary>
+          <div class="compass-grid">
+            <button class="btn btn--xs" data-cmd="Вега северо-запад" title="Лицом на СЗ (315°)">СЗ</button>
+            <button class="btn btn--xs" data-cmd="Вега север"        title="Лицом на С (0°)">С</button>
+            <button class="btn btn--xs" data-cmd="Вега северо-восток" title="Лицом на СВ (45°)">СВ</button>
+            <button class="btn btn--xs" data-cmd="Вега запад"         title="Лицом на З (270°)">З</button>
+            <span class="compass-grid__center">🧭</span>
+            <button class="btn btn--xs" data-cmd="Вега восток"        title="Лицом на В (90°)">В</button>
+            <button class="btn btn--xs" data-cmd="Вега юго-запад"     title="Лицом на ЮЗ (225°)">ЮЗ</button>
+            <button class="btn btn--xs" data-cmd="Вега юг"            title="Лицом на Ю (180°)">Ю</button>
+            <button class="btn btn--xs" data-cmd="Вега юго-восток"    title="Лицом на ЮВ (135°)">ЮВ</button>
+          </div>
+        </details>
+
+      </section>
+
+    </div>
+
+  </aside>
+
+  <!-- ── Центр: Canvas визуализация ──────────────────────────── -->
+  <div class="viz-container">
+    <div class="viz-toolbar">
+      <button id="btn-center-view" class="btn btn--sm">⊙ Центрировать</button>
+      <button id="btn-clear-path" class="btn btn--sm">✕ Путь</button>
+      <label class="toggle">
+        <input type="checkbox" id="chk-grid" checked>
+        <span>Сетка</span>
+      </label>
+      <label class="toggle">
+        <input type="checkbox" id="chk-path" checked>
+        <span>Путь</span>
+      </label>
+      <label class="toggle">
+        <input type="checkbox" id="chk-laser" checked>
+        <span>Дальномер</span>
+      </label>
+
+      <span class="viz-toolbar__sep" aria-hidden="true"></span>
+
+      <!-- Режим / Действия (перенесено из боковой панели) -->
+      <button id="btn-mode-inspector" class="btn btn--sm btn--info" data-cmd="Вега инспектор" title="Обычный режим инспектора">Инспектор</button>
+      <button id="btn-mode-cautious"  class="btn btn--sm btn--warn" data-cmd="Вега осторожно" title="Режим осторожности">⚠ Осторожно</button>
+      <button id="btn-mark-danger"    class="btn btn--sm btn--danger" title="Поставить красную зону обстановки в координате (без движения робота). Пусто = под роботом.">⚠ Зона…</button>
+      <button class="btn btn--sm btn--success" data-cmd="Вега зарядить" title="Полностью зарядить батарею робота">🔋 Зарядить</button>
+      <button class="btn btn--sm btn--danger" data-cmd="Вега новое поле" title="Полный сброс: робот в стартовую точку, путь и зоны очищаются">↺ Поле</button>
+    </div>
+    <canvas id="robot-canvas"></canvas>
+  </div>
+
+  <!-- ── Правая панель: редактор Python-кода + журнал ─────────────── -->
+  <aside class="log-panel">
+
+    <section class="card">
+      <div class="card__title-row">
+        <h3 class="card__title">Python код</h3>
+        <div class="program-actions">
+          <button id="btn-copy-python-code" class="btn btn--xs" title="Скопировать">⎘</button>
+          <a href="/library/save/new"    class="btn btn--xs" title="Сохранить как личный маршрут">💾</a>
+          <a href="/library/publish/new" class="btn btn--xs" title="Опубликовать в библиотеку">📤</a>
+          <button id="btn-clear-python-code" class="btn btn--xs" title="Очистить код">✕</button>
+          <button id="btn-run-python-code" class="btn btn--xs btn--primary" title="Запустить код">▶ Запуск</button>
+        </div>
+      </div>
+      <div id="python-code-description" class="code-desc">Код будет автоматически формироваться по командам. Можно редактировать и запускать.</div>
+      <textarea id="python-code" class="program-code" rows="18"># После выполнения команды здесь появится Python-код для реального устройства</textarea>
+    </section>
+
+    <section class="card card--full">
+      <div class="card__title-row">
+        <h3 class="card__title">Журнал</h3>
+        <button id="btn-clear-log" class="btn btn--xs">✕ Очистить</button>
+      </div>
+      <div id="cmd-log" class="cmd-log"></div>
+    </section>
+
+
+  </aside>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/canvas.js"></script>
+<script src="/static/control.js"></script>
+{% endblock %}

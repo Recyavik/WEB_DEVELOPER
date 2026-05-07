@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+
+{% block title %}VEGAREX — История сессий{% endblock %}
+
+{% block content %}
+<div class="page-header page-header--row">
+  <div>
+    <h1>История сессий</h1>
+    <p class="subtitle">
+      Только ваши сессии. Сессия открывается при подключении к серверу
+      и закрывается при остановке приложения; «Активна» — сессия ещё
+      выполняется. Команды и точки пути записываются по факту запуска.
+    </p>
+  </div>
+  {% if sessions %}
+  <form method="POST" action="/missions/clear"
+        onsubmit="return confirm('Удалить всю историю сессий, кроме текущей активной? Действие необратимо.');">
+    <button type="submit" class="btn btn--sm btn--danger">✕ Очистить историю</button>
+  </form>
+  {% endif %}
+</div>
+
+<div class="sessions-layout">
+  {% for s in sessions %}
+  <div class="session-card">
+    <div class="session-card__header">
+      <span class="session-card__id">#{{ s.id }}</span>
+      <span class="session-card__date">{{ s.started_at.strftime('%d.%m.%Y %H:%M') }}</span>
+      {% if s.simulated %}<span class="badge badge--sim">SIM</span>{% endif %}
+    </div>
+    <div class="session-card__body">
+      <div class="session-stat">
+        <span class="session-stat__label">Команд</span>
+        <span class="session-stat__value">{{ s.commands|length }}</span>
+      </div>
+      <div class="session-stat">
+        <span class="session-stat__label">Точек пути</span>
+        <span class="session-stat__value">{{ s.path_points|length }}</span>
+      </div>
+      <div class="session-stat">
+        <span class="session-stat__label">Длит.</span>
+        <span class="session-stat__value">
+          {% if s.ended_at %}
+            {{ ((s.ended_at - s.started_at).total_seconds() // 60)|int }} мин
+          {% else %}
+            Активна
+          {% endif %}
+        </span>
+      </div>
+    </div>
+    {% if s.commands %}
+    <details class="session-log">
+      <summary>Команды</summary>
+      <div class="cmd-history">
+        {% for c in s.commands[-10:] %}
+        <div class="cmd-entry cmd-entry--{{ 'ok' if c.success else 'err' }}">
+          <span class="cmd-time">{{ c.timestamp.strftime('%H:%M:%S') }}</span>
+          <span class="cmd-intent">{{ c.intent }}</span>
+          <span class="cmd-text">{{ c.raw_text }}</span>
+        </div>
+        {% endfor %}
+      </div>
+    </details>
+    {% endif %}
+  </div>
+  {% else %}
+  <p class="empty-hint">Нет записанных сессий.</p>
+  {% endfor %}
+</div>
+{% endblock %}
