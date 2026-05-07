@@ -719,7 +719,12 @@ class UserSession:
     async def _arc_at_steer(self, steer_deg: float, sweep_deg: float, spd: int,
                               backward: bool = False):
         """Едет дугой при заданном угле руля до изменения курса на sweep_deg.
-        backward=True — едет ЗАДОМ (steer тот же, скорость противоположная)."""
+        backward=True — едет ЗАДОМ (steer тот же, скорость противоположная).
+
+        Дальномер ВКЛЮЧЁН — если корпус подходит близко к стене, дуга
+        прервётся для безопасности. K-turn внутри `_run_goto` потом сам
+        проверит, дошли ли до цели, и при необходимости отъедет назад
+        и попробует снова."""
         if steer_deg == 0 or sweep_deg <= 0:
             return
         s = self.robot_state
@@ -731,7 +736,6 @@ class UserSession:
         s.steer     = float(steer_deg)
         s.speed     = float(drive_spd)
         s.dist_left = arc
-        # Манёвр (круг, спираль и т. п.) тоже уважает дальномер, если он включён.
         s.laser_stop = bool(self.cfg.laser_enabled)
         await self.robot.set_angle(int(steer_deg))
         await self.robot.move(drive_spd)
@@ -881,38 +885,81 @@ class UserSession:
     # ── Перейти в координату / домой ────────────────────────────────────────
 
     async def _run_goto(self, target_x: float, target_y: float):
-        """Аналитический заход в точку — две фазы:
-          1) ПОВОРОТ: 3-дуговой симметричный K-turn (метод _k_turn_to_heading)
-             выставляет курс ТОЧНО на цель, оставляя робот в исходной точке.
-          2) ПРЯМАЯ: едем по прямой ровно `distance` см и попадаем в цель.
-        Никаких пропорциональных регуляторов и итераций."""
+        """Заход в точку с проверкой и повторными попытками.
+
+        Алгоритм:
+          1) ПОВОРОТ: 3-дуговой симметричный K-turn — выставить курс на цель.
+          2) ПРЯМАЯ: проехать distance см.
+          3) ПРОВЕРКА: если робот не дошёл (дальномер прервал движение или
+             K-turn упёрся в стену) — отъехать назад на 30 см, чтобы выйти
+             из неудобного положения, и повторить с новой исходной позиции.
+          Максимум 3 попытки. Каждое отклонение и попытка сообщаются оператору."""
         s = self.robot_state
-        TOL_CM = 2.0
-        dx = float(target_x) - s.x
-        dy = float(target_y) - s.y
-        distance = math.hypot(dx, dy)
-        if distance < TOL_CM:
-            await self.push_message(
-                f"Уже у цели: ({target_x:.0f}, {target_y:.0f}).", "info")
-            return
+        TOL_CM       = 5.0
+        BACKOFF_CM   = 30.0
+        MAX_ATTEMPTS = 3
 
-        # Курс на цель (0° = +Y север, 90° = +X восток)
-        target_heading = math.degrees(math.atan2(dx, dy)) % 360
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            dx = float(target_x) - s.x
+            dy = float(target_y) - s.y
+            distance = math.hypot(dx, dy)
+
+            if distance < TOL_CM:
+                if attempt > 1:
+                    await self.push_message(
+                        f"✓ Дошёл до ({target_x:.0f}, {target_y:.0f}) "
+                        f"с {attempt}-й попытки.", "success")
+                return
+
+            target_heading = math.degrees(math.atan2(dx, dy)) % 360
+            if attempt == 1:
+                await self.push_message(
+                    f"В точку ({target_x:.0f}, {target_y:.0f}): "
+                    f"курс {target_heading:.0f}°, прямая {distance:.0f} см.",
+                    "info")
+            else:
+                await self.push_message(
+                    f"⚠ Попытка {attempt}/{MAX_ATTEMPTS}: "
+                    f"осталось {distance:.0f} см до ({target_x:.0f}, {target_y:.0f}), "
+                    f"новый курс {target_heading:.0f}°.", "warning")
+
+            # Фаза 1: повернуться лицом к цели
+            await self._k_turn_to_heading(target_heading)
+
+            # Фаза 2: проехать прямой (дальномер при необходимости остановит у стены)
+            dx2 = float(target_x) - s.x
+            dy2 = float(target_y) - s.y
+            dist2 = math.hypot(dx2, dy2)
+            if dist2 > TOL_CM:
+                await self._run_forward(dist2, self.cfg.move_speed)
+
+            # Проверка достижения
+            dx3 = float(target_x) - s.x
+            dy3 = float(target_y) - s.y
+            dist3 = math.hypot(dx3, dy3)
+            if dist3 < TOL_CM:
+                if attempt > 1:
+                    await self.push_message(
+                        f"✓ Дошёл до ({target_x:.0f}, {target_y:.0f}).", "success")
+                return
+
+            # Не дошли — стена/препятствие. Отъезжаем на безопасную дистанцию,
+            # чтобы при следующей попытке был свободный заход с новой позиции.
+            if attempt < MAX_ATTEMPTS:
+                await self.push_message(
+                    f"📍 Не дошёл до цели (отклонение {dist3:.0f} см). "
+                    f"Отъезжаю назад на {BACKOFF_CM:.0f} см и пробую ещё раз.",
+                    "info")
+                await self._run_back(BACKOFF_CM, self.cfg.move_speed)
+
+        # Все попытки исчерпаны
+        final_dist = math.hypot(target_x - s.x, target_y - s.y)
         await self.push_message(
-            f"В точку ({target_x:.0f}, {target_y:.0f}): "
-            f"повернуться на курс {target_heading:.0f}°, затем прямая {distance:.0f} см.",
-            "info")
-
-        # ── Фаза 1: точно повернуться лицом к цели (3-дуговой K-turn) ───
-        await self._k_turn_to_heading(target_heading)
-
-        # ── Фаза 2: пересчитать дистанцию (на всякий случай — K-turn должен
-        # был оставить нас в исходной точке) и проехать прямой ────────────
-        dx2 = float(target_x) - s.x
-        dy2 = float(target_y) - s.y
-        dist2 = math.hypot(dx2, dy2)
-        if dist2 > TOL_CM:
-            await self._run_forward(dist2, self.cfg.move_speed)
+            f"⚠ Не удалось точно прийти в ({target_x:.0f}, {target_y:.0f}) "
+            f"за {MAX_ATTEMPTS} попыток. Текущая позиция "
+            f"({s.x:.0f}, {s.y:.0f}), отклонение {final_dist:.0f} см. "
+            f"Вмешайтесь вручную или выберите промежуточную точку.",
+            "warning")
 
     async def _run_home(self):
         """Возврат в стартовую точку — это тот же `goto` с координатами
