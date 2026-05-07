@@ -334,7 +334,7 @@ class UserSession:
     def _full_state(self) -> dict:
         return {
             "type":         "full_state",
-            "robot":        state_to_dict(self.robot_state),
+            "robot":        self._state_dict_with_effective(),
             "world":        self._world_dict(),
             "robot_online": self.robot.connected,
             "simulated":    self.cfg.simulation_mode,
@@ -372,10 +372,19 @@ class UserSession:
             parts.append(self._python_body_for_cmd(cmd))
         return "\n".join(parts) + "\n"
 
+    def _state_dict_with_effective(self) -> dict:
+        """state_to_dict + поле effective_speed_pct: скорость, фактически
+        выдаваемая мотором с учётом просадки батареи."""
+        d = state_to_dict(self.robot_state)
+        factor = self._battery_factor(self.robot_state.battery)
+        d["effective_speed_pct"] = self.robot_state.speed * factor
+        d["battery_factor"]      = factor
+        return d
+
     async def push_state(self):
         await self.broadcast({
             "type":  "state",
-            "robot": state_to_dict(self.robot_state),
+            "robot": self._state_dict_with_effective(),
             "path":  self.world.path_history,
         })
 
@@ -2011,7 +2020,15 @@ def report_position():
             laser_lbl = (f"{s.laser_dist:.0f} см"
                          if (self.cfg.laser_enabled and s.laser_dist > 0)
                          else ("выключен" if not self.cfg.laser_enabled else "—"))
-            cur_lbl = f"{s.speed:+.0f}%" if s.speed != 0 else "0% (стоит)"
+            batt_factor = self._battery_factor(s.battery)
+            effective   = s.speed * batt_factor
+            if s.speed == 0:
+                cur_lbl = "0% (стоит)"
+            elif batt_factor < 0.999:
+                cur_lbl = (f"{effective:+.0f}% "
+                           f"(подано {s.speed:+.0f}% × {batt_factor:.2f} от заряда)")
+            else:
+                cur_lbl = f"{s.speed:+.0f}%"
             msg = (
                 f"📊 Статус робота:\n"
                 f"  • координаты: X={s.x:.1f}, Y={s.y:.1f}\n"

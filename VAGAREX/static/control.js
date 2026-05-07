@@ -133,7 +133,20 @@
     set('st-x',       s.x.toFixed(1));
     set('st-y',       s.y.toFixed(1));
     set('st-heading', s.heading.toFixed(0));
-    set('st-speed',   s.speed.toFixed(0));
+    // Показываем фактическую скорость с учётом просадки от заряда батареи.
+    // s.effective_speed_pct = s.speed * battery_factor (0..1).
+    const eff = (typeof s.effective_speed_pct === 'number')
+                  ? s.effective_speed_pct
+                  : s.speed;
+    const stSpeed = document.getElementById('st-speed');
+    if (stSpeed) {
+      stSpeed.textContent = eff.toFixed(0);
+      // Подсветим ярче, если просадка заметная
+      const factor = (typeof s.battery_factor === 'number') ? s.battery_factor : 1.0;
+      stSpeed.title = (factor < 0.999 && s.speed !== 0)
+        ? `Подано ${s.speed.toFixed(0)}%, фактически ${eff.toFixed(0)}% (фактор заряда ${factor.toFixed(2)})`
+        : `Скорость робота, %`;
+    }
     set('st-steer',   s.steer != null ? (s.steer > 0 ? '+' : '') + s.steer.toFixed(0) : '0');
     set('st-dist',    s.dist_left > 0 ? s.dist_left.toFixed(0) : '—');
     set('st-laser',   s.laser_dist > 0 ? s.laser_dist.toFixed(0) : '—');
