@@ -143,10 +143,56 @@
         <input class="settings-input" type="number" name="world_h" step="10"
                value="{{ cfg.world_h }}" min="100" required>
 
-        <label class="settings-label">Толщина стенок, см</label>
+        <label class="settings-label">Запас безопасности, см</label>
         <input class="settings-input" type="number" name="wall_thickness" step="0.5"
                value="{{ cfg.wall_thickness }}" min="0.5" max="50" required>
-        <span class="settings-hint">Датчик останавливает движение за это расстояние до стены.</span>
+        <span class="settings-hint">
+          Минимальный зазор от корпуса до стены и опасных зон. Используется
+          и для остановки у стены (запас = 2× от этого значения), и для
+          планировщика обхода зон в режиме «осторожно».
+        </span>
+      </div>
+    </section>
+
+    <!-- Планировщик обхода (cautious mode) -->
+    <section class="card">
+      <h3 class="card__title">Планировщик обхода (режим «осторожно»)</h3>
+      <div class="settings-grid">
+        <label class="settings-label">Размер ячейки A*, см</label>
+        <input class="settings-input" type="number" name="path_cell_size_cm" step="1"
+               value="{{ cfg.path_cell_size_cm }}" min="2" max="50" required>
+        <span class="settings-hint">
+          Шаг сетки поиска пути. Меньше — точнее, протискивается между близко
+          стоящими зонами, но медленнее. Больше — быстро, но может «забить»
+          узкий проход. По умолчанию 10 см.
+        </span>
+
+        <label class="settings-label">Алгоритм следования</label>
+        <select class="settings-input" name="cautious_follow_algo">
+          <option value="pure_pursuit" {% if cfg.cautious_follow_algo == "pure_pursuit" %}selected{% endif %}>
+            Pure-pursuit («почти по траектории»)
+          </option>
+          <option value="stanley" {% if cfg.cautious_follow_algo == "stanley" %}selected{% endif %}>
+            Stanley (точное следование)
+          </option>
+        </select>
+        <span class="settings-hint">
+          <strong>Pure-pursuit</strong> — смотрит на точку впереди, плавно срезает
+          углы. Мягкое движение, может отклоняться внутри изгибов на 10–15 см.<br>
+          <strong>Stanley</strong> — учитывает боковое смещение и активно тянет
+          робота на путь. Точнее держит линию, может быть резче на крутых поворотах.
+        </span>
+
+        <label class="settings-label">Замедлять на поворотах</label>
+        <label class="toggle settings-toggle">
+          <input type="checkbox" name="cautious_slow_curves" value="1"
+                 {% if cfg.cautious_slow_curves %}checked{% endif %}>
+          <span>Снижать скорость на крутых участках пути</span>
+        </label>
+        <span class="settings-hint">
+          На крутых поворотах робот замедляется до 0.4× от номинала — рулю
+          хватает времени отработать, точность следования выше.
+        </span>
       </div>
     </section>
 

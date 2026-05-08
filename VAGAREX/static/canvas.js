@@ -37,8 +37,9 @@ class RobotCanvas {
 
     // Данные
     this.robotState  = { x: 0, y: 0, heading: 0, speed: 0, steer: 0, dist_left: 0, laser_dist: 0, cautious: false, mode: 'normal' };
-    this.dangerZones = [];
-    this.pathHistory = [];
+    this.dangerZones  = [];
+    this.pathHistory  = [];
+    this.autoSegments = [];
 
     // Настройки отображения
     this.showGrid  = true;
@@ -129,6 +130,7 @@ class RobotCanvas {
     this.robotState    = robotState;
     this.dangerZones   = world.danger_zones   || [];
     this.pathHistory   = world.path_history   || [];
+    this.autoSegments  = world.auto_segments  || [];
     this.worldW        = world.width          || 500;
     this.worldH        = world.height         || 500;
     this.wallThickness = world.wall_thickness || 5;
@@ -156,6 +158,7 @@ class RobotCanvas {
   updateWorld(world) {
     this.dangerZones   = world.danger_zones   || [];
     this.pathHistory   = world.path_history   || [];
+    this.autoSegments  = world.auto_segments  || [];
     this.worldW        = world.width          || this.worldW;
     this.worldH        = world.height         || this.worldH;
     this.wallThickness = world.wall_thickness || this.wallThickness;
@@ -231,7 +234,8 @@ class RobotCanvas {
     this._drawWalls();
     this._drawStartPoint();
     this._drawDangerZones();
-    if (this.showPath)  this._drawPath();
+    if (this.showPath) this._drawAutoSegments();   // фиолетовый план — поверх зон, под пройденным следом
+    if (this.showPath) this._drawPath();
     if (this.showLaser) this._drawLaser();
     this._drawRobot();
     this._drawLights();
@@ -462,6 +466,30 @@ class RobotCanvas {
     ctx.lineWidth   = 1.5;
     ctx.setLineDash([3, 4]);
     ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  _drawAutoSegments() {
+    // Сегменты, найденные планировщиком в режиме «осторожно».
+    // Едва заметный фиолетовый пунктир — фоновая подсказка, не отвлекающая
+    // от основной зелёной траектории движения.
+    const ctx  = this.ctx;
+    const segs = this.autoSegments || [];
+    if (!segs.length) return;
+    ctx.strokeStyle = 'rgba(180, 140, 255, 0.35)';   // прозрачный фиолет
+    ctx.lineWidth   = 0.8;                            // очень тонкий
+    ctx.setLineDash([4, 5]);
+    for (const seg of segs) {
+      if (!seg || seg.length < 2) continue;
+      ctx.beginPath();
+      const p0 = this.worldToCanvas(seg[0][0], seg[0][1]);
+      ctx.moveTo(p0.x, p0.y);
+      for (let i = 1; i < seg.length; i++) {
+        const p = this.worldToCanvas(seg[i][0], seg[i][1]);
+        ctx.lineTo(p.x, p.y);
+      }
+      ctx.stroke();
+    }
     ctx.setLineDash([]);
   }
 

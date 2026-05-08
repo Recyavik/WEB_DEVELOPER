@@ -87,6 +87,10 @@ class UserCfg:
     sonar_interval_ms:  int
     danger_zone_radius: float
     battery_minutes:    int  = 60
+    path_cell_size_cm:  int  = 10
+    # Следование за рассчитанным путём в режиме «осторожно»
+    cautious_follow_algo: str  = "pure_pursuit"   # "pure_pursuit" | "stanley"
+    cautious_slow_curves: bool = True
     # runtime-only флаг, не из БД: дальномер по факту используется
     # для остановки у стены. Переключается через тулбар-чекбокс «Дальномер».
     laser_enabled:      bool = True
@@ -115,6 +119,10 @@ class UserCfg:
             sonar_interval_ms  = row.sonar_interval_ms,
             danger_zone_radius = row.danger_zone_radius,
             battery_minutes    = max(1, int(row.battery_minutes or 60)),
+            path_cell_size_cm  = max(2, int(row.path_cell_size_cm or 10)),
+            cautious_follow_algo = (row.cautious_follow_algo or "pure_pursuit"),
+            cautious_slow_curves = bool(row.cautious_slow_curves
+                                        if row.cautious_slow_curves is not None else True),
         )
 
 
@@ -479,6 +487,7 @@ class UserSession:
         self.robot_state.speed     = 0
         self.robot_state.dist_left = 0
         self.robot_state.laser_stop = False
+        self.robot_state.thinking  = "idle"
         await self.robot.move(0)
         await self.robot.set_servo_center()
 
@@ -885,6 +894,527 @@ class UserSession:
     # ── Перейти в координату / домой ────────────────────────────────────────
 
     async def _run_goto(self, target_x: float, target_y: float):
+        """Точка входа goto. В режиме «осторожно» может включить планировщик
+        обхода зон и выполнить ломаный маршрут. Иначе — обычный заход в точку."""
+        s = self.robot_state
+        if s.cautious:
+            ok = await self._run_goto_cautious(target_x, target_y)
+            if ok:
+                return
+            # cautious не нашёл/не выполнил — выходим, не дёргаем direct
+            return
+        await self._run_goto_direct(target_x, target_y)
+
+    async def _run_goto_cautious(self, target_x: float, target_y: float) -> bool:
+        """Goto в режиме «осторожно»: проверяет прямой путь на коллизии с
+        зонами, и если надо — запускает A*-планировщик обхода.
+
+        Возвращает True, если маршрут выполнен (или прямая свободна).
+        False — если решение не найдено: робот не двигается, требуется
+        ручное вмешательство."""
+        s   = self.robot_state
+        cfg = self.cfg
+        # Сбрасываем «failed» от предыдущих попыток, если был.
+        if s.thinking == "failed":
+            s.thinking = "idle"
+        # Импорт локально — модуль может отсутствовать в редких сборках.
+        import path_planner as pp
+
+        zones = [pp.Obstacle(z.x, z.y, z.radius)
+                 for z in self.world.danger_zones]
+        if not zones:
+            await self._run_goto_direct(target_x, target_y)
+            return True
+
+        # Раздутие = корпус + небольшой запас на K-turn-свинг.
+        # Между waypoint'ами _run_goto_direct может выписывать дуги, которые
+        # отклоняются от прямой линии. Полная компенсация (≈ robot_length)
+        # делает проходы между близкими зонами вообще непроходимыми, поэтому
+        # берём половину — баланс между свободой и безопасностью.
+        robot_inflation = (max(cfg.robot_length_cm, cfg.robot_width_cm) / 2.0
+                           + cfg.robot_length_cm / 2.0)
+        safety = cfg.wall_thickness_cm   # «Запас безопасности» = wall_thickness
+
+        # Прямая свободна? Тогда планировщик не нужен.
+        if not pp.line_hits_zones((s.x, s.y), (target_x, target_y),
+                                   zones, robot_inflation, safety):
+            await self._run_goto_direct(target_x, target_y)
+            return True
+
+        # Нужен обход — запускаем A*.
+        await self.push_message(
+            "⚠ Прямой путь к цели пересекает опасную зону. Ищу обход…",
+            "warning")
+        s.thinking = "planning"
+        await self.push_state()
+        try:
+            # Прерываем выполнение управления — пока думаем, ничего не двигаем.
+            await asyncio.sleep(0)   # give scheduler a tick — UI получит spinner
+            waypoints = pp.plan_path(
+                (s.x, s.y), (float(target_x), float(target_y)),
+                zones,
+                world_w=self.world.width,
+                world_h=self.world.height,
+                wall_thickness=cfg.wall_thickness_cm,
+                robot_inflation=robot_inflation,
+                cell_size=float(cfg.path_cell_size_cm),
+                safety_margin=safety,
+            )
+        finally:
+            # thinking сбросим ниже — после успеха/провала
+            pass
+
+        if not waypoints:
+            s.thinking = "failed"
+            await self.push_state()
+            await self.push_message(
+                f"🖥 Решение не найдено: между опасными зонами нет прохода "
+                f"к ({target_x:.0f}, {target_y:.0f}). "
+                f"Перейдите в ручной режим или измените зоны.",
+                "error")
+            return False
+
+        # Сглаживаем ломаную в дугообразную кривую (Чайкин 3 итерации)
+        # и пересэмплируем равномерно — pure-pursuit нужен плотный путь.
+        smooth = pp.chaikin_smooth(waypoints, iterations=3)
+        dense  = pp.resample_curve(smooth, step_cm=5.0)
+
+        # Фиксируем сегмент для фиолетовой подсветки на canvas.
+        self.world.add_auto_segment(smooth)
+        s.thinking = "idle"
+        await self.push_world()  # сегмент должен появиться сразу
+        await self.push_state()
+
+        # Pure-pursuit / Stanley follow: робот непрерывно крутит рулём
+        # к точке впереди, без K-turn'ов и резких разворотов.
+        ok = await self._follow_curve(dense)
+
+        # Финальная доводка: следящий алгоритм почти всегда заканчивает
+        # с небольшим отклонением (5–30 см) — pure-pursuit срезает углы,
+        # Stanley может оставить боковую ошибку. Если прямая от текущей
+        # позиции до цели УЖЕ свободна от зон — добиваем через
+        # _run_goto_direct (умеет K-turn + прямую) и считаем успехом.
+        remaining = math.hypot(target_x - s.x, target_y - s.y)
+        if remaining > 5.0:
+            line_clear = not pp.line_hits_zones(
+                (s.x, s.y), (target_x, target_y),
+                zones, robot_inflation, safety)
+            if line_clear:
+                await self._run_goto_direct(float(target_x), float(target_y))
+                remaining = math.hypot(target_x - s.x, target_y - s.y)
+
+        if remaining < 10.0:
+            return True
+        if not ok:
+            await self.push_message(
+                "⚠ Не доехал до цели по запланированному пути. "
+                "Возможно касание зоны или стены.", "warning")
+            return False
+        return True
+
+    @staticmethod
+    def _curvature_speed_factor(points: list[tuple[float, float]],
+                                 idx: int,
+                                 lookahead_pts: int = 10) -> float:
+        """Доля от номинальной скорости в зависимости от кривизны пути впереди.
+        Чем круче поворот в окне `lookahead_pts` — тем больше замедление.
+        Возвращает 0.4..1.0."""
+        n = len(points)
+        if idx >= n - 2:
+            return 1.0
+        end = min(idx + lookahead_pts, n - 1)
+        if end - idx < 2:
+            return 1.0
+        total_turn = 0.0
+        prev_a = None
+        for i in range(idx, end):
+            dx = points[i + 1][0] - points[i][0]
+            dy = points[i + 1][1] - points[i][1]
+            if dx * dx + dy * dy < 1e-6:
+                continue
+            a = math.atan2(dx, dy)
+            if prev_a is not None:
+                diff = (a - prev_a + 3 * math.pi) % (2 * math.pi) - math.pi
+                total_turn += abs(diff)
+            prev_a = a
+        # 0 рад → 1.0; π/2 рад (90°) → ~0.4
+        factor = max(0.4, 1.0 - total_turn * 0.6)
+        return factor
+
+    @staticmethod
+    def _approach_speed_factor(points: list[tuple[float, float]],
+                                idx: int,
+                                robot_x: float,
+                                robot_y: float,
+                                slow_zone_cm: float = 60.0,
+                                min_factor:   float = 0.20) -> float:
+        """Замедление на финише: чем ближе конец пути, тем медленнее.
+        Учитывает И оставшуюся длину пути от ближайшей точки, И прямое
+        расстояние от робота до цели (если робот срезал угол и оказался
+        близко к цели «по воздуху», тоже надо тормозить).
+
+        Линейно: за `slow_zone_cm` до конца — full, у самого конца —
+        `min_factor`. Берётся минимум из двух метрик."""
+        n = len(points)
+        if n == 0:
+            return 1.0
+        # 1) Длина оставшегося пути от idx до конца
+        remaining_path = 0.0
+        if idx < n - 1:
+            for i in range(idx, n - 1):
+                dx = points[i + 1][0] - points[i][0]
+                dy = points[i + 1][1] - points[i][1]
+                remaining_path += math.hypot(dx, dy)
+                if remaining_path >= slow_zone_cm:
+                    remaining_path = slow_zone_cm
+                    break
+        # 2) Прямое расстояние до цели от текущей позиции робота
+        gx, gy = points[-1]
+        direct = math.hypot(gx - robot_x, gy - robot_y)
+        # Берём более жёсткое (меньшее) из двух
+        eff = min(remaining_path, direct)
+        if eff >= slow_zone_cm:
+            return 1.0
+        t = eff / max(1.0, slow_zone_cm)
+        return min_factor + (1.0 - min_factor) * t
+
+    async def _follow_curve(self, points: list[tuple[float, float]]) -> bool:
+        """Диспетчер следования за кривой. Алгоритм выбирается из настроек."""
+        algo = self.cfg.cautious_follow_algo or "pure_pursuit"
+        if algo == "stanley":
+            return await self._follow_stanley(points)
+        return await self._follow_pure_pursuit(points)
+
+    async def _align_to_path_start(self,
+                                    points: list[tuple[float, float]]) -> None:
+        """Если робот смотрит сильно мимо начала пути — сначала развернёмся
+        K-turn'ом, чтобы pure-pursuit не уводило в круг минимального радиуса."""
+        s = self.robot_state
+        if len(points) < 2:
+            return
+        dx = points[1][0] - points[0][0]
+        dy = points[1][1] - points[0][1]
+        if dx * dx + dy * dy < 1.0:
+            return
+        path_heading = math.degrees(math.atan2(dx, dy))
+        diff = (path_heading - s.heading + 540.0) % 360.0 - 180.0
+        # Порог 50° — если больше, мы заведомо не «поймаем» цель рулём
+        if abs(diff) > 50.0:
+            await self._k_turn_to_heading(path_heading)
+
+    def _direct_to_goal_clear(self, gx: float, gy: float) -> bool:
+        """True если прямая от текущей позиции робота до (gx, gy) свободна
+        от опасных зон (с учётом раздутия по корпусу + safety_margin).
+        Используется follower'ом для динамической перепланировки:
+        как только препятствия пройдены — выходим и доводим прямой."""
+        if not self.world.danger_zones:
+            return True
+        import path_planner as pp
+        s = self.robot_state
+        zones = [pp.Obstacle(z.x, z.y, z.radius) for z in self.world.danger_zones]
+        infl = (max(self.cfg.robot_length_cm, self.cfg.robot_width_cm) / 2.0
+                + self.cfg.robot_length_cm / 2.0)
+        return not pp.line_hits_zones((s.x, s.y), (gx, gy),
+                                       zones, infl, self.cfg.wall_thickness_cm)
+
+    async def _follow_pure_pursuit(self, points: list[tuple[float, float]]) -> bool:
+        """Pure-pursuit: руль крутится к точке на расстоянии LOOKAHEAD впереди.
+        Плавно срезает углы. Подходит большинству сцен.
+
+        Дополнительно: каждые ~0.5 сек проверяет, свободна ли прямая до
+        цели — если да, выходит из кривой (наружный wrapper доведёт прямой)."""
+        if not points or len(points) < 2:
+            return True
+        s   = self.robot_state
+        cfg = self.cfg
+        base_spd  = cfg.move_speed
+        MAX_STEER = float(cfg.turn_angle)
+        LOOKAHEAD = max(30.0, cfg.robot_length_cm * 1.5)
+        TOL_CM    = 5.0
+        TIMEOUT_S = 90.0
+        # Если стоим лицом не туда — сначала разворачиваемся
+        await self._align_to_path_start(points)
+
+        await self.robot.set_angle(0)
+        await self.robot.move(base_spd)
+        s.speed      = float(base_spd)
+        s.dist_left  = 0.0
+        s.laser_stop = bool(cfg.laser_enabled)
+
+        gx, gy = points[-1]
+        last_idx = 0
+        deadline = time.monotonic() + TIMEOUT_S
+        tick     = 0      # счётчик для динамической перепланировки
+        # Антизалипание: засчитываем прогресс ЛИБО продвижение по индексу
+        # пути, ЛИБО приближение к цели «по воздуху». Это защищает от двух
+        # сценариев: вращение в круге (нет ни того, ни другого) И срезание
+        # угла (индекс не растёт, но дистанция до цели падает).
+        last_progress_idx  = 0
+        last_progress_dist = math.hypot(gx - s.x, gy - s.y)
+        last_progress_time = time.monotonic()
+        STUCK_S = 6.0
+
+        try:
+            while True:
+                if math.hypot(gx - s.x, gy - s.y) < TOL_CM:
+                    return True
+                if s.speed == 0:
+                    return False
+                now = time.monotonic()
+                if now > deadline:
+                    return False
+
+                # Динамическая перепланировка: каждые ~0.5 сек проверяем,
+                # свободна ли уже прямая до цели. Если да — выходим, наружный
+                # wrapper доведёт через _run_goto_direct (он умеет K-turn).
+                tick += 1
+                if tick % 5 == 0 and self._direct_to_goal_clear(gx, gy):
+                    return True
+
+                # Ближайшая точка на пути от прошлого индекса
+                best_i = last_idx
+                best_d2 = float('inf')
+                for i in range(last_idx, len(points)):
+                    dx = points[i][0] - s.x
+                    dy = points[i][1] - s.y
+                    d2 = dx * dx + dy * dy
+                    if d2 < best_d2:
+                        best_d2 = d2
+                        best_i  = i
+                    elif d2 > best_d2 + 100.0:
+                        break
+                last_idx = best_i
+
+                # Антизалипание (круг)
+                # Прогресс — это ЛИБО продвижение по индексу пути, ЛИБО
+                # сокращение прямого расстояния до цели хотя бы на 5 см.
+                # Без второй метрики антизалипание ложно срабатывало,
+                # когда робот срезает угол и идёт к цели «по воздуху».
+                cur_dist = math.hypot(gx - s.x, gy - s.y)
+                if best_i > last_progress_idx or cur_dist < last_progress_dist - 5.0:
+                    last_progress_idx  = best_i
+                    last_progress_dist = cur_dist
+                    last_progress_time = now
+                elif now - last_progress_time > STUCK_S:
+                    return False
+
+                # Точка-цель на LOOKAHEAD впереди
+                target_i = best_i
+                accumulated = 0.0
+                for i in range(best_i, len(points) - 1):
+                    seg = math.hypot(points[i + 1][0] - points[i][0],
+                                     points[i + 1][1] - points[i][1])
+                    accumulated += seg
+                    if accumulated >= LOOKAHEAD:
+                        target_i = i + 1
+                        break
+                else:
+                    target_i = len(points) - 1
+                tx, ty = points[target_i]
+
+                bx, by = tx - s.x, ty - s.y
+                if bx * bx + by * by < 1.0:
+                    tx, ty = points[-1]
+                    bx, by = tx - s.x, ty - s.y
+                bearing = math.degrees(math.atan2(bx, by))
+                heading_diff = (bearing - s.heading + 540.0) % 360.0 - 180.0
+
+                # Меньший коэффициент — мягче руль, нет «закусывания» в круг
+                desired_steer = max(-MAX_STEER,
+                                    min(MAX_STEER, heading_diff * 0.7))
+                if abs(desired_steer - s.steer) > 0.5:
+                    await self.robot.set_angle(int(desired_steer))
+                    s.steer = float(desired_steer)
+
+                # Замедление: на поворотах И на подходе к концу пути.
+                # approach_speed_factor смотрит и на оставшийся путь, и на
+                # прямое расстояние до цели — берёт более жёсткое.
+                approach = self._approach_speed_factor(points, best_i, s.x, s.y)
+                if cfg.cautious_slow_curves:
+                    curvy = self._curvature_speed_factor(points, best_i)
+                    factor = min(approach, curvy)
+                else:
+                    factor = approach
+                target_spd = base_spd * factor
+                if abs(target_spd - s.speed) > 1.5:
+                    await self.robot.move(target_spd)
+                    s.speed = float(target_spd)
+
+                await asyncio.sleep(0.1)
+        except asyncio.CancelledError:
+            return False
+        finally:
+            s.speed      = 0
+            s.steer      = 0.0
+            s.dist_left  = 0
+            s.laser_stop = False
+            try:
+                await self.robot.move(0)
+                await self.robot.set_servo_center()
+            except Exception:
+                pass
+
+    async def _follow_stanley(self, points: list[tuple[float, float]]) -> bool:
+        """Stanley controller (Stanford / DARPA Grand Challenge):
+            steer = heading_error + atan(K · cross_track_error / velocity)
+
+        Учитывает не только направление, но и боковое смещение от пути —
+        активно стягивает робота обратно на линию. Точнее pure-pursuit
+        на длинных кривых, но может быть резче на тугих поворотах."""
+        if not points or len(points) < 2:
+            return True
+        s   = self.robot_state
+        cfg = self.cfg
+        base_spd  = cfg.move_speed
+        MAX_STEER = float(cfg.turn_angle)
+        # K_CROSS: чем больше — тем активнее тянет на путь, но тем неустойчивей.
+        # 0.6 даёт мягкое доведение без раскачки.
+        K_CROSS   = 0.6
+        # В знаменателе используем НОМИНАЛЬНУЮ скорость, не текущую.
+        # При slow_curves текущая скорость падает до 11 см/с — atan(K·cte/v)
+        # тогда взрывается на любом боковом смещении и вызывает раскачку.
+        # Стабильность Stanley важнее реакции на малой скорости.
+        SOFTEN_V  = max(20.0, base_spd / 100.0 * cfg.speed_at_100)
+        TOL_CM    = 5.0
+        TIMEOUT_S = 90.0
+        # Если стоим лицом не туда — сначала разворачиваемся
+        await self._align_to_path_start(points)
+
+        await self.robot.set_angle(0)
+        await self.robot.move(base_spd)
+        s.speed      = float(base_spd)
+        s.dist_left  = 0.0
+        s.laser_stop = bool(cfg.laser_enabled)
+
+        gx, gy = points[-1]
+        last_idx = 0
+        deadline = time.monotonic() + TIMEOUT_S
+        # См. комментарий выше про антизалипание (тот же подход, что в pure-pursuit).
+        last_progress_idx  = 0
+        last_progress_dist = math.hypot(gx - s.x, gy - s.y)
+        last_progress_time = time.monotonic()
+        STUCK_S = 6.0
+        tick = 0     # счётчик для динамической перепланировки
+
+        try:
+            while True:
+                if math.hypot(gx - s.x, gy - s.y) < TOL_CM:
+                    return True
+                if s.speed == 0:
+                    return False
+                now = time.monotonic()
+                if now > deadline:
+                    return False
+
+                # Динамическая перепланировка: каждые ~0.5 сек проверяем,
+                # свободна ли уже прямая до цели.
+                tick += 1
+                if tick % 5 == 0 and self._direct_to_goal_clear(gx, gy):
+                    return True
+
+                # Ближайшая точка на пути
+                best_i = last_idx
+                best_d2 = float('inf')
+                for i in range(last_idx, len(points)):
+                    dx = points[i][0] - s.x
+                    dy = points[i][1] - s.y
+                    d2 = dx * dx + dy * dy
+                    if d2 < best_d2:
+                        best_d2 = d2
+                        best_i  = i
+                    elif d2 > best_d2 + 100.0:
+                        break
+                last_idx = best_i
+
+                # Антизалипание (круг)
+                # Прогресс — это ЛИБО продвижение по индексу пути, ЛИБО
+                # сокращение прямого расстояния до цели хотя бы на 5 см.
+                # Без второй метрики антизалипание ложно срабатывало,
+                # когда робот срезает угол и идёт к цели «по воздуху».
+                cur_dist = math.hypot(gx - s.x, gy - s.y)
+                if best_i > last_progress_idx or cur_dist < last_progress_dist - 5.0:
+                    last_progress_idx  = best_i
+                    last_progress_dist = cur_dist
+                    last_progress_time = now
+                elif now - last_progress_time > STUCK_S:
+                    return False
+
+                px, py = points[best_i]
+
+                # Касательная к пути в этой точке
+                j = min(best_i + 1, len(points) - 1)
+                if j == best_i and best_i > 0:
+                    pp_prev = points[best_i - 1]
+                    tx_dir = px - pp_prev[0]
+                    ty_dir = py - pp_prev[1]
+                else:
+                    tx_dir = points[j][0] - px
+                    ty_dir = points[j][1] - py
+                t_len = math.hypot(tx_dir, ty_dir)
+                if t_len < 1e-6:
+                    tx_dir, ty_dir = 0.0, 1.0
+                    t_len = 1.0
+                tx_dir /= t_len
+                ty_dir /= t_len
+
+                # heading_error: разница между текущим heading и направлением пути
+                path_heading = math.degrees(math.atan2(tx_dir, ty_dir))
+                heading_diff = (path_heading - s.heading + 540.0) % 360.0 - 180.0
+
+                # Cross-track error (signed). Используем нормаль СЛЕВА от tangent
+                # = (-ty_dir, tx_dir). Положительный CTE = робот СЛЕВА от пути,
+                # значит надо рулить ВПРАВО (положительный steer).
+                # Для соответствия знакам нашего steering — формула стандартная.
+                offset_x = s.x - px
+                offset_y = s.y - py
+                # Перпендикуляр от пути направо = (ty_dir, -tx_dir)
+                # CTE = (right_normal · offset) — положителен когда робот справа.
+                cte = ty_dir * offset_x - tx_dir * offset_y
+
+                # Используем НОМИНАЛЬНУЮ скорость как «v» для Стэнли.
+                # Так формула остаётся стабильной даже когда slow_curves
+                # снизил реальную скорость почти до нуля у финиша.
+                v_for_atan = SOFTEN_V
+
+                # Stanley formula: положительный CTE справа → рулим ВЛЕВО
+                # (отрицательный atan), отсюда МИНУС перед atan.
+                cte_term_deg = -math.degrees(math.atan2(K_CROSS * cte, v_for_atan))
+                desired_steer = heading_diff + cte_term_deg
+                desired_steer = max(-MAX_STEER, min(MAX_STEER, desired_steer))
+
+                if abs(desired_steer - s.steer) > 0.5:
+                    await self.robot.set_angle(int(desired_steer))
+                    s.steer = float(desired_steer)
+
+                # Замедление: на поворотах И на подходе к концу пути.
+                # approach_speed_factor теперь требует robot_x/y — учитывает
+                # и оставшийся путь, и прямое расстояние до цели.
+                approach = self._approach_speed_factor(points, best_i, s.x, s.y)
+                if cfg.cautious_slow_curves:
+                    curvy = self._curvature_speed_factor(points, best_i)
+                    factor = min(approach, curvy)
+                else:
+                    factor = approach
+                target_spd = base_spd * factor
+                if abs(target_spd - s.speed) > 1.5:
+                    await self.robot.move(target_spd)
+                    s.speed = float(target_spd)
+
+                await asyncio.sleep(0.1)
+        except asyncio.CancelledError:
+            return False
+        finally:
+            s.speed      = 0
+            s.steer      = 0.0
+            s.dist_left  = 0
+            s.laser_stop = False
+            try:
+                await self.robot.move(0)
+                await self.robot.set_servo_center()
+            except Exception:
+                pass
+
+    async def _run_goto_direct(self, target_x: float, target_y: float):
         """Заход в точку с проверкой и повторными попытками.
 
         Алгоритм:
@@ -1318,6 +1848,7 @@ class UserSession:
         s = self.robot_state
         self.world.clear_danger_zones()
         self.world.clear_path()
+        self.world.clear_auto_segments()
         s.x         = float(self.cfg.start_x_cm)
         s.y         = float(self.cfg.start_y_cm)
         s.heading   = float(self.cfg.start_heading_deg) % 360
@@ -1326,6 +1857,7 @@ class UserSession:
         s.dist_left = 0
         s.mode      = "normal"
         s.cautious  = False
+        s.thinking  = "idle"
         s.light_color = (0, 0, 0)
         await self.robot.stop()
         await self.robot.set_servo_center()
@@ -2668,6 +3200,28 @@ def report_position():
                 s.speed     = 0
                 s.dist_left = 0
                 await self.robot.move(0)
+
+            # Защитный стоп в режиме «осторожно»: если ЛЮБОЙ угол корпуса
+            # реально оказался ВНУТРИ опасной зоны (не в раздутой —
+            # планировщик уже её обходит) — мгновенная остановка. Это
+            # страховка от ошибок планирования на узких проходах.
+            if s.cautious and not hit_wall and self.world.danger_zones:
+                hit_zone = None
+                for cx, cy in self._robot_corners():
+                    for z in self.world.danger_zones:
+                        if (cx - z.x) ** 2 + (cy - z.y) ** 2 < z.radius ** 2:
+                            hit_zone = z
+                            break
+                    if hit_zone:
+                        break
+                if hit_zone:
+                    s.speed     = 0
+                    s.dist_left = 0
+                    try: await self.robot.move(0)
+                    except Exception: pass
+                    await self.push_message(
+                        f"⚠ Касание зоны «{hit_zone.label}» — стоп.",
+                        "warning")
 
             self.world.add_path(s.x, s.y)
 

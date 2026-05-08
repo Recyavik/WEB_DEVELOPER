@@ -110,6 +110,16 @@ class UserSettings(Base):
     # Прочее
     danger_zone_radius = Column(Float,       default=10.0)
 
+    # Размер ячейки сетки A* для планировщика обхода зон в режиме «осторожно».
+    # Меньше — точнее путь, медленнее счёт. 10 см — хороший баланс.
+    path_cell_size_cm  = Column(Integer,     default=10, nullable=False)
+    # Алгоритм следования за рассчитанным путём:
+    #   "pure_pursuit" — смотрит вперёд на N см, плавно срезает углы (по умолчанию)
+    #   "stanley"      — учитывает боковое смещение, тянет робота на путь точнее
+    cautious_follow_algo  = Column(String(20),  default="pure_pursuit", nullable=False)
+    # Замедлять ли робота на крутых поворотах (улучшает следование)
+    cautious_slow_curves  = Column(Boolean,     default=True, nullable=False)
+
     # Батарея: на сколько минут активного движения хватает полного заряда.
     # 60 = «на 1 час». Настройка симулятора, реальный робот может игнорировать.
     battery_minutes    = Column(Integer,     default=60, nullable=False)

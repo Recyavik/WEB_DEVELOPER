@@ -49,13 +49,17 @@ body {
 }
 
 /* ── Topbar ─────────────────────────────────────────────────────────────────── */
+/* ВАЖНО: padding и border-bottom оставляем компактными, иначе ломается
+   calc(100vh - 6rem) у .control-layout — появляется лишняя прокрутка.
+   Заметность держим фоном-градиентом и тенью — они не меняют высоту. */
 .topbar {
   display:         flex;
   align-items:     center;
   gap:             1.5rem;
   padding:         0.6rem 1.4rem;
-  background:      var(--bg-panel);
+  background:      linear-gradient(180deg, #1c2330 0%, #161b22 100%);
   border-bottom:   1px solid var(--border);
+  box-shadow:      0 3px 10px rgba(0, 0, 0, 0.55);
   position:        sticky;
   top: 0;
   z-index: 100;
@@ -92,20 +96,17 @@ body {
 
 /* ── Main content ────────────────────────────────────────────────────────────── */
 .main-content { flex: 1; padding: 1rem; overflow: hidden; }
-.footer {
-  text-align: center;
-  font-size: 0.75rem;
-  color: var(--text-dim);
-  padding: 0.5rem;
-  border-top: 1px solid var(--border);
-}
+/* Подвал убран из base.html — стиль оставлен на случай возврата. */
+.footer { display: none; }
 
 /* ── Control layout ─────────────────────────────────────────────────────────── */
 .control-layout {
   display: grid;
   grid-template-columns: minmax(240px, 280px) minmax(0, 1fr) minmax(240px, 320px);
   gap: 0.75rem;
-  height: calc(100vh - 6rem);
+  /* Подвал убран → используем больше высоты под контент.
+     Topbar ≈ 3.5rem, main-content padding 1rem сверху и снизу = 2rem. */
+  height: calc(100vh - 5.5rem);
   min-width: 0;
 }
 
@@ -296,6 +297,38 @@ body {
 .state-value--low      { color: var(--warning) !important; }
 .state-value--crit     { color: var(--danger) !important; }
 
+/* «Робот думает»: бейдж под карточкой состояния. Фиолетовая иконка во время
+   планирования, красная если решение не найдено. */
+.thinking-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  background: #2c1f52;
+  color: #b48cff;
+  border: 1px solid #4a3585;
+  border-radius: var(--radius);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+.thinking-badge__icon {
+  font-size: 1.1rem;
+  animation: thinking-pulse 1.2s ease-in-out infinite;
+}
+.thinking-badge--failed {
+  background: #3d1a1a;
+  color: var(--danger);
+  border-color: #5a2222;
+}
+.thinking-badge--failed .thinking-badge__icon {
+  animation: none;
+}
+@keyframes thinking-pulse {
+  0%, 100% { opacity: 1.0; transform: scale(1); }
+  50%      { opacity: 0.55; transform: scale(0.9); }
+}
+
 /* Шкала заряда батареи — как у реальных индикаторов: зелёный → жёлтый → красный */
 .state-item--battery {
   grid-column: span 2;             /* во всю ширину карточки состояния */
@@ -479,17 +512,126 @@ body {
 .program-code {
   width: 100%;
   font-family: 'Courier New', monospace;
-  font-size: 0.82rem;
-  line-height: 1.4;
+  font-size: 0.68rem;          /* мельче для боковой панели */
+  line-height: 1.35;
   border: 1px solid var(--border);
   border-radius: 4px;
-  padding: 0.6rem;
+  padding: 0.5rem;
   color: var(--text-dim);
   background: var(--bg-panel);
   min-height: 10rem;
   resize: vertical;
 }
 .program-code:not(:empty) { color: var(--text); }
+
+/* ── Overlay-подсветка синтаксиса для program-code ──────────────────────── */
+/* Поверх textarea рисуется <pre> с подсвеченным HTML; сам textarea имеет
+   прозрачный текст, но видимый каретку и выделение. Поведение редактора
+   полностью сохранено, добавлено только цветовое выделение комментариев. */
+.code-wrap {
+  position: relative;
+  width: 100%;
+}
+.code-wrap--modal {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+.code-overlay {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  font-family: 'Courier New', monospace;
+  font-size: 0.68rem;          /* должно совпадать с .program-code */
+  line-height: 1.35;
+  padding: 0.5rem;
+  border: 1px solid transparent;   /* совпадает с textarea для пиксель-в-пиксель */
+  border-radius: 4px;
+  color: var(--text);
+  background: var(--bg-panel);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: auto;
+  pointer-events: none;
+  z-index: 1;
+}
+.code-overlay code { font: inherit; color: inherit; background: none; padding: 0; }
+.program-code--editor {
+  position: relative;
+  z-index: 2;
+  background: transparent !important;
+  color: transparent !important;
+  caret-color: var(--text) !important;
+}
+.program-code--editor::selection {
+  background: rgba(88, 166, 255, 0.35);
+  color: transparent;
+}
+/* Зелёные комментарии (как в стандартных редакторах кода) */
+.hl-comment { color: #6a9955; font-style: italic; }
+
+/* ── Модальное окно «Python код во весь экран» ─────────────────────────── */
+.code-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(13, 17, 23, 0.85);
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  padding: 2rem;
+}
+.code-modal[hidden] { display: none; }
+.code-modal__panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  max-width: 1200px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+.code-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+.code-modal__title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+.program-code--modal {
+  flex: 1;
+  font-size: 0.95rem;          /* крупнее в модалке для удобной правки */
+  line-height: 1.5;
+  font-weight: 500;            /* чуть плотнее, лучше читается */
+  border: none;
+  border-radius: 0 0 var(--radius) var(--radius);
+  resize: none;
+  min-height: 0;
+  caret-color: #f0f6fc !important;   /* ярче для модалки */
+}
+.code-overlay--modal {
+  font-size: 0.95rem;
+  line-height: 1.5;
+  font-weight: 500;
+  color: #f0f6fc;
+  background: #0d1117;
+  border: none;
+  border-radius: 0 0 var(--radius) var(--radius);
+  padding: 0.6rem 0.8rem;
+}
+/* В модалке padding чуть больше — синхронизируем у textarea тоже */
+.code-overlay--modal + .program-code--modal,
+.program-code--modal {
+  padding: 0.6rem 0.8rem;
+}
 
 
 /* ── Page header ─────────────────────────────────────────────────────────────── */

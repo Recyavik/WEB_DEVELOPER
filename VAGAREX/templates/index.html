@@ -16,11 +16,11 @@
         <div class="state-grid">
           <div class="state-item">
             <span class="state-label">X</span>
-            <span class="state-value" id="st-x">0</span><span class="state-unit">см</span>
+            <span class="state-value" id="st-x">0</span>
           </div>
           <div class="state-item">
             <span class="state-label">Y</span>
-            <span class="state-value" id="st-y">0</span><span class="state-unit">см</span>
+            <span class="state-value" id="st-y">0</span>
           </div>
           <div class="state-item">
             <span class="state-label">Курс</span>
@@ -53,6 +53,13 @@
               <span class="battery-gauge__pct" id="st-battery">100%</span>
             </div>
           </div>
+        </div>
+        <!-- Иконка «робот думает» (планировщик в режиме «осторожно»):
+             фиолетовая — идёт A*-поиск, красная — путь не найден.
+             По умолчанию скрыта. -->
+        <div id="thinking-badge" class="thinking-badge" style="display:none">
+          <span class="thinking-badge__icon">🖥</span>
+          <span class="thinking-badge__text">Робот думает…</span>
         </div>
       </section>
 
@@ -229,7 +236,7 @@
   <!-- ── Правая панель: редактор Python-кода + журнал ─────────────── -->
   <aside class="log-panel">
 
-    <section class="card">
+    <section class="card" id="python-code-card">
       <div class="card__title-row">
         <h3 class="card__title">Python код</h3>
         <div class="program-actions">
@@ -237,11 +244,15 @@
           <a href="/library/save/new"    class="btn btn--xs" title="Сохранить как личный маршрут">💾</a>
           <a href="/library/publish/new" class="btn btn--xs" title="Опубликовать в библиотеку">📤</a>
           <button id="btn-clear-python-code" class="btn btn--xs" title="Очистить код">✕</button>
+          <button id="btn-expand-python-code" class="btn btn--xs" title="Развернуть редактор на весь экран">⛶</button>
           <button id="btn-run-python-code" class="btn btn--xs btn--primary" title="Запустить код">▶ Запуск</button>
         </div>
       </div>
       <div id="python-code-description" class="code-desc">Код будет автоматически формироваться по командам. Можно редактировать и запускать.</div>
-      <textarea id="python-code" class="program-code" rows="18"># После выполнения команды здесь появится Python-код для реального устройства</textarea>
+      <div class="code-wrap">
+        <pre class="code-overlay" aria-hidden="true"><code id="python-code-overlay"></code></pre>
+        <textarea id="python-code" class="program-code program-code--editor" rows="18"># После выполнения команды здесь появится Python-код для реального устройства</textarea>
+      </div>
     </section>
 
     <section class="card card--full">
@@ -254,6 +265,25 @@
 
 
   </aside>
+
+  <!-- ── Модальное окно «Python код во весь экран» ──────────────────── -->
+  <div id="python-code-modal" class="code-modal" hidden>
+    <div class="code-modal__panel">
+      <div class="code-modal__header">
+        <h3 class="code-modal__title">Python код</h3>
+        <div class="program-actions">
+          <button id="btn-modal-copy"  class="btn btn--xs" title="Скопировать">⎘</button>
+          <button id="btn-modal-clear" class="btn btn--xs" title="Очистить код">✕</button>
+          <button id="btn-modal-run"   class="btn btn--xs btn--primary" title="Запустить код">▶ Запуск</button>
+          <button id="btn-collapse-python-code" class="btn btn--xs" title="Свернуть">⛶ Свернуть</button>
+        </div>
+      </div>
+      <div class="code-wrap code-wrap--modal">
+        <pre class="code-overlay code-overlay--modal" aria-hidden="true"><code id="python-code-modal-overlay"></code></pre>
+        <textarea id="python-code-modal-area" class="program-code program-code--modal program-code--editor"></textarea>
+      </div>
+    </div>
+  </div>
 
 </div>
 {% endblock %}

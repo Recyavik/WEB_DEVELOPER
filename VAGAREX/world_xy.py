@@ -36,6 +36,11 @@ class RobotStateXY:
     laser_stop: bool  = False  # остановить когда лазер ≤ WALL_THICKNESS_CM
     light_color: tuple = (0, 0, 0)
     battery:    float = 100.0  # заряд аккумулятора, 0..100%
+    # Состояние «робот думает» (планировщик в режиме «осторожно»):
+    #   "idle"     — обычное
+    #   "planning" — фиолетовая иконка 🖥, идёт A*-поиск пути
+    #   "failed"   — красная иконка, путь не найден, нужен ручной режим
+    thinking:   str   = "idle"
 
 
 @dataclass
@@ -44,6 +49,10 @@ class WorldXY:
     height:       float = 500.0
     danger_zones: List[DangerZoneXY]    = field(default_factory=list)
     path_history: List[Tuple[float, float]] = field(default_factory=list)
+    # Сегменты пути, найденные планировщиком в режиме «осторожно».
+    # Каждый сегмент — список waypoint'ов от старта до цели одного goto.
+    # Рисуются на canvas фиолетовым пунктиром. Очищаются при сбросе поля.
+    auto_segments: List[List[Tuple[float, float]]] = field(default_factory=list)
 
     def add_danger_zone(self, x: float, y: float,
                         radius: float = 50.0, label: str = "Опасная зона",
@@ -93,6 +102,14 @@ class WorldXY:
     def clear_path(self):
         self.path_history.clear()
 
+    def clear_auto_segments(self):
+        self.auto_segments.clear()
+
+    def add_auto_segment(self, waypoints: List[Tuple[float, float]]) -> None:
+        """Зарегистрировать новый автоматически рассчитанный сегмент маршрута."""
+        if len(waypoints) >= 2:
+            self.auto_segments.append([(float(x), float(y)) for x, y in waypoints])
+
     def to_dict(self) -> dict:
         return {
             "width":  self.width,
@@ -102,7 +119,8 @@ class WorldXY:
                  "label": z.label, "db_id": z.db_id, "kind": z.kind}
                 for z in self.danger_zones
             ],
-            "path_history": self.path_history,
+            "path_history":  self.path_history,
+            "auto_segments": self.auto_segments,
         }
 
 
@@ -119,6 +137,7 @@ def state_to_dict(state: RobotStateXY) -> dict:
         "laser_dist": state.laser_dist,
         "light_color": list(state.light_color),
         "battery":   state.battery,
+        "thinking":  state.thinking,
     }
 
 

@@ -90,8 +90,11 @@ def _ensure_schema_migrations():
             "user_id": "INTEGER",
         },
         "user_settings": {
-            "battery_minutes": "INTEGER NOT NULL DEFAULT 60",
-            "battery_pct":     "REAL NOT NULL DEFAULT 100.0",
+            "battery_minutes":         "INTEGER NOT NULL DEFAULT 60",
+            "battery_pct":             "REAL NOT NULL DEFAULT 100.0",
+            "path_cell_size_cm":       "INTEGER NOT NULL DEFAULT 10",
+            "cautious_follow_algo":    "VARCHAR(20) NOT NULL DEFAULT 'pure_pursuit'",
+            "cautious_slow_curves":    "BOOLEAN NOT NULL DEFAULT TRUE",
         },
     }
     for table, columns in additions.items():
@@ -563,6 +566,9 @@ async def settings_page(request: Request,
             "sensor_type":        row.sensor_type,
             "sonar_interval_ms":  row.sonar_interval_ms,
             "battery_minutes":    row.battery_minutes,
+            "path_cell_size_cm":  row.path_cell_size_cm,
+            "cautious_follow_algo": row.cautious_follow_algo,
+            "cautious_slow_curves": row.cautious_slow_curves,
         },
     })
 
@@ -590,6 +596,9 @@ async def api_settings_save(
     sensor_type:        str   = Form("laser"),
     sonar_interval_ms:  int   = Form(100),
     battery_minutes:    int   = Form(60),
+    path_cell_size_cm:  int   = Form(10),
+    cautious_follow_algo: str = Form("pure_pursuit"),
+    cautious_slow_curves: str = Form("0"),
     current_user: User    = Depends(require_user),
     db:           Session = Depends(get_db),
 ):
@@ -622,6 +631,11 @@ async def api_settings_save(
     row.sensor_type       = sensor_type if sensor_type in ("laser", "sonar") else "laser"
     row.sonar_interval_ms = max(10, min(1000, sonar_interval_ms))
     row.battery_minutes   = max(1, min(720, battery_minutes))   # 1 мин — 12 ч
+    row.path_cell_size_cm = max(2, min(50, path_cell_size_cm))
+    row.cautious_follow_algo = (cautious_follow_algo
+                                if cautious_follow_algo in ("pure_pursuit", "stanley")
+                                else "pure_pursuit")
+    row.cautious_slow_curves = (cautious_slow_curves == "1")
     db.commit()
 
     # Если у пользователя есть активная сессия — обновляем её настройки на лету

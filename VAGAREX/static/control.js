@@ -100,6 +100,10 @@
           const desc     = document.getElementById('python-code-description');
           if (desc) desc.textContent = 'Программа робота (редактируется)';
           if (textarea) textarea.value = msg.text;
+          // Если модалка открыта — тоже обновляем
+          const modal     = document.getElementById('python-code-modal');
+          const modalArea = document.getElementById('python-code-modal-area');
+          if (modal && !modal.hidden && modalArea) modalArea.value = msg.text;
         }
         break;
 
@@ -118,6 +122,64 @@
     const textarea = document.getElementById('python-code');
     if (!textarea) return;
     navigator.clipboard.writeText(textarea.value).catch(() => {});
+  }
+
+  // ── Подсветка Python-кода (комментарии — зелёным) ─────────────────────────
+  function escHtmlCode(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function highlightPython(text) {
+    // Простой однопроходный лексер: находим '#' вне строк и красим хвост строки.
+    return text.split('\n').map(line => {
+      let inStr = false, strCh = null, commentIdx = -1;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (inStr) {
+          if (ch === strCh && line[i - 1] !== '\\') {
+            inStr = false; strCh = null;
+          }
+        } else {
+          if (ch === '"' || ch === "'") { inStr = true; strCh = ch; }
+          else if (ch === '#') { commentIdx = i; break; }
+        }
+      }
+      if (commentIdx >= 0) {
+        return escHtmlCode(line.slice(0, commentIdx)) +
+               '<span class="hl-comment">' +
+               escHtmlCode(line.slice(commentIdx)) +
+               '</span>';
+      }
+      return escHtmlCode(line);
+    }).join('\n') + '\n';   // финальный \n чтобы overlay не «съедал» нижнюю строку
+  }
+  function attachCodeHighlight(textareaId, overlayId) {
+    const ta = document.getElementById(textareaId);
+    const ov = document.getElementById(overlayId);
+    if (!ta || !ov) return;
+    const sync = () => {
+      ov.innerHTML = highlightPython(ta.value || '');
+      // Sync scroll
+      ov.parentElement.scrollTop = ta.scrollTop;
+      ov.scrollTop = ta.scrollTop;
+      ov.scrollLeft = ta.scrollLeft;
+    };
+    ta.addEventListener('input',  sync);
+    ta.addEventListener('scroll', () => {
+      ov.scrollTop  = ta.scrollTop;
+      ov.scrollLeft = ta.scrollLeft;
+    });
+    // Первоначальная подсветка + наблюдение за программными изменениями value
+    sync();
+    // Периодически проверяем, не изменился ли value «программно»
+    // (например, через msg.code → appendPythonCode). input event для value
+    // через .value = ... не выстреливает, так что нужен polling.
+    let lastVal = ta.value;
+    setInterval(() => {
+      if (ta.value !== lastVal) {
+        lastVal = ta.value;
+        sync();
+      }
+    }, 200);
   }
 
   // ── UI обновление ───────────────────────────────────────────────────────────
@@ -187,6 +249,22 @@
     // Дублирующий бейдж больше не нужен — режим уже виден в строке «Режим».
     const caut = document.getElementById('caution-badge');
     if (caut) caut.style.display = 'none';
+
+    // 🖥 «Робот думает» (планировщик в режиме «осторожно»).
+    const thBadge = document.getElementById('thinking-badge');
+    if (thBadge) {
+      const th = s.thinking || 'idle';
+      if (th === 'idle') {
+        thBadge.style.display = 'none';
+      } else {
+        thBadge.style.display = '';
+        thBadge.classList.toggle('thinking-badge--failed', th === 'failed');
+        const txt = thBadge.querySelector('.thinking-badge__text');
+        if (txt) txt.textContent = (th === 'failed')
+          ? 'Решение не найдено'
+          : 'Робот думает…';
+      }
+    }
   }
 
   function modeLabel(m) {
@@ -321,6 +399,10 @@
     flushDef(); // flush any trailing def without trailing blank line
 
     textarea.value = merged;
+    // Если модалка открыта — отражаем изменения и в ней
+    const modal     = document.getElementById('python-code-modal');
+    const modalArea = document.getElementById('python-code-modal-area');
+    if (modal && !modal.hidden && modalArea) modalArea.value = merged;
   }
 
   function runPythonCode() {
@@ -472,6 +554,65 @@
     document.getElementById('btn-run-python-code')?.addEventListener('click', runPythonCode);
     document.getElementById('btn-clear-python-code')?.addEventListener('click', clearPythonCode);
     document.getElementById('btn-copy-python-code')?.addEventListener('click', copyPythonCode);
+
+    // Подсветка комментариев в обоих редакторах кода
+    attachCodeHighlight('python-code',            'python-code-overlay');
+    attachCodeHighlight('python-code-modal-area', 'python-code-modal-overlay');
+
+    // ── Модальное окно «Python код во весь экран» ─────────────────────
+    const modal      = document.getElementById('python-code-modal');
+    const modalArea  = document.getElementById('python-code-modal-area');
+    const sideArea   = document.getElementById('python-code');
+
+    function openCodeModal() {
+      if (!modal || !modalArea || !sideArea) return;
+      modalArea.value = sideArea.value;     // последняя версия из боковой
+      modal.hidden = false;
+      modalArea.focus();
+    }
+    function closeCodeModal() {
+      if (!modal || !modalArea || !sideArea) return;
+      sideArea.value = modalArea.value;     // правки из модалки → в боковую
+      modal.hidden = true;
+    }
+    document.getElementById('btn-expand-python-code')?.addEventListener('click', openCodeModal);
+    document.getElementById('btn-collapse-python-code')?.addEventListener('click', closeCodeModal);
+    // Esc — тоже закрывает
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && modal && !modal.hidden) closeCodeModal();
+    });
+    // Backspace вне textarea/input — браузер пытается «назад» в истории,
+    // что закрывает модалку. Перехватываем, если фокус не на редактируемом
+    // элементе.
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Backspace') return;
+      if (!modal || modal.hidden) return;
+      const t = e.target;
+      const editable = t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT' || t.isContentEditable);
+      if (!editable) e.preventDefault();
+    });
+    // Клик по фону модалки — закрывает (но не на сам редактор и не внутри панели)
+    modal?.addEventListener('click', (e) => {
+      if (e.target === modal) closeCodeModal();
+    });
+    // Кнопки в модалке делегируют в основные обработчики, синхронизируя текст
+    document.getElementById('btn-modal-copy')?.addEventListener('click', () => {
+      navigator.clipboard.writeText(modalArea.value).catch(() => {});
+    });
+    document.getElementById('btn-modal-clear')?.addEventListener('click', () => {
+      if (confirm('Очистить весь код?')) {
+        modalArea.value = '';
+        sideArea.value  = '';
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'clear_program' }));
+        }
+      }
+    });
+    document.getElementById('btn-modal-run')?.addEventListener('click', () => {
+      // sync from modal to main, then run
+      sideArea.value = modalArea.value;
+      runPythonCode();
+    });
 
     // «📍 В точку…» — спросить координаты у пользователя
     document.getElementById('btn-goto')?.addEventListener('click', () => {
