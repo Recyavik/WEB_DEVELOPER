@@ -29,7 +29,7 @@
       {% if not saved_routes %}
       <p class="hint" style="padding:1rem 0">
         Ничего не сохранено. Наберите программу на главной, нажмите
-        «💾 Сохранить текущий» — она появится здесь и её можно будет
+        «💾 Сохранить текущий» — она появится здесь и ее можно будет
         загрузить обратно.
       </p>
       {% else %}
@@ -41,7 +41,7 @@
           </div>
           <div class="library-card__meta">
             <span title="Команд">🧩 {{ r.cmd_count }}</span>
-            <span title="Изменён">🕒 {{ r.updated_at.strftime('%Y-%m-%d %H:%M') }}</span>
+            <span title="Изменен">🕒 {{ r.updated_at.strftime('%Y-%m-%d %H:%M') }}</span>
           </div>
           {% if r.description %}
           <div class="library-card__desc">{{ r.description }}</div>
@@ -76,7 +76,7 @@
             <a href="/library/published/{{ r.id }}">{{ r.title }}</a>
           </div>
           <div class="library-card__meta">
-            <span title="Автор">👤 {{ r.author.username if r.author else 'удалён' }}</span>
+            <span title="Автор">👤 {{ r.author.username if r.author else 'удален' }}</span>
             <span title="Команд">🧩 {{ r.cmd_count }}</span>
             <span title="Опубликовано">🕒 {{ r.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
             {% if r.parent_id %}

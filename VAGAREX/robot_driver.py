@@ -6,7 +6,7 @@ SimDriver  — симулятор для отладки без железа
 
 Документированные команды 1T REX Python API:
   robot.move(speed)          — движение (0–100, отрицательное = назад)
-  robot.set_angle(angle)     — рулёжка -45..45 градусов
+  robot.set_angle(angle)     — рулежка -45..45 градусов
   robot.set_servo_center()   — руль прямо
   robot.enable_mpu()         — включить гироскоп
   robot.get_laser()          — дальность до препятствия (см)

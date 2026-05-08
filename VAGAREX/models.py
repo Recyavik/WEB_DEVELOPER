@@ -49,7 +49,7 @@ class PublishedRoute(Base):
 
 
 class SavedRoute(Base):
-    """Личный сохранённый маршрут пользователя — закладка в его пространстве.
+    """Личный сохраненный маршрут пользователя — закладка в его пространстве.
     Видит и удаляет только владелец. Можно загрузить себе обратно или
     позже опубликовать в общий каталог."""
     __tablename__ = "saved_routes"
@@ -68,7 +68,7 @@ class SavedRoute(Base):
 
 class UserSettings(Base):
     """Симуляционные/аппаратные настройки конкретного пользователя.
-    Создаётся при первом входе с дефолтами из config."""
+    Создается при первом входе с дефолтами из config."""
     __tablename__ = "user_settings"
 
     user_id            = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"),
@@ -111,10 +111,10 @@ class UserSettings(Base):
     danger_zone_radius = Column(Float,       default=10.0)
 
     # Размер ячейки сетки A* для планировщика обхода зон в режиме «осторожно».
-    # Меньше — точнее путь, медленнее счёт. 10 см — хороший баланс.
+    # Меньше — точнее путь, медленнее счет. 10 см — хороший баланс.
     path_cell_size_cm  = Column(Integer,     default=10, nullable=False)
-    # Алгоритм следования за рассчитанным путём:
-    #   "pure_pursuit" — смотрит вперёд на N см, плавно срезает углы (по умолчанию)
+    # Алгоритм следования за рассчитанным путем:
+    #   "pure_pursuit" — смотрит вперед на N см, плавно срезает углы (по умолчанию)
     #   "stanley"      — учитывает боковое смещение, тянет робота на путь точнее
     cautious_follow_algo  = Column(String(20),  default="pure_pursuit", nullable=False)
     # Замедлять ли робота на крутых поворотах (улучшает следование)
@@ -193,7 +193,7 @@ class DangerZone(Base):
     x          = Column(Float)
     y          = Column(Float)
     radius     = Column(Float, default=50.0)
-    # 'danger' = красная зона обстановки, 'algorithm' = жёлтая пунктирная зона алгоритма
+    # 'danger' = красная зона обстановки, 'algorithm' = желтая пунктирная зона алгоритма
     kind       = Column(String(20), default="danger", nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     active     = Column(Boolean, default=True)

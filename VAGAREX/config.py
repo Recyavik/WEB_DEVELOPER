@@ -3,7 +3,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # override=True — пользовательские правки в .env через UI должны побеждать
-# жёстко прописанные значения в docker-compose.yml environment:.
+# жестко прописанные значения в docker-compose.yml environment:.
 load_dotenv(override=True)
 
 # Папка с пользовательскими данными (БД, загруженные файлы и т. п.).
@@ -59,7 +59,7 @@ WHEEL_CIRCUMFERENCE_CM = float(os.getenv("WHEEL_CIRCUMFERENCE_CM", "28.3"))
 SPEED_CM_PER_S_AT_100 = float(os.getenv("SPEED_CM_PER_S_AT_100", "80.0"))
 
 # Изменение курса за один оборот колеса при полном угле руля (градусы)
-# Зависит от колёсной базы и радиуса поворота — уточнить при калибровке
+# Зависит от колесной базы и радиуса поворота — уточнить при калибровке
 HEADING_DEG_PER_ROT = float(os.getenv("HEADING_DEG_PER_ROT", "25.0"))
 
 # Скорость, при которой снята калибровка поворота (%).

@@ -3,7 +3,7 @@ main.py — FastAPI приложение VEGAREX (мульти-пользова�
 
 Архитектура:
   1. Аутентификация (cookie-сессии + bcrypt) — auth.py
-  2. На каждого залогиненного пользователя создаётся UserSession — session.py
+  2. На каждого залогиненного пользователя создается UserSession — session.py
      (свой robot_state, world, драйвер робота, программа, очередь, фоновые задачи)
   3. WebSocket /ws привязывается к UserSession этого пользователя
   4. Настройки робота, размер поля, программа — у каждого свои (DB)
@@ -71,7 +71,7 @@ def _ensure_admin_exists():
 
 
 def _ensure_schema_migrations():
-    """Лёгкие миграции: добавляем новые колонки в существующие таблицы,
+    """Легкие миграции: добавляем новые колонки в существующие таблицы,
     чтобы при апгрейде не нужно было вайпать БД."""
     from sqlalchemy import inspect, text
     insp = inspect(engine)
@@ -325,7 +325,7 @@ async def change_password_submit(request: Request,
     db.commit()
     return templates.TemplateResponse(request, "change_password.html", {
         "current_user": current_user,
-        "success": "Пароль изменён.",
+        "success": "Пароль изменен.",
     })
 
 
@@ -420,7 +420,7 @@ async def admin_reset_password(user_id: int,
     user.temp_password            = pwd
     user.password_changed_by_user = False
     db.commit()
-    # Если у юзера была активная сессия — гасим (логиниться придётся заново)
+    # Если у юзера была активная сессия — гасим (логиниться придется заново)
     from session import SESSIONS
     sess = SESSIONS.pop(user_id, None)
     if sess is not None:
@@ -487,6 +487,22 @@ async def index(request: Request,
 async def training(request: Request,
                    current_user: User = Depends(require_user)):
     return templates.TemplateResponse(request, "training.html", {
+        "current_user": current_user,
+    })
+
+
+@app.get("/system", response_class=HTMLResponse)
+async def system_commands(request: Request,
+                          current_user: User = Depends(require_user)):
+    return templates.TemplateResponse(request, "system.html", {
+        "current_user": current_user,
+    })
+
+
+@app.get("/maneuvers", response_class=HTMLResponse)
+async def maneuvers_docs(request: Request,
+                         current_user: User = Depends(require_user)):
+    return templates.TemplateResponse(request, "maneuvers.html", {
         "current_user": current_user,
     })
 
@@ -638,7 +654,7 @@ async def api_settings_save(
     row.cautious_slow_curves = (cautious_slow_curves == "1")
     db.commit()
 
-    # Если у пользователя есть активная сессия — обновляем её настройки на лету
+    # Если у пользователя есть активная сессия — обновляем ее настройки на лету
     sess = get_session(current_user.id)
     if sess is not None:
         new_cfg = UserCfg.from_row(row)
@@ -729,7 +745,7 @@ async def api_session_path(session_id: int, db: Session = Depends(get_db)):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Библиотека маршрутов: свои сохранённые + опубликованные другими
+# Библиотека маршрутов: свои сохраненные + опубликованные другими
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _count_cmds_in_text(text: str) -> int:
@@ -961,7 +977,7 @@ async def library_load_submit(kind: str, route_id: int,
 
     # Подгружаем выбранный маршрут
     if kind == "saved":
-        label = f"«{route.title}» (своё)"
+        label = f"«{route.title}» (свое)"
     else:
         label = f"«{route.title}»"
         if route.author and route.author.username:
@@ -983,8 +999,8 @@ async def websocket_endpoint(ws: WebSocket):
         return
 
     db = SessionLocal()
-    # Защита от протухшей cookie: если user был удалён (например, после wipe БД),
-    # WS-сессию не открываем — клиент получит close, JS пойдёт на редирект.
+    # Защита от протухшей cookie: если user был удален (например, после wipe БД),
+    # WS-сессию не открываем — клиент получит close, JS пойдет на редирект.
     user_exists = db.query(User).filter(User.id == user_id).first()
     if not user_exists:
         db.close()
@@ -1034,7 +1050,7 @@ async def websocket_endpoint(ws: WebSocket):
                 if not enabled:
                     sess.robot_state.laser_stop = False
                 await sess.push_message(
-                    "Дальномер " + ("включён." if enabled else "выключен."),
+                    "Дальномер " + ("включен." if enabled else "выключен."),
                     "info")
             elif t == "ping":
                 await ws.send_json({"type": "pong"})

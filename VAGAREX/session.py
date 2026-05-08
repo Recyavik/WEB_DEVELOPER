@@ -88,7 +88,7 @@ class UserCfg:
     danger_zone_radius: float
     battery_minutes:    int  = 60
     path_cell_size_cm:  int  = 10
-    # Следование за рассчитанным путём в режиме «осторожно»
+    # Следование за рассчитанным путем в режиме «осторожно»
     cautious_follow_algo: str  = "pure_pursuit"   # "pure_pursuit" | "stanley"
     cautious_slow_curves: bool = True
     # runtime-only флаг, не из БД: дальномер по факту используется
@@ -127,7 +127,7 @@ class UserCfg:
 
 
 def _ensure_user_settings(db: Session, user_id: int) -> UserSettings:
-    """Возвращает UserSettings пользователя; создаёт с дефолтами если нет."""
+    """Возвращает UserSettings пользователя; создает с дефолтами если нет."""
     row = db.query(UserSettings).filter(UserSettings.user_id == user_id).first()
     if row is None:
         row = UserSettings(user_id=user_id)
@@ -355,34 +355,25 @@ class UserSession:
         lines.append("brake()")
         return lines
 
-    def _python_body_for_cmd(self, cmd: RobotCmd) -> str:
-        """Только тело Python-кода команды (без преамбулы)."""
-        _, full = self._python_code_for_cmd(cmd)
-        sentinel = "# === НАЧАЛО ПРОГРАММЫ ==="
-        if sentinel in full:
-            return full.split(sentinel, 1)[1].strip()
-        return full.strip()
-
     def _program_text(self) -> str:
-        """Полный текст программы для textarea: преамбула Python + блоки команд.
-        Каждый блок начинается с маркера `# CMD: <dsl>` — это источник правды
-        для парсера при «Запуске». Тело — копируй на реальный робот; чтобы
-        удалить команду, убери её # CMD-строку (можно вместе с телом)."""
-        parts = [self._python_code_preamble().rstrip()]
+        """Полный текст программы для textarea:
+          константы → сентинель → объединение def-блоков, нужных всем командам
+          (с транзитивными зависимостями) → блоки вызовов команд.
+        Пустая программа → только константы, без cmd_*-функций."""
+        parts = [self._python_code_preamble(self._program).rstrip()]
         if not self._program:
             parts.append("")
             parts.append("# (программа пуста — выполни команды кнопками управления)")
             return "\n".join(parts) + "\n"
         for cmd in self._program:
             parts.append("")
-            # Тело уже содержит свою # CMD-строку (см. _python_code_for_cmd),
-            # поэтому здесь маркер не дублируем.
-            parts.append(self._python_body_for_cmd(cmd))
+            # Только маркер + вызов; def-блоки уже в преамбуле (один раз).
+            parts.append("\n".join(self._python_call_lines_for_cmd(cmd)))
         return "\n".join(parts) + "\n"
 
     def _state_dict_with_effective(self) -> dict:
         """state_to_dict + поле effective_speed_pct: скорость, фактически
-        выдаваемая мотором с учётом просадки батареи."""
+        выдаваемая мотором с учетом просадки батареи."""
         d = state_to_dict(self.robot_state)
         factor = self._battery_factor(self.robot_state.battery)
         d["effective_speed_pct"] = self.robot_state.speed * factor
@@ -522,11 +513,11 @@ class UserSession:
                 min_dist = min(min_dist, max(0.0, dot - stop_r))
         return min_dist
 
-    # ── Манёвр K-turn ────────────────────────────────────────────────────────
+    # ── Маневр K-turn ────────────────────────────────────────────────────────
 
     async def _k_turn_n(self, direction: int = 1, steps: int = 3):
-        """Разворот на 180° в N приёмов (steps — пользовательский параметр,
-        задаёт ритм видимых пар forward-back). Та же 3-фазная схема, что
+        """Разворот на 180° в N приемов (steps — пользовательский параметр,
+        задает ритм видимых пар forward-back). Та же 3-фазная схема, что
         и у `_k_turn_to_heading`:
           Фаза 1: N видимых пар дуг (по 90°/steps на дугу)
           Фаза 2: плавный возврат в исходную точку (без snap'а позиции)
@@ -548,7 +539,7 @@ class UserSession:
         try:
             # ── Фаза 1: N видимых пар дуг (как раньше) ────────────────────
             for i in range(steps):
-                await self.push_message(f"Разворот {i+1}/{steps}: вперёд…", "info")
+                await self.push_message(f"Разворот {i+1}/{steps}: вперед…", "info")
                 fwd_space = max(10.0, self._wall_dist_cm(s.heading) - self.cfg.wall_thickness_cm - 5.0)
                 s.steer     = float(direction * STEER)
                 s.speed     = float(spd)
@@ -611,7 +602,7 @@ class UserSession:
         await self.robot.move(spd)
         s.speed     = float(spd)
         s.dist_left = float(dist_cm) if dist_cm else 0.0
-        # Если дальномер включён — физика остановит у стены, не доезжая
+        # Если дальномер включен — физика остановит у стены, не доезжая
         # запрошенных см. Если выключен — поедет до коллизии (стенка симулятора).
         s.laser_stop = bool(self.cfg.laser_enabled)
         if dist_cm:
@@ -723,15 +714,15 @@ class UserSession:
             s.heading = float(target_deg % 360)
         await self.push_state()
 
-    # ── Сложные манёвры (круг / восьмёрка / спираль / синусоида) ────────────
+    # ── Сложные маневры (круг / восьмерка / спираль / синусоида) ────────────
 
     async def _arc_at_steer(self, steer_deg: float, sweep_deg: float, spd: int,
                               backward: bool = False):
         """Едет дугой при заданном угле руля до изменения курса на sweep_deg.
         backward=True — едет ЗАДОМ (steer тот же, скорость противоположная).
 
-        Дальномер ВКЛЮЧЁН — если корпус подходит близко к стене, дуга
-        прервётся для безопасности. K-turn внутри `_run_goto` потом сам
+        Дальномер ВКЛЮЧЕН — если корпус подходит близко к стене, дуга
+        прервется для безопасности. K-turn внутри `_run_goto` потом сам
         проверит, дошли ли до цели, и при необходимости отъедет назад
         и попробует снова."""
         if steer_deg == 0 or sweep_deg <= 0:
@@ -775,16 +766,16 @@ class UserSession:
         await self.push_state()
 
     async def _run_figure_eight(self, direction: int = -1):
-        """Восьмёрка: первый круг ПРОТИВ часовой (CCW), второй — по часовой.
+        """Восьмерка: первый круг ПРОТИВ часовой (CCW), второй — по часовой.
         direction=+1 — наоборот, начать по часовой."""
         s = self.robot_state
         spd = self.cfg.move_speed
         steer = self.cfg.turn_angle
         try:
-            await self.push_message("Восьмёрка: круг 1/2…", "info")
+            await self.push_message("Восьмерка: круг 1/2…", "info")
             await self._arc_at_steer(direction * steer, 360.0, spd)
             await asyncio.sleep(0.2)
-            await self.push_message("Восьмёрка: круг 2/2…", "info")
+            await self.push_message("Восьмерка: круг 2/2…", "info")
             await self._arc_at_steer(-direction * steer, 360.0, spd)
         except asyncio.CancelledError:
             pass
@@ -802,7 +793,7 @@ class UserSession:
         Радиусы выбраны так, чтобы спираль помещалась в обычное поле:
         outward=True  — руль 36° → 24° (от самого тугого до среднего)
         outward=False — руль 24° → 36° (от среднего до самого тугого)
-        Прогресс отслеживаем по реально набранной развёртке курса (не по времени)."""
+        Прогресс отслеживаем по реально набранной развертке курса (не по времени)."""
         s = self.robot_state
         spd = self.cfg.move_speed
         if outward:
@@ -829,7 +820,7 @@ class UserSession:
         try:
             while sweep_abs < target_sweep_abs:
                 await asyncio.sleep(0.1)  # 10 Гц обновления руля
-                # Накопление развёртки курса (модуль, без учёта направления вращения)
+                # Накопление развертки курса (модуль, без учета направления вращения)
                 d = (s.heading - prev_heading + 540.0) % 360.0 - 180.0
                 sweep_abs += abs(d)
                 prev_heading = s.heading
@@ -849,7 +840,7 @@ class UserSession:
                         f"Спираль: {pct}%  (руль {steer_now:.1f}°)", "info")
 
                 # Защита от зависания: если робот уперся в стену и не движется,
-                # курс не меняется → sweep_abs не растёт. Выходим через таймаут.
+                # курс не меняется → sweep_abs не растет. Выходим через таймаут.
                 if s.speed == 0:
                     await self.push_message("Спираль прервана: робот остановился.", "warning")
                     break
@@ -901,7 +892,7 @@ class UserSession:
             ok = await self._run_goto_cautious(target_x, target_y)
             if ok:
                 return
-            # cautious не нашёл/не выполнил — выходим, не дёргаем direct
+            # cautious не нашел/не выполнил — выходим, не дергаем direct
             return
         await self._run_goto_direct(target_x, target_y)
 
@@ -930,7 +921,7 @@ class UserSession:
         # Между waypoint'ами _run_goto_direct может выписывать дуги, которые
         # отклоняются от прямой линии. Полная компенсация (≈ robot_length)
         # делает проходы между близкими зонами вообще непроходимыми, поэтому
-        # берём половину — баланс между свободой и безопасностью.
+        # берем половину — баланс между свободой и безопасностью.
         robot_inflation = (max(cfg.robot_length_cm, cfg.robot_width_cm) / 2.0
                            + cfg.robot_length_cm / 2.0)
         safety = cfg.wall_thickness_cm   # «Запас безопасности» = wall_thickness
@@ -985,7 +976,7 @@ class UserSession:
         await self.push_world()  # сегмент должен появиться сразу
         await self.push_state()
 
-        # Pure-pursuit / Stanley follow: робот непрерывно крутит рулём
+        # Pure-pursuit / Stanley follow: робот непрерывно крутит рулем
         # к точке впереди, без K-turn'ов и резких разворотов.
         ok = await self._follow_curve(dense)
 
@@ -1054,7 +1045,7 @@ class UserSession:
         близко к цели «по воздуху», тоже надо тормозить).
 
         Линейно: за `slow_zone_cm` до конца — full, у самого конца —
-        `min_factor`. Берётся минимум из двух метрик."""
+        `min_factor`. Берется минимум из двух метрик."""
         n = len(points)
         if n == 0:
             return 1.0
@@ -1071,7 +1062,7 @@ class UserSession:
         # 2) Прямое расстояние до цели от текущей позиции робота
         gx, gy = points[-1]
         direct = math.hypot(gx - robot_x, gy - robot_y)
-        # Берём более жёсткое (меньшее) из двух
+        # Берем более жесткое (меньшее) из двух
         eff = min(remaining_path, direct)
         if eff >= slow_zone_cm:
             return 1.0
@@ -1087,7 +1078,7 @@ class UserSession:
 
     async def _align_to_path_start(self,
                                     points: list[tuple[float, float]]) -> None:
-        """Если робот смотрит сильно мимо начала пути — сначала развернёмся
+        """Если робот смотрит сильно мимо начала пути — сначала развернемся
         K-turn'ом, чтобы pure-pursuit не уводило в круг минимального радиуса."""
         s = self.robot_state
         if len(points) < 2:
@@ -1098,13 +1089,13 @@ class UserSession:
             return
         path_heading = math.degrees(math.atan2(dx, dy))
         diff = (path_heading - s.heading + 540.0) % 360.0 - 180.0
-        # Порог 50° — если больше, мы заведомо не «поймаем» цель рулём
+        # Порог 50° — если больше, мы заведомо не «поймаем» цель рулем
         if abs(diff) > 50.0:
             await self._k_turn_to_heading(path_heading)
 
     def _direct_to_goal_clear(self, gx: float, gy: float) -> bool:
         """True если прямая от текущей позиции робота до (gx, gy) свободна
-        от опасных зон (с учётом раздутия по корпусу + safety_margin).
+        от опасных зон (с учетом раздутия по корпусу + safety_margin).
         Используется follower'ом для динамической перепланировки:
         как только препятствия пройдены — выходим и доводим прямой."""
         if not self.world.danger_zones:
@@ -1122,7 +1113,7 @@ class UserSession:
         Плавно срезает углы. Подходит большинству сцен.
 
         Дополнительно: каждые ~0.5 сек проверяет, свободна ли прямая до
-        цели — если да, выходит из кривой (наружный wrapper доведёт прямой)."""
+        цели — если да, выходит из кривой (наружный wrapper доведет прямой)."""
         if not points or len(points) < 2:
             return True
         s   = self.robot_state
@@ -1144,11 +1135,11 @@ class UserSession:
         gx, gy = points[-1]
         last_idx = 0
         deadline = time.monotonic() + TIMEOUT_S
-        tick     = 0      # счётчик для динамической перепланировки
+        tick     = 0      # счетчик для динамической перепланировки
         # Антизалипание: засчитываем прогресс ЛИБО продвижение по индексу
         # пути, ЛИБО приближение к цели «по воздуху». Это защищает от двух
         # сценариев: вращение в круге (нет ни того, ни другого) И срезание
-        # угла (индекс не растёт, но дистанция до цели падает).
+        # угла (индекс не растет, но дистанция до цели падает).
         last_progress_idx  = 0
         last_progress_dist = math.hypot(gx - s.x, gy - s.y)
         last_progress_time = time.monotonic()
@@ -1166,7 +1157,7 @@ class UserSession:
 
                 # Динамическая перепланировка: каждые ~0.5 сек проверяем,
                 # свободна ли уже прямая до цели. Если да — выходим, наружный
-                # wrapper доведёт через _run_goto_direct (он умеет K-turn).
+                # wrapper доведет через _run_goto_direct (он умеет K-turn).
                 tick += 1
                 if tick % 5 == 0 and self._direct_to_goal_clear(gx, gy):
                     return True
@@ -1189,7 +1180,7 @@ class UserSession:
                 # Прогресс — это ЛИБО продвижение по индексу пути, ЛИБО
                 # сокращение прямого расстояния до цели хотя бы на 5 см.
                 # Без второй метрики антизалипание ложно срабатывало,
-                # когда робот срезает угол и идёт к цели «по воздуху».
+                # когда робот срезает угол и идет к цели «по воздуху».
                 cur_dist = math.hypot(gx - s.x, gy - s.y)
                 if best_i > last_progress_idx or cur_dist < last_progress_dist - 5.0:
                     last_progress_idx  = best_i
@@ -1228,7 +1219,7 @@ class UserSession:
 
                 # Замедление: на поворотах И на подходе к концу пути.
                 # approach_speed_factor смотрит и на оставшийся путь, и на
-                # прямое расстояние до цели — берёт более жёсткое.
+                # прямое расстояние до цели — берет более жесткое.
                 approach = self._approach_speed_factor(points, best_i, s.x, s.y)
                 if cfg.cautious_slow_curves:
                     curvy = self._curvature_speed_factor(points, best_i)
@@ -1268,7 +1259,7 @@ class UserSession:
         base_spd  = cfg.move_speed
         MAX_STEER = float(cfg.turn_angle)
         # K_CROSS: чем больше — тем активнее тянет на путь, но тем неустойчивей.
-        # 0.6 даёт мягкое доведение без раскачки.
+        # 0.6 дает мягкое доведение без раскачки.
         K_CROSS   = 0.6
         # В знаменателе используем НОМИНАЛЬНУЮ скорость, не текущую.
         # При slow_curves текущая скорость падает до 11 см/с — atan(K·cte/v)
@@ -1294,7 +1285,7 @@ class UserSession:
         last_progress_dist = math.hypot(gx - s.x, gy - s.y)
         last_progress_time = time.monotonic()
         STUCK_S = 6.0
-        tick = 0     # счётчик для динамической перепланировки
+        tick = 0     # счетчик для динамической перепланировки
 
         try:
             while True:
@@ -1330,7 +1321,7 @@ class UserSession:
                 # Прогресс — это ЛИБО продвижение по индексу пути, ЛИБО
                 # сокращение прямого расстояния до цели хотя бы на 5 см.
                 # Без второй метрики антизалипание ложно срабатывало,
-                # когда робот срезает угол и идёт к цели «по воздуху».
+                # когда робот срезает угол и идет к цели «по воздуху».
                 cur_dist = math.hypot(gx - s.x, gy - s.y)
                 if best_i > last_progress_idx or cur_dist < last_progress_dist - 5.0:
                     last_progress_idx  = best_i
@@ -1372,7 +1363,7 @@ class UserSession:
                 cte = ty_dir * offset_x - tx_dir * offset_y
 
                 # Используем НОМИНАЛЬНУЮ скорость как «v» для Стэнли.
-                # Так формула остаётся стабильной даже когда slow_curves
+                # Так формула остается стабильной даже когда slow_curves
                 # снизил реальную скорость почти до нуля у финиша.
                 v_for_atan = SOFTEN_V
 
@@ -1420,8 +1411,8 @@ class UserSession:
         Алгоритм:
           1) ПОВОРОТ: 3-дуговой симметричный K-turn — выставить курс на цель.
           2) ПРЯМАЯ: проехать distance см.
-          3) ПРОВЕРКА: если робот не дошёл (дальномер прервал движение или
-             K-turn упёрся в стену) — отъехать назад на 30 см, чтобы выйти
+          3) ПРОВЕРКА: если робот не дошел (дальномер прервал движение или
+             K-turn уперся в стену) — отъехать назад на 30 см, чтобы выйти
              из неудобного положения, и повторить с новой исходной позиции.
           Максимум 3 попытки. Каждое отклонение и попытка сообщаются оператору."""
         s = self.robot_state
@@ -1437,7 +1428,7 @@ class UserSession:
             if distance < TOL_CM:
                 if attempt > 1:
                     await self.push_message(
-                        f"✓ Дошёл до ({target_x:.0f}, {target_y:.0f}) "
+                        f"✓ Дошел до ({target_x:.0f}, {target_y:.0f}) "
                         f"с {attempt}-й попытки.", "success")
                 return
 
@@ -1446,12 +1437,12 @@ class UserSession:
             bearing = (target_heading - s.heading + 540.0) % 360.0 - 180.0
             STRAIGHT_TOL = 30.0    # ±30° считаем «почти по курсу»
 
-            # Shortcut 1: цель почти ПЕРЕД носом → едем сразу вперёд, без поворота.
+            # Shortcut 1: цель почти ПЕРЕД носом → едем сразу вперед, без поворота.
             if abs(bearing) < STRAIGHT_TOL:
                 if attempt == 1:
                     await self.push_message(
                         f"В точку ({target_x:.0f}, {target_y:.0f}): "
-                        f"цель прямо ({bearing:+.0f}°), еду вперёд {distance:.0f} см.",
+                        f"цель прямо ({bearing:+.0f}°), еду вперед {distance:.0f} см.",
                         "info")
                 await self._run_forward(distance, self.cfg.move_speed)
                 # переходим к проверке достижения ниже
@@ -1509,15 +1500,15 @@ class UserSession:
             if dist3 < TOL_CM:
                 if attempt > 1:
                     await self.push_message(
-                        f"✓ Дошёл до ({target_x:.0f}, {target_y:.0f}).", "success")
+                        f"✓ Дошел до ({target_x:.0f}, {target_y:.0f}).", "success")
                 return
 
             # Не дошли — стена/препятствие. Отъезжаем на безопасную дистанцию,
             # чтобы при следующей попытке был свободный заход с новой позиции.
             if attempt < MAX_ATTEMPTS:
                 await self.push_message(
-                    f"📍 Не дошёл до цели (отклонение {dist3:.0f} см). "
-                    f"Отъезжаю назад на {BACKOFF_CM:.0f} см и пробую ещё раз.",
+                    f"📍 Не дошел до цели (отклонение {dist3:.0f} см). "
+                    f"Отъезжаю назад на {BACKOFF_CM:.0f} см и пробую еще раз.",
                     "info")
                 await self._run_back(BACKOFF_CM, self.cfg.move_speed)
 
@@ -1542,13 +1533,13 @@ class UserSession:
     async def _k_turn_to_heading(self, target_deg: float):
         """Многошаговый разворот на месте до target_deg.
 
-        Стратегия трёх фаз — без рывков:
+        Стратегия трех фаз — без рывков:
           Фаза 1: серия коротких симметричных дуг (forward+back) с малым
                   per_arc (~10°). Чем мельче дуга, тем меньше дрейф
                   позиции за одну пару, и сумма дрейфа минимальна.
-          Фаза 2: если позиция всё-таки уехала больше чем на TOLERANCE —
+          Фаза 2: если позиция все-таки уехала больше чем на TOLERANCE —
                   пропорциональный регулятор довозит робот в исходную
-                  точку (за счёт этого курс может сбиться).
+                  точку (за счет этого курс может сбиться).
           Фаза 3: если курс сбился больше PORT_TOL — короткий доразворот
                   такими же мелкими дугами, чтобы вернуть точный курс.
         Никаких принудительных snap-ов координат."""
@@ -1580,13 +1571,13 @@ class UserSession:
             await self.push_message(
                 f"3-дуговой K-turn: α={alpha_deg:.1f}°, β={beta_deg:.1f}°, "
                 f"α={alpha_deg:.1f}° (Δh={diff:+.0f}°)", "info")
-            # Дуга 1: вперёд, рулём в нужную сторону
+            # Дуга 1: вперед, рулем в нужную сторону
             if alpha_deg > 0.5:
                 await self._arc_at_steer(direction * STEER, alpha_deg, spd)
             # Дуга 2: назад, ОБРАТНЫЙ руль (но курс продолжает крутиться
             # в ту же сторону, что и в дуге 1, благодаря смене знака v и steer)
             await self._arc_at_steer(-direction * STEER, beta_deg, spd, backward=True)
-            # Дуга 3: вперёд, тот же руль, что дуга 1
+            # Дуга 3: вперед, тот же руль, что дуга 1
             if alpha_deg > 0.5:
                 await self._arc_at_steer(direction * STEER, alpha_deg, spd)
         except asyncio.CancelledError:
@@ -1606,12 +1597,12 @@ class UserSession:
                             per_arc_deg: float = 10.0):
         """Серия коротких пар дуг (forward+back) для разворота на total_deg.
         Каждая дуга — per_arc_deg градусов курса; пары симметричны и почти
-        не двигают позицию. Знак total_deg задаёт направление вращения."""
+        не двигают позицию. Знак total_deg задает направление вращения."""
         s = self.robot_state
         if abs(total_deg) < 1.0:
             return
         direction = 1 if total_deg > 0 else -1
-        # Делим на чётное число дуг, чтобы каждая пара была симметричной
+        # Делим на четное число дуг, чтобы каждая пара была симметричной
         total_arcs = max(2, int(math.ceil(abs(total_deg) / per_arc_deg)))
         if total_arcs % 2 == 1:
             total_arcs += 1
@@ -1647,11 +1638,11 @@ class UserSession:
     async def _drive_to_point(self, tx: float, ty: float, tol_cm: float, spd: int,
                                 timeout: float = 15.0):
         """Подъезжает к (tx, ty) с допуском tol_cm. Сама выбирает направление —
-        ВПЕРЁД если цель находится впереди (в направлении носа), НАЗАД если сзади.
+        ВПЕРЕД если цель находится впереди (в направлении носа), НАЗАД если сзади.
         Это важно для финальной точной подстановки в исходную точку: если К-turn
         оставил нас слегка впереди старта, разумнее сдать назад, не разворачиваясь.
         timeout — максимальное время поездки (по умолчанию 15 с; для дальних
-        перемещений вызывающий код передаёт пропорциональное расстоянию значение)."""
+        перемещений вызывающий код передает пропорциональное расстоянию значение)."""
         s = self.robot_state
         # Выбираем направление по проекции цели на ось носа
         h_rad     = math.radians(s.heading)
@@ -1671,7 +1662,7 @@ class UserSession:
 
         loop       = asyncio.get_event_loop()
         deadline   = loop.time() + timeout
-        # Защита от перелёта мимо цели: если расстояние начало РАСТИ —
+        # Защита от перелета мимо цели: если расстояние начало РАСТИ —
         # значит проехали мимо, надо остановиться и перерасчитать.
         prev_dist  = math.hypot(dx0, dy0)
         growing_ticks = 0
@@ -1681,7 +1672,7 @@ class UserSession:
             cur_dist = math.hypot(dx, dy)
             if cur_dist < tol_cm:
                 break
-            # Защита от перелёта: расстояние растёт 4 тика подряд НА ОЩУТИМУЮ
+            # Защита от перелета: расстояние растет 4 тика подряд НА ОЩУТИМУЮ
             # величину И мы достаточно далеко от цели. Близко к цели мелкие
             # колебания дистанции из-за подруливания НЕ должны прерывать
             # доезд — иначе робот не сможет дотянуться до точки.
@@ -1706,12 +1697,12 @@ class UserSession:
             if abs(s.speed - target_speed) > 1.0:
                 s.speed = target_speed
                 await self.robot.move(int(target_speed))
-            elif s.speed == 0:                        # уперся в стену — толкнём ещё раз
+            elif s.speed == 0:                        # уперся в стену — толкнем еще раз
                 s.speed = target_speed
                 await self.robot.move(int(target_speed))
 
             if sgn > 0:
-                # ВПЕРЁД: курс должен указывать НА цель
+                # ВПЕРЕД: курс должен указывать НА цель
                 nav_h = math.degrees(math.atan2(dx, dy)) % 360
                 diff  = (nav_h - s.heading + 180) % 360 - 180
                 steer = max(-MAX, min(MAX, diff * STEER_GAIN))
@@ -1743,7 +1734,7 @@ class UserSession:
                                 radius:   Optional[float] = None,
                                 db: Session = None):
         """Поставить красную зону обстановки.
-        Если координаты не заданы — берётся текущая позиция робота
+        Если координаты не заданы — берется текущая позиция робота
         (старое поведение: «опасно прямо здесь»).
         Если заданы — зона ставится в (X, Y) БЕЗ движения робота:
         это «константа обстановки», задаваемая до запуска программы."""
@@ -1798,8 +1789,8 @@ class UserSession:
                                target_y: Optional[float] = None,
                                db: Session = None) -> int:
         """Удалить зону (любого типа), в которую попадает точка (X, Y).
-        Если координаты не заданы — берётся текущая позиция робота.
-        Возвращает число удалённых зон."""
+        Если координаты не заданы — берется текущая позиция робота.
+        Возвращает число удаленных зон."""
         s = self.robot_state
         x = float(target_x) if target_x is not None else s.x
         y = float(target_y) if target_y is not None else s.y
@@ -1821,7 +1812,7 @@ class UserSession:
     async def _run_set_algorithm_zone(self, target_x: float, target_y: float,
                                       radius: Optional[float] = None,
                                       db: Session = None):
-        """Робот доезжает до (X, Y) и помечает там жёлтую пунктирную зону —
+        """Робот доезжает до (X, Y) и помечает там желтую пунктирную зону —
         это часть алгоритма (не зона обстановки). Радиус по умолчанию из cfg."""
         s = self.robot_state
         await self.push_message(
@@ -1829,7 +1820,7 @@ class UserSession:
             "info")
         # 1) Доехать до точки
         await self._run_goto(float(target_x), float(target_y))
-        # 2) Поставить жёлтую пунктирную зону в текущей позиции робота
+        # 2) Поставить желтую пунктирную зону в текущей позиции робота
         r = float(radius) if radius is not None else float(self.cfg.danger_zone_radius)
         zone = self.world.add_danger_zone(s.x, s.y,
                                           radius=r,
@@ -1875,7 +1866,7 @@ class UserSession:
             dist  = nlu.extract_distance(raw)
             spd   = nlu.extract_speed(raw, c.move_speed)
             code  = f"forward({dist})" if dist else "forward()"
-            label = f"Вперёд {dist} см ({spd}%)" if dist else f"Вперёд ({spd}%)"
+            label = f"Вперед {dist} см ({spd}%)" if dist else f"Вперед ({spd}%)"
         elif intent == "back":
             dist  = nlu.extract_distance(raw)
             spd   = nlu.extract_speed(raw, c.move_speed)
@@ -1884,7 +1875,7 @@ class UserSession:
         elif intent == "forward_to_wall":
             spd   = nlu.extract_speed(raw, c.move_speed)
             code  = "forward_to_wall()"
-            label = f"Вперёд до упора ({spd}%)"
+            label = f"Вперед до упора ({spd}%)"
         elif intent == "backward_to_wall":
             spd   = nlu.extract_speed(raw, c.move_speed)
             code  = "backward_to_wall()"
@@ -1921,7 +1912,7 @@ class UserSession:
             side = "по часовой" if cw else "против часовой"
             code, label = "circle()", f"Круг {side}"
         elif intent == "figure_eight":
-            code, label = "figure_eight()", "Восьмёрка"
+            code, label = "figure_eight()", "Восьмерка"
         elif intent == "spiral_out":
             code, label = "spiral_out()", "Спираль наружу (3 круга)"
         elif intent == "spiral_in":
@@ -2021,49 +2012,413 @@ class UserSession:
             return None
         return RobotCmd(id=cmd_id, intent=intent, label=label, code=code, raw=raw)
 
-    def _python_code_preamble(self) -> str:
+    # Реалистичная реализация маневров через примитивы 1T REX. Эта
+    # raw-строка не подвергается %-форматированию (поэтому `% 360.0`
+    # в коде не интерпретируется как format-спецификатор).
+    # ── Реестр Python-помощников ────────────────────────────────────────
+    # Каждый помощник — самостоятельный def-блок. В преамбулу попадают
+    # только те, что нужны командам в текущей программе (плюс их зависимости).
+    # Ключи в _HELPER_DEPS должны совпадать с _HELPER_CODE; имя def внутри
+    # кода — тоже с этим ключом (для дедупа на стороне клиента).
+    _HELPER_DEPS = {
+        "duration_for_distance":  [],
+        "Odometry":               [],
+        "face_cardinal_cmd":      ["Odometry", "duration_for_distance"],
+        "goto_cmd":               ["Odometry", "duration_for_distance", "face_cardinal_cmd"],
+        "home_cmd":               ["goto_cmd"],
+        "follow_path_cmd":        ["Odometry"],
+        "forward_to_wall_cmd":    [],
+        "backward_to_wall_cmd":   [],
+        "turn_around_cmd":        [],
+        "turn_around_place_cmd":  [],
+        "circle_cmd":             [],
+        "figure_eight_cmd":       [],
+        "spiral_cmd":             [],
+        "bypass_cmd":             [],
+        "set_course_cmd":         [],
+        "mark_danger_cmd":        [],
+        "mark_danger_here_cmd":   [],
+        "set_algorithm_zone_cmd": ["goto_cmd"],
+        "remove_zone_cmd":        [],
+        "remove_zone_here_cmd":   [],
+    }
+
+    # Каждый helper — пара (русский заголовок-комментарий, код).
+    # При генерации преамбулы клиент видит обычный Python с комментарием
+    # над функцией; дедупликация на стороне клиента — по имени def/class.
+    _HELPER_CODE = {
+        "duration_for_distance": (
+            "Расчёт длительности движения для нужной дистанции",
+            r'''def duration_for_distance(distance_cm, power_pct=DEFAULT_SPEED):
+    speed_cm_s = SPEED_CM_PER_S_AT_100 * abs(power_pct) / 100.0
+    return max(0.05, distance_cm / max(1.0, speed_cm_s))
+'''),
+        "Odometry": (
+            "Класс одометрии — отслеживание (x, y, heading) робота",
+            r'''class Odometry:
+    def __init__(self, x=START_X_CM, y=START_Y_CM, heading=START_HEADING_DEG):
+        self.x = float(x); self.y = float(y); self.heading = float(heading)
+    def sync_heading(self):
+        try: self.heading = float(robot.get_angle()['Z']) % 360.0
+        except Exception: pass
+    def move_step(self, power_pct, duration_sec, steer_deg=0):
+        sign     = 1 if power_pct >= 0 else -1
+        cm_per_s = SPEED_CM_PER_S_AT_100 * abs(power_pct) / 100.0
+        dist     = cm_per_s * duration_sec
+        if steer_deg != 0:
+            steer_ratio = steer_deg / 45.0
+            d_head = (dist / WHEEL_CIRC_CM) * HEADING_DEG_PER_ROT * steer_ratio * sign
+            self.heading = (self.heading + d_head) % 360.0
+        h_rad = math.radians(self.heading)
+        self.x += sign * math.sin(h_rad) * dist
+        self.y += sign * math.cos(h_rad) * dist
+odo = Odometry()    # глобальный экземпляр одометрии
+'''),
+        "face_cardinal_cmd": (
+            "Поворот лицом к стороне света (3-дуговой K-turn)",
+            r'''def face_cardinal_cmd(target_deg, power_pct=DEFAULT_SPEED):
+    odo.sync_heading()
+    diff = (target_deg - odo.heading + 540.0) % 360.0 - 180.0
+    if abs(diff) < 3.0:
+        return
+    direction = 1 if diff > 0 else -1
+    half_rad  = math.radians(abs(diff) / 2.0)
+    s_half    = math.sin(half_rad)
+    if abs(s_half / 2.0) > 1.0:
+        return
+    beta_deg  = math.degrees(2.0 * math.asin(s_half / 2.0))
+    alpha_deg = (abs(diff) - beta_deg) / 2.0
+    steer_ratio = DEFAULT_TURN_ANGLE / 45.0
+    def arc(sweep_deg, sign):
+        arc_cm   = sweep_deg * WHEEL_CIRC_CM / (HEADING_DEG_PER_ROT * steer_ratio)
+        duration = duration_for_distance(arc_cm, power_pct)
+        steer    = direction * DEFAULT_TURN_ANGLE * (-1 if sign < 0 else 1)
+        robot.set_angle(int(steer))
+        robot.move(sign * power_pct, duration)
+        odo.move_step(sign * power_pct, duration, steer)
+    arc(alpha_deg, +1)
+    arc(beta_deg,  -1)
+    arc(alpha_deg, +1)
+    robot.stop()
+    robot.set_servo_center()
+    odo.heading = target_deg % 360.0
+'''),
+        "goto_cmd": (
+            "Перейти в точку (x, y) — поворот к цели + прямая",
+            r'''def goto_cmd(target_x, target_y, power_pct=DEFAULT_SPEED, tolerance_cm=5):
+    dx = target_x - odo.x
+    dy = target_y - odo.y
+    distance = math.hypot(dx, dy)
+    if distance < tolerance_cm:
+        return
+    target_heading = math.degrees(math.atan2(dx, dy)) % 360.0
+    bearing = (target_heading - odo.heading + 540.0) % 360.0 - 180.0
+    if abs(bearing) < 30.0:
+        robot.set_angle(0)
+        duration = duration_for_distance(distance, power_pct)
+        robot.move(power_pct, duration)
+        odo.move_step(power_pct, duration, 0)
+    elif abs(bearing) > 150.0:
+        robot.set_angle(0)
+        duration = duration_for_distance(distance, power_pct)
+        robot.move(-power_pct, duration)
+        odo.move_step(-power_pct, duration, 0)
+    else:
+        face_cardinal_cmd(target_heading, power_pct)
+        robot.set_angle(0)
+        dx2 = target_x - odo.x; dy2 = target_y - odo.y
+        d2  = math.hypot(dx2, dy2)
+        if d2 > tolerance_cm:
+            duration = duration_for_distance(d2, power_pct)
+            robot.move(power_pct, duration)
+            odo.move_step(power_pct, duration, 0)
+    robot.stop()
+'''),
+        "home_cmd": (
+            "Возврат в стартовую точку",
+            r'''def home_cmd(power_pct=DEFAULT_SPEED):
+    goto_cmd(START_X_CM, START_Y_CM, power_pct)
+'''),
+        "follow_path_cmd": (
+            "Pure-pursuit — следование за списком waypoint'ов",
+            r'''def follow_path_cmd(points, power_pct=DEFAULT_SPEED,
+                    lookahead_cm=None, tolerance_cm=5):
+    if not points or len(points) < 2: return
+    if lookahead_cm is None:
+        lookahead_cm = max(30.0, ROBOT_LENGTH_CM * 1.5)
+    gx, gy = points[-1]
+    last_idx = 0
+    robot.set_angle(0)
+    robot.move(power_pct)
+    while True:
+        odo.sync_heading()
+        if math.hypot(gx - odo.x, gy - odo.y) < tolerance_cm: break
+        best_i, best_d2 = last_idx, float('inf')
+        for i in range(last_idx, len(points)):
+            d2 = (points[i][0] - odo.x)**2 + (points[i][1] - odo.y)**2
+            if d2 < best_d2: best_d2, best_i = d2, i
+            elif d2 > best_d2 + 100: break
+        last_idx = best_i
+        target_i, accum = best_i, 0.0
+        for i in range(best_i, len(points) - 1):
+            accum += math.hypot(points[i+1][0] - points[i][0],
+                                points[i+1][1] - points[i][1])
+            if accum >= lookahead_cm:
+                target_i = i + 1; break
+        else:
+            target_i = len(points) - 1
+        tx, ty = points[target_i]
+        bearing = math.degrees(math.atan2(tx - odo.x, ty - odo.y))
+        diff = (bearing - odo.heading + 540.0) % 360.0 - 180.0
+        steer = max(-DEFAULT_TURN_ANGLE, min(DEFAULT_TURN_ANGLE, diff * 0.7))
+        robot.set_angle(int(steer))
+        odo.move_step(power_pct, 0.1, steer)
+        time.sleep(0.1)
+    robot.stop()
+    robot.set_servo_center()
+'''),
+        "forward_to_wall_cmd": (
+            "Движение вперёд до препятствия по дальномеру",
+            r'''def forward_to_wall_cmd(power_pct=DEFAULT_SPEED, stop_margin_mm=150):
+    robot.move(power_pct)
+    while True:
+        dist = robot.get_laser()
+        if dist is None or dist <= stop_margin_mm:
+            robot.stop()
+            break
+        time.sleep(0.05)
+'''),
+        "backward_to_wall_cmd": (
+            "Движение назад до препятствия по дальномеру",
+            r'''def backward_to_wall_cmd(power_pct=DEFAULT_SPEED, stop_margin_mm=150):
+    robot.move(-power_pct)
+    while True:
+        dist = robot.get_laser()
+        if dist is None or dist <= stop_margin_mm:
+            robot.stop()
+            break
+        time.sleep(0.05)
+'''),
+        "turn_around_cmd": (
+            "Разворот на 180° (одна K-turn-пара: вперёд по дуге + назад по зеркальной дуге)",
+            r'''def turn_around_cmd(direction=1, power_pct=DEFAULT_SPEED):
+    # Один K-turn-шаг: робот возвращается в исходную точку,
+    # курс развёрнут на 180°. Траектория — «петля» (teardrop).
+    robot.set_angle(direction * DEFAULT_TURN_ANGLE)    # руль в сторону разворота
+    robot.move(power_pct, 1.5)                         # вперёд по дуге
+    robot.set_angle(-direction * DEFAULT_TURN_ANGLE)   # руль в зеркальную сторону
+    robot.move(-power_pct, 1.5)                        # назад по зеркальной дуге
+    robot.stop()
+    robot.set_servo_center()
+'''),
+        "turn_around_place_cmd": (
+            "Разворот на месте (многошаговый K-turn)",
+            r'''def turn_around_place_cmd(steps, power_pct=DEFAULT_SPEED):
+    for i in range(steps):
+        robot.set_angle(DEFAULT_TURN_ANGLE)
+        robot.move(power_pct, 0.5)
+        robot.set_angle(-DEFAULT_TURN_ANGLE)
+        robot.move(-power_pct, 0.5)
+    robot.stop()
+    robot.set_servo_center()
+'''),
+        "circle_cmd": (
+            "Движение по окружности — один полный круг",
+            r'''def circle_cmd(direction=-1, power_pct=DEFAULT_SPEED, full_turn_sec=4.0):
+    robot.set_angle(direction * DEFAULT_TURN_ANGLE)
+    robot.move(power_pct, full_turn_sec)
+    robot.stop()
+    robot.set_servo_center()
+'''),
+        "figure_eight_cmd": (
+            "Движение восьмёркой — два круга в противоположные стороны",
+            r'''def figure_eight_cmd(direction=-1, power_pct=DEFAULT_SPEED, full_turn_sec=4.0):
+    robot.set_angle( direction * DEFAULT_TURN_ANGLE)
+    robot.move(power_pct, full_turn_sec)
+    robot.set_angle(-direction * DEFAULT_TURN_ANGLE)
+    robot.move(power_pct, full_turn_sec)
+    robot.stop()
+    robot.set_servo_center()
+'''),
+        "spiral_cmd": (
+            "Движение по спирали — линейная интерполяция угла руля",
+            r'''def spiral_cmd(direction=-1, power_pct=DEFAULT_SPEED,
+               steer_from=36, steer_to=24, turns=2, micro_sec=0.3):
+    total_steps = int(turns * 360 / 5)
+    for i in range(total_steps):
+        t = i / max(1, total_steps - 1)
+        steer_deg = steer_from + (steer_to - steer_from) * t
+        robot.set_angle(int(direction * steer_deg))
+        robot.move(power_pct, micro_sec)
+    robot.stop()
+    robot.set_servo_center()
+'''),
+        "bypass_cmd": (
+            "Объезд препятствия — S-волна из 4 четверть-дуг",
+            r'''def bypass_cmd(start_dir=1, max_steer=36, power_pct=DEFAULT_SPEED, quarter_sec=0.5):
+    for phase in range(4):
+        sign = start_dir if phase in (0, 3) else -start_dir
+        robot.set_angle(sign * max_steer)
+        robot.move(power_pct, quarter_sec)
+    robot.stop()
+    robot.set_servo_center()
+'''),
+        "set_course_cmd": (
+            "Выставить курс на ходу — пропорциональный регулятор",
+            r'''def set_course_cmd(target_deg, power_pct=DEFAULT_SPEED):
+    current = robot.get_angle()['Z']
+    diff = (target_deg - current + 180) % 360 - 180
+    robot.set_angle(max(-DEFAULT_TURN_ANGLE, min(DEFAULT_TURN_ANGLE, diff)))
+    robot.move(power_pct, abs(diff) / 30.0)
+    robot.stop()
+'''),
+        "mark_danger_cmd": (
+            "Отметить опасную зону по координатам",
+            r'''def mark_danger_cmd(x, y, radius):
+    pass
+'''),
+        "mark_danger_here_cmd": (
+            "Отметить опасную зону под текущей позицией робота",
+            r'''def mark_danger_here_cmd():
+    pos = robot.get_gps()
+    # отметить (pos['x'], pos['y']) на карте
+'''),
+        "set_algorithm_zone_cmd": (
+            "Доехать в точку и пометить алгоритмическую зону",
+            r'''def set_algorithm_zone_cmd(target_x, target_y, radius):
+    goto_cmd(target_x, target_y)
+    pos = robot.get_gps()
+    # отметить зону: (pos['x'], pos['y'], radius)
+'''),
+        "remove_zone_cmd": (
+            "Удалить зону любого типа по координатам",
+            r'''def remove_zone_cmd(x, y):
+    pass
+'''),
+        "remove_zone_here_cmd": (
+            "Удалить зону под текущей позицией робота",
+            r'''def remove_zone_here_cmd():
+    pos = robot.get_gps()
+    # удалить зону под (pos['x'], pos['y'])
+'''),
+    }
+
+    def _helpers_for_cmd(self, cmd) -> list[str]:
+        """Какие def-блоки нужны для генерации тела одной команды."""
+        intent = cmd.intent
+        raw    = cmd.raw
+        static = {
+            "forward_to_wall":    ["forward_to_wall_cmd"],
+            "backward_to_wall":   ["backward_to_wall_cmd"],
+            "turn_around":        ["turn_around_cmd"],
+            "turn_around_place":  ["turn_around_place_cmd"],
+            "circle":             ["circle_cmd"],
+            "figure_eight":       ["figure_eight_cmd"],
+            "spiral_in":          ["spiral_cmd"],
+            "spiral_out":         ["spiral_cmd"],
+            "bypass_right":       ["bypass_cmd"],
+            "bypass_left":        ["bypass_cmd"],
+            "set_course":         ["set_course_cmd"],
+            "home":               ["home_cmd"],
+            "face_n":             ["face_cardinal_cmd"],
+            "face_ne":            ["face_cardinal_cmd"],
+            "face_e":             ["face_cardinal_cmd"],
+            "face_se":            ["face_cardinal_cmd"],
+            "face_s":             ["face_cardinal_cmd"],
+            "face_sw":            ["face_cardinal_cmd"],
+            "face_w":             ["face_cardinal_cmd"],
+            "face_nw":            ["face_cardinal_cmd"],
+        }
+        if intent in static:
+            return list(static[intent])
+        if intent in ("forward", "back"):
+            return ["duration_for_distance"] if nlu.extract_distance(raw) else []
+        if intent == "goto":
+            return ["goto_cmd"] if nlu.extract_coordinates(raw) is not None else []
+        if intent == "mark_danger":
+            return ["mark_danger_cmd"] if nlu.extract_coordinates(raw) is not None else ["mark_danger_here_cmd"]
+        if intent == "set_algorithm_zone":
+            return ["set_algorithm_zone_cmd"] if nlu.extract_coordinates(raw) is not None else []
+        if intent == "remove_zone":
+            return ["remove_zone_cmd"] if nlu.extract_coordinates(raw) is not None else ["remove_zone_here_cmd"]
+        return []
+
+    def _collect_helpers(self, cmds) -> list[str]:
+        """Сжать список команд до плоского, топологически отсортированного
+        списка имён нужных def-блоков (с транзитивными зависимостями)."""
+        seen: list[str] = []
+        def add(name: str):
+            if name in seen:
+                return
+            for dep in self._HELPER_DEPS.get(name, []):
+                add(dep)
+            seen.append(name)
+        for cmd in cmds:
+            for h in self._helpers_for_cmd(cmd):
+                add(h)
+        return seen
+
+    def _python_constants_block(self) -> str:
         c = self.cfg
-        return ("""# Python-скрипт для реального робота
-# Предполагается, что объект `robot` уже инициализирован.
-DEFAULT_SPEED = %d
-DEFAULT_TURN_ANGLE = %d
-SPEED_CM_PER_S_AT_100 = %.1f
-LIGHT_INDEX = %d
-LIGHT_COUNT = %d
-LIGHT_DEFAULT_COLOR = %s
+        return (
+            "# Python-скрипт для 1T REX. Описание системы команд — вкладка «API 1T REX».\n"
+            "import math, time\n"
+            "\n"
+            f"DEFAULT_SPEED         = {c.move_speed}\n"
+            f"DEFAULT_TURN_ANGLE    = {c.turn_angle}\n"
+            f"SPEED_CM_PER_S_AT_100 = {c.speed_at_100:.1f}\n"
+            f"WHEEL_CIRC_CM         = {c.wheel_circ_cm:.2f}\n"
+            f"HEADING_DEG_PER_ROT   = {c.heading_per_rot:.2f}\n"
+            f"WALL_THICKNESS_CM     = {c.wall_thickness_cm:.1f}\n"
+            f"ROBOT_LENGTH_CM       = {c.robot_length_cm:.1f}\n"
+            f"ROBOT_WIDTH_CM        = {c.robot_width_cm:.1f}\n"
+            "\n"
+            f"LIGHT_INDEX           = {LIGHT_INDEX}\n"
+            f"LIGHT_COUNT           = {LIGHT_COUNT}\n"
+            f"LIGHT_DEFAULT_COLOR   = {LIGHT_DEFAULT_COLOR}\n"
+            "\n"
+            "# Стартовая точка робота — используется как «домой» и для сброса одометрии.\n"
+            f"START_X_CM            = {c.start_x_cm:.1f}\n"
+            f"START_Y_CM            = {c.start_y_cm:.1f}\n"
+            f"START_HEADING_DEG     = {c.start_heading_deg:.1f}\n"
+        )
 
-# Стартовая точка робота на поле (используется при сбросе/калибровке).
-START_X_CM = %.1f
-START_Y_CM = %.1f
-START_HEADING_DEG = %.1f
-
-
-def duration_for_distance(distance_cm, power_pct=DEFAULT_SPEED):
-    speed_cm_s = SPEED_CM_PER_S_AT_100 * power_pct / 100.0
-    return max(0.1, distance_cm / speed_cm_s)
-
-
-def report_position():
-    return robot.get_angle()["Z"]
-
-
-# === НАЧАЛО ПРОГРАММЫ ===
-""" % (c.move_speed, c.turn_angle, c.speed_at_100,
-       LIGHT_INDEX, LIGHT_COUNT, str(LIGHT_DEFAULT_COLOR),
-       c.start_x_cm, c.start_y_cm, c.start_heading_deg))
+    def _python_code_preamble(self, cmds=None) -> str:
+        """Преамбула: константы → сентинель → нужные def-блоки.
+        Сентинель идёт до helpers, чтобы клиентский appendPythonCode
+        (который берёт только текст ПОСЛЕ сентинеля) видел def-блоки
+        в «теле» каждой команды и мог их дедупить по имени def/class.
+        Над каждой функцией — короткий русский комментарий.
+        cmds=None — без helpers (пустая программа); cmds=[..] — для них."""
+        out  = self._python_constants_block()
+        out += "\n# === НАЧАЛО ПРОГРАММЫ ===\n"
+        if cmds:
+            for name in self._collect_helpers(cmds):
+                description, code = self._HELPER_CODE[name]
+                code = code.strip("\n")
+                out += f"\n# {description}\n{code}\n"
+        return out
 
     def _python_code_for_cmd(self, cmd: RobotCmd) -> tuple[str, str]:
+        """Полный Python-код одной команды для отправки клиенту:
+        константы → сентинель → нужные def-блоки → строки вызова."""
+        description = cmd.label
+        body = "\n".join(self._python_call_lines_for_cmd(cmd))
+        full = self._python_code_preamble([cmd]) + body
+        return description, full
+
+    def _python_call_lines_for_cmd(self, cmd: RobotCmd) -> list[str]:
+        """Только строки вызова команды (без преамбулы и def).
+        Парсер программы (на «Запуск») распознаёт каждый вызов вида
+        `circle_cmd(args)` / `forward(args)` напрямую — отдельный маркер
+        `# CMD: ...` больше не генерируется (он лишь дублировал вызов)."""
         raw = cmd.raw
         intent = cmd.intent
         c = self.cfg
         default_speed = c.move_speed
         dist = nlu.extract_distance(raw)
         cur_steer = int(self.robot_state.steer)
-        # Маркер `# CMD: <dsl>` — единственный источник правды для парсера на «Запуск».
-        # Тело ниже — для глаз пользователя и копирования в реальный робот.
-        code_lines = [self._python_code_preamble(),
-                      f"# CMD: {cmd.code}      — {cmd.label}"]
-        description = ""
+        code_lines: list[str] = []
 
         def steer(angle_expr: str) -> str: return f"robot.set_angle({angle_expr})"
         def move(power: str, dur: str) -> str: return f"robot.move({power}, {dur})"
@@ -2071,384 +2426,167 @@ def report_position():
         def light(c_expr: str) -> str: return f"robot.set_rgb(LIGHT_INDEX, {c_expr}, LIGHT_COUNT)"
 
         if intent == "forward":
-            description = "Ехать вперед."
             if dist:
-                code_lines += [steer(str(cur_steer)),
-                               move(str(default_speed), f"duration_for_distance({dist}, {default_speed})"),
-                               stop()]
+                code_lines += [
+                    f"{steer(str(cur_steer))}                      # руль текущий ({cur_steer}°)",
+                    f"{move(str(default_speed), f'duration_for_distance({dist}, {default_speed})')}  # вперёд {dist} см",
+                    f"{stop()}                            # остановка",
+                ]
             else:
-                code_lines += [steer(str(cur_steer)),
-                               move(str(default_speed), "1.0")]
+                code_lines += [
+                    f"{steer(str(cur_steer))}                      # руль текущий ({cur_steer}°)",
+                    f"{move(str(default_speed), '1.0')}                # вперёд 1 секунду",
+                ]
         elif intent == "back":
-            description = "Движение назад."
             if dist:
-                code_lines += [steer(str(cur_steer)),
-                               move(f"-{default_speed}", f"duration_for_distance({dist}, {default_speed})"),
-                               stop()]
+                code_lines += [
+                    f"{steer(str(cur_steer))}                      # руль текущий ({cur_steer}°)",
+                    f"{move(f'-{default_speed}', f'duration_for_distance({dist}, {default_speed})')}  # назад {dist} см",
+                    f"{stop()}                            # остановка",
+                ]
             else:
-                code_lines += [steer(str(cur_steer)),
-                               move(f"-{default_speed}", "1.0")]
+                code_lines += [
+                    f"{steer(str(cur_steer))}                      # руль текущий ({cur_steer}°)",
+                    f"{move(f'-{default_speed}', '1.0')}               # назад 1 секунду",
+                ]
         elif intent == "forward_to_wall":
-            description = "Двигаться вперед до стены, используя дальномер."
-            code_lines += [
-                "def cmd_forward_to_wall(power_pct=DEFAULT_SPEED, stop_margin_mm=150):",
-                "    \"\"\"Ехать вперед до препятствия по дальномеру.\"\"\"",
-                "    import time",
-                "    robot.move(power_pct)",
-                "    while True:",
-                "        dist = robot.get_laser()",
-                "        if dist is None or dist <= stop_margin_mm:",
-                "            robot.stop()",
-                "            break",
-                "        time.sleep(0.05)",
-                "",
-                steer(str(cur_steer)),
-                f"cmd_forward_to_wall({default_speed})",
-            ]
+            code_lines += [steer(str(cur_steer)),
+                           f"forward_to_wall_cmd({default_speed})  # вперёд до стены"]
         elif intent == "backward_to_wall":
-            description = "Двигаться назад до стены, используя дальномер."
-            code_lines += [
-                "def cmd_backward_to_wall(power_pct=DEFAULT_SPEED, stop_margin_mm=150):",
-                "    \"\"\"Ехать назад до препятствия по дальномеру.\"\"\"",
-                "    import time",
-                "    robot.move(-power_pct)",
-                "    while True:",
-                "        dist = robot.get_laser()",
-                "        if dist is None or dist <= stop_margin_mm:",
-                "            robot.stop()",
-                "            break",
-                "        time.sleep(0.05)",
-                "",
-                steer(str(cur_steer)),
-                f"cmd_backward_to_wall({default_speed})",
-            ]
+            code_lines += [steer(str(cur_steer)),
+                           f"backward_to_wall_cmd({default_speed})  # назад до стены"]
         elif intent == "brake":
-            description = "Тормоз — немедленная остановка."
-            code_lines += ["# Немедленная остановка ровера.", stop()]
+            code_lines += [f"{stop()}  # тормоз"]
         elif intent == "stop":
-            description = "Стоп — немедленная остановка."
-            code_lines += ["# Остановить ровера сразу.", stop()]
+            code_lines += [f"{stop()}  # остановка"]
         elif intent in ("steer_right", "steer_left", "steer_right_small", "steer_left_small"):
-            description = "Поворот руля."
             steer_delta = nlu.extract_angle(raw) or (nlu.SMALL_STEER_DEG if intent.endswith("small") else c.turn_angle)
             if intent in ("steer_left", "steer_left_small"):
                 steer_delta = -steer_delta
-            code_lines += [steer(str(steer_delta))]
+            side = "налево" if steer_delta < 0 else "направо"
+            code_lines += [f"{steer(str(steer_delta))}  # руль {side} на {abs(steer_delta):g}°"]
         elif intent == "steer_center":
-            description = "Выпрямить руль."
-            code_lines += ["# Установить руль прямо.", "robot.set_angle(0)"]
+            code_lines += ["robot.set_angle(0)  # руль прямо"]
         elif intent == "set_speed":
             spd = nlu.extract_speed(raw, default_speed)
-            description = "Изменить скорость движения."
-            code_lines += [f"# Установить скорость по умолчанию на {spd}%.",
-                           f"DEFAULT_SPEED = {spd}"]
+            code_lines += [f"DEFAULT_SPEED = {spd}  # установить скорость по умолчанию"]
         elif intent == "turn_around":
-            description = "Разворот робота на 180° по дуге."
             direction = -1 if "налево" in nlu.norm(raw) or "влево" in nlu.norm(raw) or "против" in nlu.norm(raw) else 1
-            code_lines += [
-                "def cmd_turn_around(direction=1, power_pct=DEFAULT_SPEED):",
-                "    \"\"\"Повернуть ровера на 180° по дуге.\"\"\"",
-                "    " + steer("direction * DEFAULT_TURN_ANGLE"),
-                "    " + move("power_pct", "1.5"),
-                "    " + stop(),
-                "",
-                f"cmd_turn_around({direction})",
-            ]
+            side = "налево" if direction < 0 else "направо"
+            code_lines += [f"turn_around_cmd({direction})  # разворот на 180° {side}"]
         elif intent == "turn_around_place":
             steps = nlu.extract_kturn_steps(raw)
-            description = f"Разворот на месте за {steps} шагов."
-            code_lines += [
-                "def cmd_turn_around_place(steps, power_pct=DEFAULT_SPEED):",
-                "    \"\"\"Выполнить разворот на месте.\"\"\"",
-                "    for i in range(steps):",
-                "        " + steer("DEFAULT_TURN_ANGLE"),
-                "        " + move("power_pct", "0.5"),
-                "        " + steer("-DEFAULT_TURN_ANGLE"),
-                "        " + move("-power_pct", "0.5"),
-                "    " + stop(),
-                "",
-                f"cmd_turn_around_place({steps})",
-            ]
+            code_lines += [f"turn_around_place_cmd({steps})  # разворот на месте за {steps} шагов"]
         elif intent == "circle":
             n = nlu.norm(raw)
             direction = +1 if any(w in n for w in ("направо", "вправо", "по часовой")) else -1
-            description = "Один полный круг (2π) против часовой стрелки по умолчанию."
-            code_lines += [
-                "def cmd_circle(direction=-1, power_pct=DEFAULT_SPEED, full_turn_sec=4.0):",
-                "    \"\"\"Один полный круг при максимальном угле руля.",
-                "    direction=-1 — против часовой стрелки (math: 0→2π).",
-                "    direction=+1 — по часовой.\"\"\"",
-                "    " + steer("direction * DEFAULT_TURN_ANGLE"),
-                "    " + move("power_pct", "full_turn_sec"),
-                "    " + stop(),
-                "",
-                f"cmd_circle({direction})",
-            ]
+            side = "по часовой" if direction > 0 else "против часовой"
+            code_lines += [f"circle_cmd({direction})  # окружность {side}"]
         elif intent == "figure_eight":
             n = nlu.norm(raw)
             direction = +1 if any(w in n for w in ("направо", "вправо", "по часовой")) else -1
-            description = "Восьмёрка: первый круг против часовой, второй по часовой."
-            code_lines += [
-                "def cmd_figure_eight(direction=-1, power_pct=DEFAULT_SPEED, full_turn_sec=4.0):",
-                "    \"\"\"Движение восьмёркой.\"\"\"",
-                "    " + steer("direction * DEFAULT_TURN_ANGLE"),
-                "    " + move("power_pct", "full_turn_sec"),
-                "    " + steer("-direction * DEFAULT_TURN_ANGLE"),
-                "    " + move("power_pct", "full_turn_sec"),
-                "    " + stop(),
-                "",
-                f"cmd_figure_eight({direction})",
-            ]
+            side = "первый круг по часовой" if direction > 0 else "первый круг против часовой"
+            code_lines += [f"figure_eight_cmd({direction})  # восьмёрка ({side})"]
         elif intent == "spiral_out":
             n = nlu.norm(raw)
             direction = +1 if any(w in n for w in ("направо", "вправо", "по часовой")) else -1
-            description = "Плавная спираль наружу: руль непрерывно меняется 36°→24° за 2 оборота, радиус растёт."
-            code_lines += [
-                "def cmd_spiral(direction=-1, power_pct=DEFAULT_SPEED,",
-                "               steer_from=36, steer_to=24, turns=2, micro_sec=0.3):",
-                "    \"\"\"Плавная спираль: руль меняется непрерывно во время движения.",
-                "    На реальном роботе разбиваем на короткие шаги по micro_sec секунд,",
-                "    чтобы успевать корректировать угол поворота колёс.\"\"\"",
-                "    total_steps = int(turns * 360 / 5)   # ~5° курса на шаг",
-                "    for i in range(total_steps):",
-                "        t = i / max(1, total_steps - 1)",
-                "        steer_deg = steer_from + (steer_to - steer_from) * t",
-                "        " + steer("int(direction * steer_deg)"),
-                "        " + move("power_pct", "micro_sec"),
-                "    " + stop(),
-                "",
-                f"cmd_spiral(direction={direction}, steer_from=36, steer_to=24)",
-            ]
+            side = "по часовой" if direction > 0 else "против часовой"
+            code_lines += [f"spiral_cmd(direction={direction}, steer_from=36, steer_to=24)  # спираль наружу, {side}"]
         elif intent == "spiral_in":
             n = nlu.norm(raw)
             direction = +1 if any(w in n for w in ("направо", "вправо", "по часовой")) else -1
-            description = "Плавная спираль внутрь: руль непрерывно меняется 24°→36° за 2 оборота, радиус сужается."
-            code_lines += [
-                "def cmd_spiral(direction=-1, power_pct=DEFAULT_SPEED,",
-                "               steer_from=24, steer_to=36, turns=2, micro_sec=0.3):",
-                "    \"\"\"Плавная спираль: руль меняется непрерывно во время движения.\"\"\"",
-                "    total_steps = int(turns * 360 / 5)",
-                "    for i in range(total_steps):",
-                "        t = i / max(1, total_steps - 1)",
-                "        steer_deg = steer_from + (steer_to - steer_from) * t",
-                "        " + steer("int(direction * steer_deg)"),
-                "        " + move("power_pct", "micro_sec"),
-                "    " + stop(),
-                "",
-                f"cmd_spiral(direction={direction}, steer_from=24, steer_to=36)",
-            ]
+            side = "по часовой" if direction > 0 else "против часовой"
+            code_lines += [f"spiral_cmd(direction={direction}, steer_from=24, steer_to=36)  # спираль внутрь, {side}"]
         elif intent in ("bypass_right", "bypass_left"):
             start_dir = +1 if intent == "bypass_right" else -1
-            side      = "справа" if start_dir > 0 else "слева"
-            description = f"Объезд препятствия {side}: одна S-волна на 2π, руль ±36°. Робот возвращается на исходную линию."
-            code_lines += [
-                "def cmd_bypass(start_dir=1, max_steer=36, power_pct=DEFAULT_SPEED, quarter_sec=0.5):",
-                "    \"\"\"Объезд препятствия: 4 четверти-дуги, каждая по quarter_sec.",
-                "    start_dir=+1 — объезд справа (сначала вправо, потом возврат).",
-                "    start_dir=-1 — объезд слева.\"\"\"",
-                "    for phase in range(4):",
-                "        sign = start_dir if phase in (0, 3) else -start_dir",
-                "        " + steer("sign * max_steer"),
-                "        " + move("power_pct", "quarter_sec"),
-                "    " + stop(),
-                "",
-                f"cmd_bypass(start_dir={start_dir})",
-            ]
+            side = "справа" if start_dir > 0 else "слева"
+            code_lines += [f"bypass_cmd(start_dir={start_dir})  # объезд препятствия {side}"]
         elif intent == "goto":
             xy = nlu.extract_coordinates(raw)
-            description = "Перейти в точку (X, Y) — поворот к цели + прямая дуга."
             if xy is None:
-                code_lines += ["# goto: координаты не указаны"]
+                code_lines += ["# координаты не указаны"]
             else:
                 tx, ty = xy
-                code_lines += [
-                    "def cmd_goto(target_x, target_y, power_pct=DEFAULT_SPEED):",
-                    "    \"\"\"Развернуться лицом к цели и доехать прямой.",
-                    "    Требуется внешняя одометрия для отслеживания (x, y, heading).\"\"\"",
-                    "    import math",
-                    "    # current_x, current_y, current_heading = ...  # из одометрии",
-                    "    # dx, dy = target_x - current_x, target_y - current_y",
-                    "    # distance = math.hypot(dx, dy)",
-                    "    # target_heading = math.degrees(math.atan2(dx, dy)) % 360",
-                    "    # ... повернуться, проехать distance см",
-                    "    " + stop(),
-                    "",
-                    f"cmd_goto({tx:g}, {ty:g})",
-                ]
+                code_lines += [f"goto_cmd({tx:g}, {ty:g})  # перейти в точку ({tx:g}, {ty:g})"]
         elif intent == "home":
-            description = "Возврат в стартовую точку поля."
-            code_lines += [
-                "def cmd_home(power_pct=DEFAULT_SPEED):",
-                "    \"\"\"То же что cmd_goto, только координаты — из стартовых настроек.\"\"\"",
-                "    cmd_goto(START_X_CM, START_Y_CM, power_pct)",
-                "",
-                "cmd_home()",
-            ]
+            code_lines += ["home_cmd()  # вернуться в стартовую точку"]
         elif intent in ("face_n", "face_ne", "face_e", "face_se",
                          "face_s", "face_sw", "face_w", "face_nw"):
             cardinal_deg = {"face_n":0, "face_ne":45, "face_e":90, "face_se":135,
                              "face_s":180, "face_sw":225, "face_w":270, "face_nw":315}
-            cardinal_lbl = {"face_n":"С", "face_ne":"СВ", "face_e":"В", "face_se":"ЮВ",
-                             "face_s":"Ю", "face_sw":"ЮЗ", "face_w":"З", "face_nw":"СЗ"}
+            cardinal_lbl = {"face_n":"на север",      "face_ne":"на северо-восток",
+                            "face_e":"на восток",     "face_se":"на юго-восток",
+                            "face_s":"на юг",         "face_sw":"на юго-запад",
+                            "face_w":"на запад",      "face_nw":"на северо-запад"}
             tgt = cardinal_deg[intent]
             lbl = cardinal_lbl[intent]
-            description = f"Развернуться лицом к стороне света {lbl} ({tgt}°) на месте."
-            code_lines += [
-                "def cmd_face_cardinal(target_deg, power_pct=DEFAULT_SPEED):",
-                "    \"\"\"Развернуться лицом к указанному курсу через K-turn на месте.",
-                "    Шагов берём пропорционально углу поворота (~60° за шаг).\"\"\"",
-                "    # current_heading = ... (из одометрии)",
-                "    # diff = (target_deg - current_heading + 540) % 360 - 180",
-                "    # direction = 1 if diff > 0 else -1",
-                "    # steps = max(1, round(abs(diff) / 60))",
-                "    # for _ in range(steps):",
-                "    #     " + steer("direction * DEFAULT_TURN_ANGLE"),
-                "    #     " + move("power_pct", "0.5"),
-                "    #     " + steer("-direction * DEFAULT_TURN_ANGLE"),
-                "    #     " + move("-power_pct", "0.5"),
-                "    " + stop(),
-                "",
-                f"cmd_face_cardinal({tgt})  # {lbl}",
-            ]
+            code_lines += [f"face_cardinal_cmd({tgt})  # {lbl}"]
         elif intent == "set_course":
             target = nlu.extract_course(raw)
-            description = "Выставить курс робота."
             if target is None:
-                code_lines += ["# Курс не распознан"]
+                code_lines += ["# курс не распознан"]
             else:
-                code_lines += [
-                    "def cmd_set_course(target_deg):",
-                    "    current = robot.get_angle()['Z']",
-                    "    diff = (target_deg - current + 180) % 360 - 180",
-                    "    " + steer("max(-DEFAULT_TURN_ANGLE, min(DEFAULT_TURN_ANGLE, diff))"),
-                    "    " + move("DEFAULT_SPEED", "abs(diff) / 30.0"),
-                    "    " + stop(),
-                    "",
-                    f"cmd_set_course({target})",
-                ]
+                code_lines += [f"set_course_cmd({target})  # выставить курс {target}°"]
         elif intent == "mark_danger":
             xy = nlu.extract_coordinates(raw)
             r  = nlu.extract_radius(raw)
-            description = ("Отметка красной зоны обстановки. "
-                           "Если указаны координаты — без движения робота.")
             if xy is None:
-                code_lines += [
-                    "def cmd_mark_danger_here():",
-                    "    \"\"\"Отметить опасную зону под текущей позицией робота.\"\"\"",
-                    "    pos = robot.get_gps()",
-                    "    # отметить (pos['x'], pos['y']) на карте обстановки",
-                    "",
-                    "cmd_mark_danger_here()",
-                ]
+                code_lines += ["mark_danger_here_cmd()  # отметить опасную зону здесь"]
             else:
                 tx, ty = xy
                 radius_arg = f"{r:g}" if r is not None else f"{c.danger_zone_radius:g}"
-                code_lines += [
-                    "def cmd_mark_danger(x, y, radius):",
-                    "    \"\"\"Внести зону обстановки в карту по координатам, без движения.\"\"\"",
-                    "    # карта.add_danger_zone(x, y, radius)",
-                    "    pass",
-                    "",
-                    f"cmd_mark_danger({tx:g}, {ty:g}, {radius_arg})",
-                ]
+                code_lines += [f"mark_danger_cmd({tx:g}, {ty:g}, {radius_arg})  # опасная зона в ({tx:g}, {ty:g})"]
         elif intent == "pause":
             secs = nlu.extract_pause_seconds(raw)
-            description = f"Пауза {secs:g} секунд — робот стоит на месте."
             code_lines += [
-                "import time",
-                "robot.stop()",
-                f"time.sleep({secs:g})",
+                "robot.stop()                      # пауза начало",
+                f"time.sleep({secs:g})                  # подождать {secs:g} с",
             ]
         elif intent == "set_algorithm_zone":
             xy = nlu.extract_coordinates(raw)
             r  = nlu.extract_radius(raw)
-            description = ("Перейти в (X, Y) и пометить алгоритмическую зону "
-                           "(жёлтая пунктирная — часть алгоритма, не обстановки).")
             if xy is None:
-                code_lines += ["# set_algorithm_zone: координаты не указаны"]
+                code_lines += ["# координаты не указаны"]
             else:
                 tx, ty = xy
                 radius_arg = f"{r:g}" if r is not None else f"{c.danger_zone_radius:g}"
-                code_lines += [
-                    "def cmd_set_algorithm_zone(target_x, target_y, radius):",
-                    "    \"\"\"Доехать до точки и пометить там алгоритмическую зону.",
-                    "    На реальном роботе зона помечается во внешнем",
-                    "    приложении/карте по координатам одометрии.\"\"\"",
-                    "    cmd_goto(target_x, target_y)",
-                    "    pos = robot.get_gps()",
-                    "    # отметить зону: (pos['x'], pos['y'], radius)",
-                    "",
-                    f"cmd_set_algorithm_zone({tx:g}, {ty:g}, {radius_arg})",
-                ]
+                code_lines += [f"set_algorithm_zone_cmd({tx:g}, {ty:g}, {radius_arg})  # доехать в ({tx:g}, {ty:g}) и пометить алгоритмическую зону"]
         elif intent == "remove_zone":
             xy = nlu.extract_coordinates(raw)
-            description = ("Удалить зоны (любого типа), в которые попадает точка. "
-                           "Без координат — берётся текущая позиция робота.")
             if xy is None:
-                code_lines += [
-                    "def cmd_remove_zone_here():",
-                    "    \"\"\"Снять отметку зоны под текущей позицией.\"\"\"",
-                    "    pos = robot.get_gps()",
-                    "    # удалить зону, содержащую (pos['x'], pos['y'])",
-                    "",
-                    "cmd_remove_zone_here()",
-                ]
+                code_lines += ["remove_zone_here_cmd()  # удалить зону под роботом"]
             else:
                 tx, ty = xy
-                code_lines += [
-                    "def cmd_remove_zone(x, y):",
-                    "    \"\"\"Снять любую зону, в которую попадает точка (x, y).\"\"\"",
-                    "    # удалить зону, содержащую (x, y)",
-                    "    pass",
-                    "",
-                    f"cmd_remove_zone({tx:g}, {ty:g})",
-                ]
+                code_lines += [f"remove_zone_cmd({tx:g}, {ty:g})  # удалить зону, накрывающую ({tx:g}, {ty:g})"]
         elif intent == "mode_inspector":
-            description = "Режим инспектор."
-            code_lines += ["# Режим инспектора: нет прямой команды."]
+            code_lines += ["# режим «инспектор» — интерфейсный, нет команды робота"]
         elif intent == "mode_cautious":
-            description = "Режим осторожности."
-            code_lines += ["# Режим осторожности: нет прямой команды."]
+            code_lines += ["# режим «осторожно» — интерфейсный, нет команды робота"]
         elif intent == "path_show":
-            description = "Показать путь."
-            code_lines += ["# Показать путь на карте (интерфейсное)."]
+            code_lines += ["# показать путь — интерфейсное"]
         elif intent == "path_hide":
-            description = "Скрыть путь."
-            code_lines += ["# Скрыть путь на карте (интерфейсное)."]
+            code_lines += ["# скрыть путь — интерфейсное"]
         elif intent == "reset":
-            description = "Сброс поля."
-            code_lines += ["# Сбросить состояние и остановить.", stop()]
+            code_lines += [f"{stop()}  # сброс — остановка"]
         elif intent == "report_pos":
-            description = "Текущая позиция."
-            code_lines += ["# Показать координаты и курс.", "report_position()"]
+            code_lines += ["report_position()  # вывести текущие координаты и курс"]
         elif intent == "report_status":
-            description = "Полный статус робота."
-            code_lines += [
-                "# Полный статус: позиция, курс, скорость, руль, режим, дальномер, заряд.",
-                "report_full_status()",
-            ]
+            code_lines += ["report_full_status()  # полный статус: позиция, скорость, режим, заряд"]
         elif intent == "light_on":
-            description = "Включить свет."
-            code_lines += ["# Включить световой индикатор.", light("LIGHT_DEFAULT_COLOR")]
+            code_lines += [f"{light('LIGHT_DEFAULT_COLOR')}  # включить световой индикатор"]
         elif intent == "light_off":
-            description = "Выключить свет."
-            code_lines += ["# Выключить световой индикатор.", light("(0, 0, 0)")]
+            code_lines += [f"{light('(0, 0, 0)')}  # выключить световой индикатор"]
         elif intent == "light_color":
-            description = "Цвет светового индикатора."
             color = nlu.extract_color(raw) or LIGHT_DEFAULT_COLOR
-            code_lines += ["# Установить цвет.", light(str(color))]
+            code_lines += [f"{light(str(color))}  # цвет индикатора {color}"]
         elif intent == "recharge":
-            description = "Зарядить батарею до 100% (для симулятора — мгновенно)."
             code_lines += [
-                "# В симуляторе зарядка мгновенная.",
-                "# Для реального робота — здесь должен быть свой протокол:",
-                "# например, ожидание подключения зарядного устройства.",
+                "# зарядка батареи (в симуляторе — мгновенно):",
                 "# robot.wait_for_charge(target_pct=100)",
             ]
         else:
-            description = "Код для команды не сгенерирован."
-            code_lines += ["# Нет шаблона"]
-        return description, "\n".join(code_lines)
+            code_lines += ["# нет шаблона"]
+        return code_lines
 
     # ── Выполнение одной команды ─────────────────────────────────────────────
 
@@ -2464,7 +2602,7 @@ def report_position():
             dist = nlu.extract_distance(raw)
             spd  = nlu.extract_speed(raw, c.move_speed)
             await self._run_forward(dist, spd)
-            msg = f"Вперёд {dist} см, {spd}%." if dist else f"Вперёд, {spd}%."
+            msg = f"Вперед {dist} см, {spd}%." if dist else f"Вперед, {spd}%."
         elif intent == "back":
             dist = nlu.extract_distance(raw)
             spd  = nlu.extract_speed(raw, c.move_speed)
@@ -2513,25 +2651,25 @@ def report_position():
             direction = -1 if any(w in n for w in ("налево", "влево", "против")) else 1
             side = "влево" if direction == -1 else "вправо"
             await self._k_turn_n(direction, steps=1)
-            msg = f"Разворот {side} завершён."
+            msg = f"Разворот {side} завершен."
         elif intent == "turn_around_place":
             n = nlu.norm(raw)
             direction = -1 if any(w in n for w in ("налево", "влево", "против")) else 1
             steps = nlu.extract_kturn_steps(raw)
             await self._k_turn_n(direction, steps)
-            msg = "Разворот на месте завершён."
+            msg = "Разворот на месте завершен."
         elif intent == "circle":
             # По умолчанию CCW (против часовой, мат. направление 0→2π).
             # Только если явно сказано «направо/вправо/по часовой» — CW.
             n = nlu.norm(raw)
             direction = +1 if any(w in n for w in ("направо", "вправо", "по часовой")) else -1
             await self._run_circle(direction)
-            msg = "Круг завершён (" + ("по часовой" if direction > 0 else "против часовой") + ")."
+            msg = "Круг завершен (" + ("по часовой" if direction > 0 else "против часовой") + ")."
         elif intent == "figure_eight":
             n = nlu.norm(raw)
             direction = +1 if any(w in n for w in ("направо", "вправо", "по часовой")) else -1
             await self._run_figure_eight(direction)
-            msg = "Восьмёрка завершена."
+            msg = "Восьмерка завершена."
         elif intent == "spiral_out":
             n = nlu.norm(raw)
             direction = +1 if any(w in n for w in ("направо", "вправо", "по часовой")) else -1
@@ -2544,10 +2682,10 @@ def report_position():
             msg = "Спираль внутрь завершена."
         elif intent == "bypass_right":
             await self._run_bypass(start_dir=+1)
-            msg = "Объезд справа завершён."
+            msg = "Объезд справа завершен."
         elif intent == "bypass_left":
             await self._run_bypass(start_dir=-1)
-            msg = "Объезд слева завершён."
+            msg = "Объезд слева завершен."
         elif intent == "goto":
             xy = nlu.extract_coordinates(raw)
             if xy is None:
@@ -2558,7 +2696,7 @@ def report_position():
                 msg = f"Прибыл в окрестность ({tx:.0f}, {ty:.0f})."
         elif intent == "home":
             await self._run_home()
-            msg = "🏠 Возврат в стартовую точку завершён."
+            msg = "🏠 Возврат в стартовую точку завершен."
         elif intent == "face_n":
             await self._run_face_cardinal(0,   "северу"); msg = "Лицом на север."
         elif intent == "face_ne":
@@ -2771,37 +2909,43 @@ def report_position():
 
     # ── Парсинг textarea (DSL) и запуск ──────────────────────────────────────
 
-    _DSL_LINE   = re.compile(r'^\s*([a-z_]+)\s*\(\s*([^)]*)\s*\)\s*$')
-    _CMD_MARKER = re.compile(r'^\s*#\s*CMD\s*:\s*([a-z_]+)\s*\(\s*([^)]*)\s*\)')
+    _DSL_LINE = re.compile(r'^\s*([a-z_]+)\s*\(\s*([^)]*)\s*\)\s*$')
 
     @staticmethod
     def _parse_dsl_line(fn: str, args: str) -> Optional[tuple[str, str]]:
         """Преобразует вызов DSL в (intent, raw_text для NLU). None если неизвестен.
 
         Принимает как короткую форму DSL (`forward(100)`, `mark_danger(0,0,10)`),
-        так и Python-инвокации тел `cmd_X(args)` / `cmd_X_here()`, которые
-        генерируются для реального робота. Это позволяет редактировать тело
-        кода в textarea (копировать `cmd_mark_danger(...)` с новыми
-        координатами) и видеть изменения после «▶ Запуск»."""
-        # ── Нормализация имени: cmd_X → X, cmd_X_here → X (без аргументов).
-        if fn.startswith("cmd_"):
+        так и Python-инвокации тел `X_cmd(args)` / `X_here_cmd()`, которые
+        генерируются для реального робота. Также поддерживает старый префиксный
+        формат `cmd_X(args)` для обратной совместимости (импорт старых
+        сохранённых программ)."""
+        # ── Нормализация имени:
+        #   X_here_cmd  → X (без аргументов, _here → берём текущую позицию)
+        #   X_cmd       → X
+        #   cmd_X       → X (legacy)
+        #   X_here      → X (без аргументов)
+        #   X           → X
+        if fn.endswith("_cmd"):
+            fn = fn[:-4]
+        elif fn.startswith("cmd_"):
             fn = fn[4:]
-            if fn.endswith("_here"):
-                fn = fn[:-5]
-                args = ""    # _here-варианты вызываются без координат
+        if fn.endswith("_here"):
+            fn = fn[:-5]
+            args = ""    # _here-варианты вызываются без координат
         args = args.strip()
         if fn == "reset":            return ("reset", "Вега новое поле")
         if fn == "brake":            return ("brake", "Вега тормоз")
         if fn == "stop":             return ("stop",  "Вега стоп")
         if fn == "forward":
             if args.lstrip("+-").isdigit():
-                return ("forward", f"Вега вперёд {int(args)} см")
-            return ("forward", "Вега вперёд")
+                return ("forward", f"Вега вперед {int(args)} см")
+            return ("forward", "Вега вперед")
         if fn == "back":
             if args.lstrip("+-").isdigit():
                 return ("back", f"Вега назад {int(args)} см")
             return ("back", "Вега назад")
-        if fn == "forward_to_wall":  return ("forward_to_wall", "Вега вперёд до упора")
+        if fn == "forward_to_wall":  return ("forward_to_wall", "Вега вперед до упора")
         if fn == "backward_to_wall": return ("backward_to_wall", "Вега назад до упора")
         if fn == "steer":
             if args.lstrip("+-").isdigit():
@@ -2819,7 +2963,7 @@ def report_position():
             steps = int(args) if args.isdigit() else 3
             return ("turn_around_place", f"Вега разворот на месте {steps} шагов")
         if fn == "circle":           return ("circle", "Вега вокруг")
-        if fn == "figure_eight":     return ("figure_eight", "Вега восьмёрка")
+        if fn == "figure_eight":     return ("figure_eight", "Вега восьмерка")
         if fn == "spiral_out":       return ("spiral_out", "Вега спираль наружу")
         if fn == "spiral_in":        return ("spiral_in", "Вега спираль внутрь")
         if fn == "bypass_right":     return ("bypass_right", "Вега объезд справа")
@@ -2907,69 +3051,36 @@ def report_position():
             return None
         return None
 
-    @staticmethod
-    def _norm_args(s: str) -> str:
-        """Нормализует строку аргументов для сравнения (убирает пробелы)."""
-        return re.sub(r'\s+', '', s)
-
     def _parse_program_text(self, text: str) -> list[RobotCmd]:
         """Парсит команды из textarea.
-        Распознаёт три формата (в порядке приоритета):
-          1) Маркер `# CMD: <dsl>` — основной источник истины.
-          2) Тело Python-инвокации `cmd_X(args)` / `cmd_X_here()` —
-             пользователь может править/копировать вызовы для добавления
-             новых команд (например, ещё одна `cmd_mark_danger(10,10,30)`).
-          3) Голая DSL-строка `forward(100)` — для ручного редактирования.
-        reset/brake/stop пропускаем — они оборачивают воспроизведение автоматически.
 
-        Дедупликация: если СРАЗУ за `# CMD: foo(args)` идёт `cmd_foo(args)` с
-        теми же аргументами — это родная пара «маркер + тело», тело не считаем
-        второй раз. Если же тело отличается (отредактированные координаты) или
-        идёт без маркера — считаем как самостоятельную команду."""
+        Источник истины — строки вызовов вида:
+          • `circle_cmd(args)`, `goto_cmd(x, y)`, `home_cmd()`     — суффикс _cmd
+          • `circle_cmd_here()` / `mark_danger_here_cmd()`         — _here-варианты
+          • `forward(100)`, `set_course(90)`, …                    — короткая DSL
+          • `cmd_X(args)`                                          — legacy префикс
+
+        Маркеры `# CMD: ...` больше не генерируются (они дублировали вызов),
+        но если встретятся в старых сохранённых программах — пропускаются как
+        обычные комментарии (вызов ниже всё равно будет распознан).
+
+        Игнорируется:
+          • пустые строки и любые `# комментарии` (включая legacy `# CMD: ...`);
+          • неопознанные конструкции (определения def/class из преамбулы и т.п.);
+          • reset/brake/stop — они оборачивают воспроизведение автоматически."""
         cmds: list[RobotCmd] = []
-        # (fn, normalized_args) — последний маркер, ещё не «погашенный» телом
-        pending: Optional[tuple[str, str]] = None
 
         for line in text.split("\n"):
-            # 1) Маркер из богатого Python — приоритет
-            mm = self._CMD_MARKER.match(line)
-            if mm:
-                fn, args = mm.group(1), mm.group(2)
-                parsed = self._parse_dsl_line(fn, args)
-                if parsed:
-                    intent, raw = parsed
-                    if intent not in ("reset", "brake", "stop"):
-                        cmd = self._build_cmd(intent, raw)
-                        if cmd:
-                            cmds.append(cmd)
-                            pending = (fn, self._norm_args(args))
-                            continue
-                pending = None
-                continue
             stripped = line.strip()
+            # Пустая строка или комментарий — пропустить.
             if not stripped or stripped.startswith("#"):
                 continue
+            # Сама команда — простой вызов name(args). def/class/многострочные
+            # выражения в _DSL_LINE не подходят — они отсеются регулярным.
             md = self._DSL_LINE.match(stripped)
             if not md:
                 continue
             fn_raw, args_raw = md.group(1), md.group(2)
-            # 2) Тело cmd_X(args) или 3) голая DSL-строка X(args).
-            # Нормализуем имя для сравнения с pending-маркером:
-            fn_for_cmp = fn_raw[4:] if fn_raw.startswith("cmd_") else fn_raw
-            if fn_for_cmp.endswith("_here"):
-                fn_for_cmp = fn_for_cmp[:-5]
-                args_for_cmp = ""
-            else:
-                args_for_cmp = self._norm_args(args_raw)
-            # Дедуп маркер ↔ тело: совпало имя функции И ЛИБО аргументы
-            # тоже совпали, ЛИБО маркер был без аргументов (так пишутся
-            # circle/figure_eight/turn_around — направление хранится в raw).
-            # Это критично: иначе одна восьмёрка превращается в две команды
-            # (маркер + неотсеянное тело cmd_figure_eight(-1)).
-            if pending is not None and pending[0] == fn_for_cmp and (
-               pending[1] == args_for_cmp or pending[1] == ""):
-                pending = None
-                continue
             parsed = self._parse_dsl_line(fn_raw, args_raw)
             if not parsed:
                 continue
@@ -2979,7 +3090,6 @@ def report_position():
             cmd = self._build_cmd(intent, raw)
             if cmd:
                 cmds.append(cmd)
-            pending = None
         return cmds
 
     async def run_textarea_program(self, text: str):
@@ -2988,8 +3098,8 @@ def report_position():
 
         НЕ вызываем push_program() после парсинга: иначе текстарея перерисуется
         из self._program и пользовательские правки в теле кода (например,
-        дополнительные `cmd_mark_danger(10,10,30)`) исчезнут. Текстарея —
-        master, self._program — её зеркало для физики."""
+        дополнительные `mark_danger_cmd(10,10,30)`) исчезнут. Текстарея —
+        master, self._program — ее зеркало для физики."""
         new_program = self._parse_program_text(text)
         if not new_program:
             await self.push_message(
@@ -3007,7 +3117,7 @@ def report_position():
     async def load_published_code(self, code: str, source_label: str = "опубликованный маршрут"):
         """Загружает чужой опубликованный код в свою программу.
         Парсит # CMD маркеры из текста, заменяет self._program и push'ит textarea.
-        НЕ запускает автоматически — пользователь сам нажмёт ▶ Запуск."""
+        НЕ запускает автоматически — пользователь сам нажмет ▶ Запуск."""
         new_program = self._parse_program_text(code)
         if not new_program:
             await self.push_message(
@@ -3039,7 +3149,7 @@ def report_position():
             await self.push_message("Стоп!", "success", code=code, description=description)
             return
 
-        # Зарядка — мгновенное действие, не должна ждать в очереди манёвров.
+        # Зарядка — мгновенное действие, не должна ждать в очереди маневров.
         if intent == "recharge":
             await self._run_recharge()
             await self.push_state()
@@ -3048,7 +3158,7 @@ def report_position():
         # Запросы статуса — тоже мгновенные, без очереди.
         if intent in ("report_pos", "report_status"):
             cmd = self._build_cmd(intent, raw_text)
-            # Прогоняем через _dispatch напрямую — он сформирует текст отчёта.
+            # Прогоняем через _dispatch напрямую — он сформирует текст отчета.
             db_local = SessionLocal()
             try:
                 await self._dispatch(cmd, db_local)
@@ -3075,8 +3185,8 @@ def report_position():
         при 0% мотор не вращается.
 
         Границы соответствуют цвету шкалы заряда в карточке состояния:
-          ≥ 60% (зелёный):           1.00 — без потерь
-          30–60% (жёлто-оливковый):  0.70 → 1.00 (линейно)
+          ≥ 60% (зеленый):           1.00 — без потерь
+          30–60% (желто-оливковый):  0.70 → 1.00 (линейно)
           15–30% (оранжевый):        0.40 → 0.70
           0–15% (красный):           0.00 → 0.40
           0%:                        мотор не крутится"""
@@ -3203,7 +3313,7 @@ def report_position():
 
             # Защитный стоп в режиме «осторожно»: если ЛЮБОЙ угол корпуса
             # реально оказался ВНУТРИ опасной зоны (не в раздутой —
-            # планировщик уже её обходит) — мгновенная остановка. Это
+            # планировщик уже ее обходит) — мгновенная остановка. Это
             # страховка от ошибок планирования на узких проходах.
             if s.cautious and not hit_wall and self.world.danger_zones:
                 hit_zone = None
@@ -3274,7 +3384,7 @@ SESSIONS: dict[int, UserSession] = {}
 
 
 async def get_or_create_session(user_id: int, db: Session) -> UserSession:
-    """Возвращает сессию пользователя; создаёт и стартует, если нет."""
+    """Возвращает сессию пользователя; создает и стартует, если нет."""
     sess = SESSIONS.get(user_id)
     if sess is not None:
         return sess

@@ -15,14 +15,14 @@
     </div>
     <div class="library-card__meta" style="margin-top:.5rem">
       {% if kind == "published" %}
-      <span>👤 {{ route.author.username if route.author else 'удалён' }}</span>
+      <span>👤 {{ route.author.username if route.author else 'удален' }}</span>
       <span>🕒 опубликован {{ route.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
       {% if route.parent_id and route.parent %}
       <span>↘ форк <a href="/library/published/{{ route.parent_id }}">«{{ route.parent.title }}»</a></span>
       {% endif %}
       {% else %}
       <span>💾 ваш личный маршрут</span>
-      <span>🕒 изменён {{ route.updated_at.strftime('%Y-%m-%d %H:%M') }}</span>
+      <span>🕒 изменен {{ route.updated_at.strftime('%Y-%m-%d %H:%M') }}</span>
       {% endif %}
       <span>🧩 {{ route.cmd_count }} команд</span>
     </div>

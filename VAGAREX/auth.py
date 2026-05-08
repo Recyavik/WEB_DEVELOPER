@@ -50,7 +50,7 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> Optiona
 
 
 def require_user(request: Request, db: Session = Depends(get_db)) -> User:
-    """Жёсткая зависимость: нужен залогиненный И существующий пользователь.
+    """Жесткая зависимость: нужен залогиненный И существующий пользователь.
     Если cookie протухла (DB чистая, а cookie от прошлой жизни) —
     очищает сессию и редиректит на /login."""
     user_id = request.session.get("user_id")

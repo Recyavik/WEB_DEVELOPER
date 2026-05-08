@@ -20,6 +20,7 @@
     ws.onopen = () => {
       clearTimeout(reconnectTimer);
       logMsg('Соединение установлено.', 'info');
+      updateRobotBadge(true);
     };
 
     ws.onmessage = e => {
@@ -31,6 +32,8 @@
 
     ws.onclose = () => {
       logMsg('Соединение потеряно. Переподключение…', 'warning');
+      // Сразу гасим зеленый бейдж — иначе он висит «Онлайн» при оборванном WS.
+      updateRobotBadge(false);
       reconnectTimer = setTimeout(wsConnect, 3000);
     };
 
@@ -81,6 +84,12 @@
         }
         break;
 
+      case 'modal_warning':
+        // Сервер прислал блокирующее предупреждение — показываем модалку.
+        showWarningModal(msg.title || 'Команда не выполнена',
+                         msg.text  || '');
+        break;
+
       case 'message':
         // Каждая команда приносит свой Python-код — наращиваем textarea
         // через умный merge (без дублирования преамбулы и def-блоков).
@@ -124,60 +133,128 @@
     navigator.clipboard.writeText(textarea.value).catch(() => {});
   }
 
-  // ── Подсветка Python-кода (комментарии — зелёным) ─────────────────────────
+  // ── Модалка-предупреждение (сервер блокирует команду) ────────────────────
+  function showWarningModal(title, text) {
+    let modal = document.getElementById('warning-modal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'warning-modal';
+      modal.className = 'warn-modal';
+      modal.innerHTML = `
+        <div class="warn-modal__panel">
+          <div class="warn-modal__header">
+            <span class="warn-modal__icon">⚠</span>
+            <h3 class="warn-modal__title"></h3>
+          </div>
+          <div class="warn-modal__body"></div>
+          <div class="warn-modal__footer">
+            <button type="button" class="btn btn--primary warn-modal__close">Закрыть</button>
+          </div>
+        </div>`;
+      document.body.appendChild(modal);
+      const close = () => { modal.hidden = true; };
+      modal.querySelector('.warn-modal__close').addEventListener('click', close);
+      modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !modal.hidden) close();
+      });
+    }
+    modal.querySelector('.warn-modal__title').textContent = title;
+    modal.querySelector('.warn-modal__body').textContent  = text;
+    modal.hidden = false;
+    modal.querySelector('.warn-modal__close').focus();
+  }
+
+  // ── Подсветка Python-кода (комментарии — зеленым) ─────────────────────────
   function escHtmlCode(s) {
     return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
   function highlightPython(text) {
-    // Простой однопроходный лексер: находим '#' вне строк и красим хвост строки.
-    return text.split('\n').map(line => {
-      let inStr = false, strCh = null, commentIdx = -1;
-      for (let i = 0; i < line.length; i++) {
-        const ch = line[i];
-        if (inStr) {
-          if (ch === strCh && line[i - 1] !== '\\') {
-            inStr = false; strCh = null;
-          }
-        } else {
-          if (ch === '"' || ch === "'") { inStr = true; strCh = ch; }
-          else if (ch === '#') { commentIdx = i; break; }
-        }
+    // Двухпроходный лексер. Сначала находим диапазоны комментариев:
+    //   1) тройные строки """ … """ и ''' … ''' (могут быть многострочные);
+    //   2) хвост строки от '#' вне обычных строк.
+    // Потом одним проходом склеиваем HTML, оборачивая эти диапазоны
+    // в <span class="hl-comment">.
+    const ranges = [];   // {start, end} — глобальные смещения в text
+    const N = text.length;
+    let i = 0, inStr = false, strCh = '';
+    while (i < N) {
+      const ch = text[i];
+      // 1) Тройные кавычки — независимо от режима, считаем их комментарием
+      //    (это докстринги функций, лучше красить как комментарий)
+      if (!inStr && (text.startsWith('"""', i) || text.startsWith("'''", i))) {
+        const tri = text.substr(i, 3);
+        const end = text.indexOf(tri, i + 3);
+        const stop = end >= 0 ? end + 3 : N;
+        ranges.push({start: i, end: stop});
+        i = stop;
+        continue;
       }
-      if (commentIdx >= 0) {
-        return escHtmlCode(line.slice(0, commentIdx)) +
-               '<span class="hl-comment">' +
-               escHtmlCode(line.slice(commentIdx)) +
-               '</span>';
+      if (inStr) {
+        if (ch === '\\') { i += 2; continue; }
+        if (ch === strCh) { inStr = false; }
+        if (ch === '\n') { inStr = false; }   // обычная строка не переносится
+        i++;
+        continue;
       }
-      return escHtmlCode(line);
-    }).join('\n') + '\n';   // финальный \n чтобы overlay не «съедал» нижнюю строку
+      if (ch === '"' || ch === "'") {
+        inStr = true; strCh = ch; i++;
+        continue;
+      }
+      if (ch === '#') {
+        const nl = text.indexOf('\n', i);
+        const stop = nl >= 0 ? nl : N;
+        ranges.push({start: i, end: stop});
+        i = stop;
+        continue;
+      }
+      i++;
+    }
+    if (ranges.length === 0) return escHtmlCode(text) + '\n';
+    // Сшиваем итоговый HTML
+    let out = '', pos = 0;
+    for (const r of ranges) {
+      if (pos < r.start) out += escHtmlCode(text.slice(pos, r.start));
+      out += '<span class="hl-comment">' +
+             escHtmlCode(text.slice(r.start, r.end)) +
+             '</span>';
+      pos = r.end;
+    }
+    if (pos < N) out += escHtmlCode(text.slice(pos));
+    return out + '\n';   // финальный \n чтобы overlay не «съедал» нижнюю строку
   }
   function attachCodeHighlight(textareaId, overlayId) {
     const ta = document.getElementById(textareaId);
     const ov = document.getElementById(overlayId);
     if (!ta || !ov) return;
-    const sync = () => {
-      ov.innerHTML = highlightPython(ta.value || '');
-      // Sync scroll
-      ov.parentElement.scrollTop = ta.scrollTop;
-      ov.scrollTop = ta.scrollTop;
-      ov.scrollLeft = ta.scrollLeft;
+    // overlay <pre> с overflow:hidden — content движем через CSS transform
+    // на внутреннем <code>. Так не получится «второго скроллбара» и
+    // программный сдвиг работает в любом браузере.
+    const syncScroll = () => {
+      const code = ov.querySelector('code') || ov;
+      code.style.transform =
+        `translate(${-ta.scrollLeft}px, ${-ta.scrollTop}px)`;
     };
-    ta.addEventListener('input',  sync);
-    ta.addEventListener('scroll', () => {
-      ov.scrollTop  = ta.scrollTop;
-      ov.scrollLeft = ta.scrollLeft;
-    });
-    // Первоначальная подсветка + наблюдение за программными изменениями value
-    sync();
-    // Периодически проверяем, не изменился ли value «программно»
-    // (например, через msg.code → appendPythonCode). input event для value
-    // через .value = ... не выстреливает, так что нужен polling.
+    const syncContent = () => {
+      const code = ov.querySelector('code') || ov;
+      code.innerHTML = highlightPython(ta.value || '');
+      syncScroll();
+    };
+    ta.addEventListener('input',  syncContent);
+    ta.addEventListener('scroll', syncScroll);
+    // Стрелки/PageDown/PageUp могут двигать каретку без срабатывания scroll —
+    // на них тоже досинхронизируем сразу.
+    ta.addEventListener('keyup', syncScroll);
+    ta.addEventListener('click', syncScroll);
+    // Первоначальная подсветка
+    syncContent();
+    // Программные изменения value (например, server append) не дают input —
+    // дублирующий polling 200мс.
     let lastVal = ta.value;
     setInterval(() => {
       if (ta.value !== lastVal) {
         lastVal = ta.value;
-        sync();
+        syncContent();
       }
     }, 200);
   }
@@ -195,7 +272,7 @@
     set('st-x',       s.x.toFixed(1));
     set('st-y',       s.y.toFixed(1));
     set('st-heading', s.heading.toFixed(0));
-    // Показываем фактическую скорость с учётом просадки от заряда батареи.
+    // Показываем фактическую скорость с учетом просадки от заряда батареи.
     // s.effective_speed_pct = s.speed * battery_factor (0..1).
     const eff = (typeof s.effective_speed_pct === 'number')
                   ? s.effective_speed_pct
@@ -223,7 +300,7 @@
     }
 
     // Зарядка: шкала с цветом как у реальных индикаторов
-    //   ≥ 60% — зелёный, 30–60% — жёлто-зелёный, 15–30% — оранжевый, < 15% — красный
+    //   ≥ 60% — зеленый, 30–60% — желто-зеленый, 15–30% — оранжевый, < 15% — красный
     const battery = (typeof s.battery === 'number') ? s.battery : 100;
     const stBatt  = document.getElementById('st-battery');
     const stFill  = document.getElementById('st-battery-fill');
@@ -250,21 +327,6 @@
     const caut = document.getElementById('caution-badge');
     if (caut) caut.style.display = 'none';
 
-    // 🖥 «Робот думает» (планировщик в режиме «осторожно»).
-    const thBadge = document.getElementById('thinking-badge');
-    if (thBadge) {
-      const th = s.thinking || 'idle';
-      if (th === 'idle') {
-        thBadge.style.display = 'none';
-      } else {
-        thBadge.style.display = '';
-        thBadge.classList.toggle('thinking-badge--failed', th === 'failed');
-        const txt = thBadge.querySelector('.thinking-badge__text');
-        if (txt) txt.textContent = (th === 'failed')
-          ? 'Решение не найдено'
-          : 'Робот думает…';
-      }
-    }
   }
 
   function modeLabel(m) {
@@ -347,59 +409,102 @@
     const hasDefault = existing.trim().startsWith('# После выполнения команды');
 
     if (!existing.trim() || hasDefault) {
-      textarea.value = code; // first command: set full code including preamble
+      textarea.value = code; // первая команда — полный текст (константы + сентинель + helpers + вызов)
       return;
     }
 
-    // Subsequent commands: append only the body (command-specific lines)
+    // Последующие команды: берём только тело после сентинеля.
+    // Дедуп helper-функций — по имени `def NAME(` или `class NAME:`.
+    // Helper-блок включает ОДНУ предшествующую строку-комментарий
+    // («русский заголовок» функции) и тянется до следующей пустой строки
+    // на нулевом отступе (или до следующего col-0 def/class).
     const body = extractCodeBody(code);
     if (!body.trim()) return;
 
-    const existingDefs = Array.from(existing.matchAll(/^def\s+(cmd_[a-zA-Z0-9_]+)\s*\(/gm))
-      .map(m => m[1]);
+    // 1) Имена функций/классов, уже существующих в textarea.
+    const existingDefs = new Set(
+      Array.from(existing.matchAll(/^(?:def|class)\s+(\w+)\s*[\(:]/gm)).map(m => m[1])
+    );
 
-    // Split body into def-blocks and plain lines
     const bodyLines = body.split('\n');
     let merged = existing.trimEnd();
-    let inDef = false;
-    let defName = null;
-    let defLines = [];
 
-    function flushDef() {
-      if (!defName) return;
-      if (!existingDefs.includes(defName)) {
-        merged += '\n\n' + defLines.join('\n');
-        existingDefs.push(defName);
+    // 2) Идём по строкам тела, собирая блоки.
+    //    «Сырые» строки (комментарии, пустые) кладём в lookahead — это
+    //    может быть либо отдельная строка, либо «шапка» следующего def.
+    let buffer = [];          // накопленные строки до классификации
+    let i = 0;
+
+    function flushBufferAsPlain() {
+      // Все накопленные строки — обычные (вне helper-блока).
+      for (const ln of buffer) {
+        if (ln.trim()) merged += '\n' + ln;
       }
-      defName = null;
-      defLines = [];
+      buffer = [];
     }
 
-    for (const line of bodyLines) {
-      const defMatch = line.match(/^def\s+(cmd_[a-zA-Z0-9_]+)\s*\(/);
+    while (i < bodyLines.length) {
+      const line = bodyLines[i];
+      const defMatch = line.match(/^(?:def|class)\s+(\w+)\s*[\(:]/);
+
       if (defMatch) {
-        flushDef();
-        inDef = true;
-        defName = defMatch[1];
-        defLines = [line];
-      } else if (inDef) {
-        if (line.trim() === '' && defLines.length) {
-          defLines.push(line);
-          flushDef();
-          inDef = false;
-        } else {
-          defLines.push(line);
+        const name = defMatch[1];
+        // Шапка-комментарий — последняя строка в buffer, если она
+        // начинается с `#` и предыдущий элемент пустой (или начало).
+        const headerLines = [];
+        if (buffer.length && buffer[buffer.length - 1].trimStart().startsWith('#')) {
+          headerLines.push(buffer.pop());
+        }
+        flushBufferAsPlain();   // всё кроме «шапки» отдаём как plain
+
+        // Считаем тело функции: пока следующая строка с отступом
+        // или это пустая строка ВНУТРИ блока (перед которой ещё есть
+        // отступная строка); останавливаемся на col-0 непустой строке.
+        const blockLines = [...headerLines, line];
+        i++;
+        while (i < bodyLines.length) {
+          const next = bodyLines[i];
+          if (next === '' || /^\s+/.test(next)) {
+            // Пустая или с отступом — может быть частью тела.
+            // Пустая — кандидат на конец, посмотрим следующую.
+            if (next === '') {
+              // Если следующая после пустой — col-0 непустая (новая верхняя
+              // конструкция), пустую в блок не включаем, выходим.
+              const peek = bodyLines[i + 1];
+              if (peek === undefined || (peek !== '' && !/^\s+/.test(peek))) {
+                break;
+              }
+              blockLines.push(next);
+              i++;
+            } else {
+              blockLines.push(next);
+              i++;
+            }
+          } else {
+            // Особый случай: одиночная строка вида `name = ClassName(...)`
+            // (синглтон-инстанс типа `odo = Odometry()`) — считаем продолжением.
+            if (/^[a-z_]\w*\s*=\s*[A-Z]\w*\(/.test(next)) {
+              blockLines.push(next);
+              i++;
+            } else {
+              break;
+            }
+          }
+        }
+        // Дедуп по имени функции/класса
+        if (!existingDefs.has(name)) {
+          merged += '\n\n' + blockLines.join('\n').replace(/\n+$/, '');
+          existingDefs.add(name);
         }
       } else {
-        const trimmed = line.trim();
-        if (!trimmed) continue; // skip blank separators between commands
-        merged += '\n' + trimmed; // always append plain command lines
+        buffer.push(line);
+        i++;
       }
     }
-    flushDef(); // flush any trailing def without trailing blank line
+    // Хвостовые plain-строки
+    flushBufferAsPlain();
 
     textarea.value = merged;
-    // Если модалка открыта — отражаем изменения и в ней
     const modal     = document.getElementById('python-code-modal');
     const modalArea = document.getElementById('python-code-modal-area');
     if (modal && !modal.hidden && modalArea) modalArea.value = merged;
@@ -417,7 +522,7 @@
   }
 
   function clearPythonCode() {
-    // Очистка идёт через сервер — он перешлёт обновлённый текст программы (пустой + шапка).
+    // Очистка идет через сервер — он перешлет обновленный текст программы (пустой + шапка).
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'clear_program' }));
     } else {
@@ -534,7 +639,7 @@
     if (chkLaser) chkLaser.addEventListener('change', e => {
       const enabled = e.target.checked;
       if (canvas) { canvas.showLaser = enabled; canvas.draw(); }
-      // Передаём серверу — чтобы физика тоже учитывала отключение датчика.
+      // Передаем серверу — чтобы физика тоже учитывала отключение датчика.
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'set_laser', enabled }));
       }
@@ -568,12 +673,26 @@
       if (!modal || !modalArea || !sideArea) return;
       modalArea.value = sideArea.value;     // последняя версия из боковой
       modal.hidden = false;
+      // Принудительно обновляем overlay-подсветку (textarea имеет
+      // прозрачный текст — без overlay код виден не будет; polling 200мс
+      // тут слишком медленный для пользователя).
+      const modalOverlay = document.getElementById('python-code-modal-overlay');
+      if (modalOverlay) {
+        modalOverlay.innerHTML = highlightPython(modalArea.value || '');
+        modalOverlay.style.transform = 'translate(0px, 0px)';
+      }
       modalArea.focus();
     }
     function closeCodeModal() {
       if (!modal || !modalArea || !sideArea) return;
       sideArea.value = modalArea.value;     // правки из модалки → в боковую
       modal.hidden = true;
+      // Так же синхронизируем overlay в боковой (если правили в модалке).
+      const sideOverlay = document.getElementById('python-code-overlay');
+      if (sideOverlay) {
+        sideOverlay.innerHTML = highlightPython(sideArea.value || '');
+        sideOverlay.style.transform = 'translate(0px, 0px)';
+      }
     }
     document.getElementById('btn-expand-python-code')?.addEventListener('click', openCodeModal);
     document.getElementById('btn-collapse-python-code')?.addEventListener('click', closeCodeModal);

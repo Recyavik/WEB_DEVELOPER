@@ -1,0 +1,253 @@
+{% extends "base.html" %}
+
+{% block title %}VEGAREX — API 1T REX{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>API 1T REX — система команд робота</h1>
+  <p class="subtitle">
+    Минимальный набор примитивов, которые понимает реальная плата Rex-Board.
+    Все алгоритмы движения (повороты, обходы, маневры) собираются из этих
+    функций. На вкладке <a href="/">Управление</a> в правой панели
+    Python-код использует ровно эти команды — его можно копировать
+    и запускать на физическом роботе как есть.
+  </p>
+</div>
+
+<div class="training-layout">
+
+  <!-- ── Мотор ───────────────────────────────────────────────────────── -->
+  <section class="card">
+    <h2 class="card__title">Мотор и движение</h2>
+    <table class="cmd-table">
+      <thead><tr><th>Команда</th><th>Описание</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>robot.move(power_pct, duration_sec=None)</code></td>
+          <td>
+            Включает мотор на <code>power_pct</code> процентов мощности
+            (диапазон <strong>−100…+100</strong>).
+            Положительные значения — вперед, отрицательные — назад.
+            Если задана <code>duration_sec</code>, мотор работает указанное
+            время и сам останавливается. Без аргумента — едет до явного
+            <code>robot.stop()</code> или новой <code>move()</code>.
+          </td>
+        </tr>
+        <tr>
+          <td><code>robot.stop()</code></td>
+          <td>Немедленная остановка двигателя. Сбрасывает текущую скорость в 0.</td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="note">
+      <strong>Калибровка скорости.</strong> При 100% мощности робот едет
+      примерно <code>SPEED_CM_PER_S_AT_100</code> см/с (по умолчанию ≈ 80).
+      Реальное значение зависит от батареи, поверхности, нагрузки —
+      проверьте на своем экземпляре и поправьте константу в настройках.
+    </p>
+  </section>
+
+  <!-- ── Руль ────────────────────────────────────────────────────────── -->
+  <section class="card">
+    <h2 class="card__title">Руль (Ackermann-сервопривод)</h2>
+    <table class="cmd-table">
+      <thead><tr><th>Команда</th><th>Описание</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>robot.set_angle(deg)</code></td>
+          <td>
+            Поставить серво передних колес на угол <code>deg</code>
+            (диапазон <strong>−45…+45°</strong>).
+            Положительный угол — поворот направо, отрицательный — налево.
+            <strong>Ноль</strong> = колеса прямо. Сама ось колес не движется
+            пока мотор стоит — поворот видно только при последующей <code>move()</code>.
+          </td>
+        </tr>
+        <tr>
+          <td><code>robot.set_servo_center()</code></td>
+          <td>
+            Эквивалент <code>robot.set_angle(0)</code>. Полезно вызывать
+            в конце маневра, чтобы оставить руль в нейтральном положении.
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="note">
+      <strong>Геометрия поворота.</strong> При полном угле руля и пройденном
+      расстоянии в одну окружность колеса (<code>WHEEL_CIRC_CM</code>)
+      курс робота меняется на <code>HEADING_DEG_PER_ROT</code> градусов
+      (по умолчанию ≈ 25°). Это дает радиус разворота
+      <code>360 × WHEEL_CIRC_CM / (2π × HEADING_DEG_PER_ROT)</code> ≈ 65 см
+      при стандартных настройках. Минимальный радиус увеличивается с уменьшением угла руля.
+    </p>
+  </section>
+
+  <!-- ── Сенсоры ─────────────────────────────────────────────────────── -->
+  <section class="card">
+    <h2 class="card__title">Сенсоры</h2>
+    <table class="cmd-table">
+      <thead><tr><th>Команда</th><th>Описание</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>robot.get_angle()</code></td>
+          <td>
+            Возвращает словарь с углами Эйлера от гироскопа MPU:
+            <code>{'X': pitch, 'Y': roll, 'Z': yaw}</code>.
+            Ключ <strong>'Z'</strong> — текущий курс робота в градусах
+            (0…359, 0 = направление инициализации).
+            Это основной источник курса для алгоритмов разворота.
+          </td>
+        </tr>
+        <tr>
+          <td><code>robot.get_laser()</code></td>
+          <td>
+            Возвращает расстояние до препятствия впереди в сантиметрах.
+            <code>None</code> или 0 — нет данных / ничего не видно в зоне действия.
+            Используется в командах <em>«до упора»</em> и для аварийной
+            остановки в режиме «осторожно».
+          </td>
+        </tr>
+        <tr>
+          <td><code>robot.get_color()</code></td>
+          <td>
+            Цветовой датчик снизу/спереди (если установлен). Возвращает RGB-кортеж
+            или строку с распознанным цветом — используется для слежения по линии.
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="note">
+      <strong>Одометрия.</strong> У 1T REX <em>нет встроенного GPS</em>,
+      позицию (x, y) робота приходится считать самим: курс берем с гироскопа,
+      пройденное расстояние — из <code>power × time</code>. В сгенерированном
+      Python-коде есть класс <code>Odometry</code>, который делает это
+      автоматически — можно копировать на железо как есть.
+    </p>
+  </section>
+
+  <!-- ── Светодиоды и индикация ──────────────────────────────────────── -->
+  <section class="card">
+    <h2 class="card__title">Световой индикатор (RGB)</h2>
+    <table class="cmd-table">
+      <thead><tr><th>Команда</th><th>Описание</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>robot.set_rgb(idx, (r, g, b), count)</code></td>
+          <td>
+            Зажечь RGB-светодиод. <code>idx</code> — индекс (0 = первый),
+            <code>(r, g, b)</code> — цвет 0…255 на канал, <code>count</code>
+            — сколько светодиодов подряд от <code>idx</code> в эту команду
+            (обычно 1, у адресной ленты — больше).
+            <code>(0, 0, 0)</code> = погасить.
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ── Жизненный цикл ──────────────────────────────────────────────── -->
+  <section class="card">
+    <h2 class="card__title">Инициализация и подключение</h2>
+    <table class="cmd-table">
+      <thead><tr><th>Команда</th><th>Описание</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>robot.start()</code></td>
+          <td>
+            Запуск Rex-Board: инициализирует моторы, серво, гироскоп.
+            Вызывается один раз при старте программы (в нашем симуляторе
+            делается автоматически на сервере, в коде не появляется).
+          </td>
+        </tr>
+        <tr>
+          <td><code>robot.enable_mpu()</code></td>
+          <td>
+            Включает гироскоп / акселерометр. Без этой команды
+            <code>robot.get_angle()</code> может вернуть нули.
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="note">
+      <strong>Подключение к плате.</strong> 1T REX поднимает Wi-Fi и слушает
+      TCP/WebSocket на порту <code>8765</code>. Первоначальная настройка
+      Wi-Fi — через USB Type-C + утилита <code>server.py</code> из комплекта
+      робота. Адрес и порт реального робота задаются в
+      <a href="/settings">настройках</a> в разделе «Соединение».
+    </p>
+  </section>
+
+  <!-- ── Высокоуровневые «обертки» из преамбулы ──────────────────────── -->
+  <section class="card">
+    <h2 class="card__title">Высокоуровневые функции (Python-преамбула)</h2>
+    <p>
+      В сгенерированном Python-коде уже определены готовые функции, которые
+      собирают сложные алгоритмы из примитивов выше. Их можно копировать на
+      реальный робот как библиотеку.
+    </p>
+    <table class="cmd-table">
+      <thead><tr><th>Функция</th><th>Что делает</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>duration_for_distance(distance_cm, power_pct)</code></td>
+          <td>Сколько секунд держать мотор включенным на заданной мощности,
+              чтобы покрыть указанное расстояние. Опирается на калибровку
+              <code>SPEED_CM_PER_S_AT_100</code>.</td>
+        </tr>
+        <tr>
+          <td><code>class Odometry</code> / <code>odo</code></td>
+          <td>Простой трекер позиции <code>(x, y, heading)</code> через
+              интегрирование <code>power × time</code> + коррекция курса
+              гироскопом (<code>odo.sync_heading()</code>).
+              Метод <code>odo.move_step(power, duration, steer_deg)</code>
+              надо вызывать ПОСЛЕ каждого <code>robot.move(...)</code>.</td>
+        </tr>
+        <tr>
+          <td><code>face_cardinal_cmd(target_deg)</code></td>
+          <td>3-дуговой Reeds-Shepp K-turn до указанного курса
+              (forward(α) → backward(β) → forward(α), при условии
+              <code>2α + β = |Δh|</code> и <code>sin(β/2) = sin(|Δh|/2)/2</code>
+              робот возвращается в исходную позицию).</td>
+        </tr>
+        <tr>
+          <td><code>goto_cmd(x, y)</code></td>
+          <td>Перейти в координату. Shortcut: ±30° от курса — едем сразу
+              вперед, ±150° — задом без разворота, иначе K-turn + прямая.</td>
+        </tr>
+        <tr>
+          <td><code>home_cmd()</code></td>
+          <td>Эквивалент <code>goto_cmd(START_X_CM, START_Y_CM)</code>.</td>
+        </tr>
+        <tr>
+          <td><code>follow_path_cmd(points)</code></td>
+          <td>Pure-pursuit за списком waypoint'ов. Каждые 100 мс находит
+              точку впереди на <code>lookahead_cm</code>, рулит к ней.
+              Используется для безопасного обхода зон в режиме «осторожно».</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ── Минимальный пример ──────────────────────────────────────────── -->
+  <section class="card">
+    <h2 class="card__title">Минимальный пример программы</h2>
+    <pre class="library-code"><code>import math, time
+
+# Едем 100 см вперед на 40% мощности
+duration = 100 / (80 * 40 / 100)   # SPEED_CM_PER_S_AT_100 × power / 100
+robot.set_angle(0)
+robot.move(40, duration)
+robot.stop()
+
+# Поворачиваем руль вправо на максимум и описываем дугу
+robot.set_angle(36)
+robot.move(40, 2.5)
+robot.stop()
+robot.set_servo_center()
+
+# Включаем зеленый светодиод
+robot.set_rgb(0, (0, 255, 0), 1)</code></pre>
+  </section>
+
+</div>
+{% endblock %}

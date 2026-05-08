@@ -18,7 +18,7 @@ class DangerZoneXY:
     label:  str   = "Опасная зона"
     db_id:  Optional[int] = None
     # 'danger'    — красная зона обстановки
-    # 'algorithm' — жёлтая пунктирная зона, проставленная алгоритмом
+    # 'algorithm' — желтая пунктирная зона, проставленная алгоритмом
     kind:   str   = "danger"
 
 
@@ -27,7 +27,7 @@ class RobotStateXY:
     x:          float = 0.0
     y:          float = 0.0
     heading:    float = 0.0   # градусы, 0=север (Y+), 90=восток (X+)
-    speed:     float = 0.0   # % мощности (+ вперёд, - назад, 0 = стоп)
+    speed:     float = 0.0   # % мощности (+ вперед, - назад, 0 = стоп)
     steer:     float = 0.0   # угол руля (-45..45), машина стоит пока не движется
     dist_left: float = 0.0   # осталось сантиметров; 0 = ехать до стопа
     mode:       str   = "normal"   # normal | marker | inspector
@@ -38,7 +38,7 @@ class RobotStateXY:
     battery:    float = 100.0  # заряд аккумулятора, 0..100%
     # Состояние «робот думает» (планировщик в режиме «осторожно»):
     #   "idle"     — обычное
-    #   "planning" — фиолетовая иконка 🖥, идёт A*-поиск пути
+    #   "planning" — фиолетовая иконка 🖥, идет A*-поиск пути
     #   "failed"   — красная иконка, путь не найден, нужен ручной режим
     thinking:   str   = "idle"
 
@@ -150,7 +150,7 @@ def heading_dx_dy(heading_deg: float) -> Tuple[float, float]:
 def update_position_dead_reckoning(state: RobotStateXY,
                                    dt: float,
                                    speed_cm_per_sec: float) -> None:
-    """Обновляет позицию по методу мёртвого счисления."""
+    """Обновляет позицию по методу мертвого счисления."""
     dx, dy = heading_dx_dy(state.heading)
     state.x += dx * speed_cm_per_sec * dt
     state.y += dy * speed_cm_per_sec * dt

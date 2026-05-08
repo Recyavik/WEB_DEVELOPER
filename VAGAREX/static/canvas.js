@@ -271,10 +271,10 @@ class RobotCanvas {
         glow: `rgba(255,59,48,${(alpha * 0.5).toFixed(2)})`,
       };
     } else if (steer !== 0) {
-      // Жёлтый поворотник, мигает
+      // Желтый поворотник, мигает
       if (blinkOn) color = { fill: '#ffcc00', glow: 'rgba(255,204,0,0.55)' };
     } else if (!isMoving) {
-      // Зелёный — готов выполнять команду
+      // Зеленый — готов выполнять команду
       color = { fill: '#34c759', glow: 'rgba(52,199,89,0.4)' };
     }
     // иначе (едет прямо) — индикатор погашен
@@ -304,7 +304,7 @@ class RobotCanvas {
     const rad = (this.startHeading || 0) * Math.PI / 180;
     const r = 7;
 
-    // Зелёный круг
+    // Зеленый круг
     ctx.beginPath();
     ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
     ctx.strokeStyle = 'rgba(46, 160, 67, 0.9)';
@@ -420,8 +420,8 @@ class RobotCanvas {
       const isAlgo = z.kind === 'algorithm';
 
       // Оба типа: тонкий пунктир, заливка 10% соответствующим цветом.
-      // Отличаются только цветом — жёлтый (алгоритм) vs красный (обстановка).
-      const fill   = isAlgo ? 'rgba(255, 215, 0, 0.10)'    // 10% жёлтый
+      // Отличаются только цветом — желтый (алгоритм) vs красный (обстановка).
+      const fill   = isAlgo ? 'rgba(255, 215, 0, 0.10)'    // 10% желтый
                              : 'rgba(248,  81, 73, 0.10)'; // 10% красный
       const stroke = isAlgo ? 'rgba(255, 215, 0, 0.95)'
                              : 'rgba(248,  81, 73, 0.95)';
@@ -460,7 +460,7 @@ class RobotCanvas {
       const p = this.worldToCanvas(path[i][0], path[i][1]);
       ctx.lineTo(p.x, p.y);
     }
-    // Зелёный, на 10% светлее var(--accent2) #3fb950 (rgb 63,185,80)
+    // Зеленый, на 10% светлее var(--accent2) #3fb950 (rgb 63,185,80)
     // = смешан с белым 10%: rgb(82, 192, 97).
     ctx.strokeStyle = 'rgba(82, 192, 97, 0.55)';
     ctx.lineWidth   = 1.5;
@@ -472,7 +472,7 @@ class RobotCanvas {
   _drawAutoSegments() {
     // Сегменты, найденные планировщиком в режиме «осторожно».
     // Едва заметный фиолетовый пунктир — фоновая подсказка, не отвлекающая
-    // от основной зелёной траектории движения.
+    // от основной зеленой траектории движения.
     const ctx  = this.ctx;
     const segs = this.autoSegments || [];
     if (!segs.length) return;
@@ -502,7 +502,7 @@ class RobotCanvas {
   }
 
   _laserEndpoint(s, worldDist) {
-    // Датчик смотрит в направлении движения: вперёд или назад
+    // Датчик смотрит в направлении движения: вперед или назад
     const headingDeg = s.speed < 0 ? (s.heading + 180) % 360 : s.heading;
     const rad = headingDeg * Math.PI / 180;
     const hw  = this.worldW / 2;
@@ -544,7 +544,7 @@ class RobotCanvas {
     const now = Date.now();
 
     // Детектируем новый импульс по значимой смене показания (>0.5 см)
-    // Не сбрасываем таймер пока идёт анимация — иначе мерцание при быстрых импульсах
+    // Не сбрасываем таймер пока идет анимация — иначе мерцание при быстрых импульсах
     if (Math.abs(s.laser_dist - this._sonarLastDist) > 0.5) {
       this._sonarLastDist = s.laser_dist;
       if (!this._sonarAnimating) {
@@ -606,7 +606,7 @@ class RobotCanvas {
       ctx.stroke();
     }
 
-    // Вспышка точки отражения при прилёте эха (60–100% времени)
+    // Вспышка точки отражения при прилете эха (60–100% времени)
     if (s.laser_dist > 0) {
       const echoAge   = age < 0.6 ? 0 : (age - 0.6) / 0.4;
       const dotR      = 3 + (1 - echoAge) * 3;     // 6px → 3px
@@ -655,7 +655,7 @@ class RobotCanvas {
     // pos = canvas-позиция НОСА (мировые координаты робота = кончик носа)
     const rad = s.heading * Math.PI / 180;
 
-    // Центр корпуса смещён назад от носа на bh/2
+    // Центр корпуса смещен назад от носа на bh/2
     const cx = pos.x - (bh / 2) * Math.sin(rad);
     const cy = pos.y + (bh / 2) * Math.cos(rad);
 
@@ -722,7 +722,7 @@ class RobotCanvas {
     ctx.fillStyle = color;
     ctx.fill();
 
-    // ── Колёса ─────────────────────────────────────────────────────────────────
+    // ── Колеса ─────────────────────────────────────────────────────────────────
     const wheelW = Math.max(2.5, bw * 0.35);
     const wheelH = Math.max(4,   bh * 0.18);
     const wyRear  = bh * 0.30;
@@ -736,7 +736,7 @@ class RobotCanvas {
       }
     }
 
-    // Линии направления колёс
+    // Линии направления колес
     ctx.lineWidth = 1.5;
     const halfH = wheelH / 2;
     if (moving) {
@@ -759,7 +759,7 @@ class RobotCanvas {
         ctx.restore();
       }
     } else if (s.steer !== 0) {
-      // Руль повёрнут, машина стоит
+      // Руль повернут, машина стоит
       ctx.strokeStyle = '#d29922';
       ctx.lineWidth   = 2;
       const steerRad  = s.steer * Math.PI / 180;
