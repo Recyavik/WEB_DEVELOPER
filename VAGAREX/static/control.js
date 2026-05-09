@@ -531,6 +531,160 @@
     }
   }
 
+  // ── 🧹 Упорядочить: константы → def-блоки (без дублей) → вызовы ──────────
+  //
+  // Парсит текстарею, разделяет на:
+  //   • header   — всё до сентинеля «# === НАЧАЛО ПРОГРАММЫ ===»
+  //                (константы, import-ы, комментарии)
+  //   • def/class блоки в теле — собираются с шапкой-комментарием,
+  //                индентом, поддержкой singleton-инициализации
+  //                (`odo = Odometry()` за классом)
+  //   • plain-строки — `# CMD: …`, `robot.X(...)`, `name_cmd(...)` и т.п.
+  //
+  // Итоговая раскладка:
+  //   <header (константы + сентинель)>
+  //   <все уникальные def/class блоки (в порядке первого появления)>
+  //   # --- основной алгоритм ---
+  //   <все plain-строки (вызовы) в исходном порядке>
+  //
+  // Дубли def/class по имени схлопываются — остаётся первое встретившееся.
+  function tidyPythonCode(text) {
+    if (!text) return text;
+    const SENTINEL = '# === НАЧАЛО ПРОГРАММЫ ===';
+    const lines = text.split('\n');
+
+    // 1) Разделить header / body по сентинелю.
+    let sentIdx = lines.findIndex(l => l.trim() === SENTINEL);
+    let headerLines, bodyLines;
+    if (sentIdx === -1) {
+      headerLines = [];
+      bodyLines = lines;
+    } else {
+      headerLines = lines.slice(0, sentIdx + 1);   // включая сентинель
+      bodyLines = lines.slice(sentIdx + 1);
+    }
+
+    // 2) Прогон по телу: выделяем def/class блоки + plain-строки.
+    const seenDefs = new Set();
+    const defBlocks = [];   // [{name, lines: [...]}]
+    const callLines = [];   // плоские строки (вызовы / комментарии)
+    const buffer = [];      // накопленные строки до классификации
+
+    function flushBufferToCalls() {
+      for (const ln of buffer) callLines.push(ln);
+      buffer.length = 0;
+    }
+
+    let i = 0;
+    while (i < bodyLines.length) {
+      const line = bodyLines[i];
+      const defMatch = line.match(/^(?:def|class)\s+(\w+)\s*[(:]/);
+      if (defMatch) {
+        const name = defMatch[1];
+        // Шапка-комментарий — последняя строка в buffer (если она `# …`).
+        const headerComment = [];
+        if (buffer.length && buffer[buffer.length - 1].trimStart().startsWith('#')) {
+          headerComment.push(buffer.pop());
+        }
+        flushBufferToCalls();   // остаток buffer — обычные строки
+
+        // Собираем тело def/class.
+        const blockLines = [...headerComment, line];
+        i++;
+        while (i < bodyLines.length) {
+          const next = bodyLines[i];
+          if (next === '' || /^\s+/.test(next)) {
+            if (next === '') {
+              const peek = bodyLines[i + 1];
+              // Пустая строка завершает блок, если следующая
+              // непустая — col-0 неотступная.
+              if (peek === undefined || (peek !== '' && !/^\s+/.test(peek)
+                  && !/^[a-z_]\w*\s*=\s*[A-Z]\w*\(/.test(peek))) {
+                break;
+              }
+            }
+            blockLines.push(next);
+            i++;
+          } else {
+            // Singleton-инициализация (`odo = Odometry()`) — продолжение блока.
+            if (/^[a-z_]\w*\s*=\s*[A-Z]\w*\(/.test(next)) {
+              blockLines.push(next);
+              i++;
+            } else {
+              break;
+            }
+          }
+        }
+        // Дедуп по имени — оставляем первое появление.
+        if (!seenDefs.has(name)) {
+          seenDefs.add(name);
+          defBlocks.push({name, lines: blockLines});
+        }
+      } else {
+        buffer.push(line);
+        i++;
+      }
+    }
+    flushBufferToCalls();
+
+    // 3) Сборка итогового текста.
+    const out = [];
+
+    // Header — почистим хвостовые пустые строки.
+    while (headerLines.length && headerLines[headerLines.length - 1].trim() === '') {
+      headerLines.pop();
+    }
+    out.push(...headerLines);
+    out.push('');
+
+    // Def/class блоки.
+    for (const blk of defBlocks) {
+      // Каждый блок — без хвостовых пустых строк, потом одна разделительная.
+      const blkLines = [...blk.lines];
+      while (blkLines.length && blkLines[blkLines.length - 1].trim() === '') {
+        blkLines.pop();
+      }
+      out.push(...blkLines);
+      out.push('');
+    }
+
+    // Заголовок «основной алгоритм» — только если ниже что-то есть.
+    const trimmedCalls = [];
+    for (const ln of callLines) {
+      // Схлопнуть подряд идущие пустые.
+      if (ln.trim() === '' && trimmedCalls.length
+          && trimmedCalls[trimmedCalls.length - 1].trim() === '') {
+        continue;
+      }
+      trimmedCalls.push(ln);
+    }
+    while (trimmedCalls.length && trimmedCalls[0].trim() === '') trimmedCalls.shift();
+    while (trimmedCalls.length && trimmedCalls[trimmedCalls.length - 1].trim() === '') {
+      trimmedCalls.pop();
+    }
+    if (trimmedCalls.length) {
+      out.push('# --- основной алгоритм ---');
+      out.push(...trimmedCalls);
+    }
+
+    return out.join('\n') + '\n';
+  }
+
+  function tidyCurrentTextarea() {
+    const main = document.getElementById('python-code');
+    if (!main) return;
+    const tidied = tidyPythonCode(main.value);
+    main.value = tidied;
+    // Зеркалим в модалку, если она открыта.
+    const modal = document.getElementById('python-code-modal');
+    const modalArea = document.getElementById('python-code-modal-area');
+    if (modal && !modal.hidden && modalArea) modalArea.value = tidied;
+    // Триггерим input-событие, чтобы overlay-подсветка пересчиталась.
+    main.dispatchEvent(new Event('input', {bubbles: true}));
+    if (modalArea) modalArea.dispatchEvent(new Event('input', {bubbles: true}));
+    logMsg('🧹 Код упорядочен: функции собраны вверху, вызовы внизу.', 'info');
+  }
+
   // ── Голосовое управление (Web Speech API) ──────────────────────────────────
 
   let recognition = null;
@@ -659,6 +813,7 @@
     document.getElementById('btn-run-python-code')?.addEventListener('click', runPythonCode);
     document.getElementById('btn-clear-python-code')?.addEventListener('click', clearPythonCode);
     document.getElementById('btn-copy-python-code')?.addEventListener('click', copyPythonCode);
+    document.getElementById('btn-tidy-python-code')?.addEventListener('click', tidyCurrentTextarea);
 
     // Подсветка комментариев в обоих редакторах кода
     attachCodeHighlight('python-code',            'python-code-overlay');
@@ -726,6 +881,15 @@
           ws.send(JSON.stringify({ type: 'clear_program' }));
         }
       }
+    });
+    document.getElementById('btn-modal-tidy')?.addEventListener('click', () => {
+      // Упорядочиваем текст из модалки и зеркалим в боковую панель.
+      const tidied = tidyPythonCode(modalArea.value || '');
+      modalArea.value = tidied;
+      if (sideArea) sideArea.value = tidied;
+      modalArea.dispatchEvent(new Event('input', {bubbles: true}));
+      if (sideArea) sideArea.dispatchEvent(new Event('input', {bubbles: true}));
+      logMsg('🧹 Код упорядочен.', 'info');
     });
     document.getElementById('btn-modal-run')?.addEventListener('click', () => {
       // sync from modal to main, then run
