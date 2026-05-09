@@ -484,6 +484,24 @@ duration_for_distance(50,  80)   <span class="c"># 50 см на 80% → ≈ 0.78
 turn_around_cmd(-1)       <span class="c"># разворот налево на 180°</span>
 turn_around_cmd(1, 60)    <span class="c"># разворот направо на скорости 60%</span></pre>
 
+  <h4>Что делает симулятор сверху алгоритма</h4>
+  <p>Перед K-turn-парой симулятор автоматически выполняет:</p>
+  <ul>
+    <li><strong>Проверка clearance.</strong> По геометрии Reeds-Shepp считается,
+        сколько свободного пространства нужно ВПЕРЁД (≈ R·sin(α) + 20 см запаса,
+        для 180° получается ~92 см). Если впереди стена ближе — робот сначала
+        отъезжает назад на нужную величину (ограничено доступным местом сзади).
+        В журнале: <em>«⚠ Для разворота нужно 92 см впереди, есть 45.
+        Отъезжаю назад на 47 см»</em>.</li>
+    <li><strong>Возврат в исходную точку.</strong> После K-turn-пары из-за
+        погрешностей физики робот может уехать на 30-40 см от старта.
+        Итеративно: P-регулятор довозит обратно (фаза 2), затем мелкими
+        дугами 5-8° корректирует курс (фаза 3). Цикл до 5 итераций.</li>
+  </ul>
+  <p>В сгенерированный Python-код эти проверки <em>не</em> попадают — они
+  специфичны для симулятора. На реальном роботе нужно добавить свою логику
+  проверки границ (или просто доверять оператору, что места хватит).</p>
+
 
   <!-- ── 3.2. K-turn ──────────────────────────────────────────────────── -->
   <h3 id="a-kturn">3.2. 3-дуговой K-turn (Reeds-Shepp) — разворот на месте</h3>
@@ -701,6 +719,16 @@ face_cardinal_cmd(225)   <span class="c"># на юго-запад</span>
 face_cardinal_cmd(270)   <span class="c"># на запад</span>
 face_cardinal_cmd(315)   <span class="c"># на северо-запад</span></pre>
 
+  <h4>Что делает симулятор сверху алгоритма</h4>
+  <p>То же самое, что у <a href="#a-turn180">turn_around_cmd</a>:</p>
+  <ul>
+    <li>Перед K-turn — <strong>проверка clearance</strong> (помещается ли разворот),
+        и при необходимости автоматический отъезд назад на безопасное расстояние.</li>
+    <li>После K-turn — <strong>возврат в исходную точку</strong> (фаза 2: P-регулятор)
+        и <strong>коррекция курса</strong> (фаза 3: мелкие дуги по 5-8°),
+        итеративно до 5 раз пока не сойдётся к ±1.5 см / ±1.5°.</li>
+  </ul>
+
 
   <!-- ── 3.4. set_course_cmd ─────────────────────────────────────────── -->
   <h3 id="a-course">3.4. set_course_cmd(target_deg) — выставить курс на ходу</h3>
@@ -869,6 +897,14 @@ set_course_cmd(180, 60)   <span class="c"># на юг, помедленнее (6
 <pre class="alg-code">turn_around_place_cmd(6)     <span class="c"># разворот на 180° за 6 пар</span>
 turn_around_place_cmd(3)     <span class="c"># поворот на 90° за 3 пары</span>
 turn_around_place_cmd(12)    <span class="c"># полный круг 360° (если место позволяет)</span></pre>
+
+  <h4>Что делает симулятор сверху алгоритма</h4>
+  <ul>
+    <li>Перед стартом — <strong>проверка clearance</strong> (для разворота на 180°
+        нужно ~92 см вперёд, для 90° — ~50 см). При нехватке отъезд назад.</li>
+    <li>После последней пары — <strong>возврат в исходную точку + коррекция курса</strong>
+        (та же фаза 2+3, что и у обычного K-turn).</li>
+  </ul>
 </section>
 
 
@@ -1132,13 +1168,48 @@ bypass_cmd(+1, 30, 60, 0.7)  <span class="c"># помягче (30°), помед
             (атан2 от Δx и Δy, потому что 0° = север = +y).</li>
         <li>Невязку <code>diff = bearing − heading</code> приводим к
             интервалу [−180; +180].</li>
-        <li>Shortcut: если |diff| ≤ 30° — едем сразу вперед (мелкая
-            корректировка через рулевой угол ≈ diff).</li>
-        <li>Если |diff| ≥ 150° — едем задом (тоже без разворота): мощность
-            отрицательная.</li>
+        <li>Shortcut: если |diff| ≤ 30° — едем сразу вперёд через
+            <code>drive_to_point_closed_loop</code>.</li>
+        <li>Если |diff| ≥ 150° — едем задом (мощность отрицательная,
+            та же closed-loop с зеркальным bearing).</li>
         <li>Иначе — выполняем <code>face_cardinal_cmd(bearing)</code>
-            и потом прямой проезд на расстояние <code>√(Δx² + Δy²)</code>.</li>
+            и потом прямой проезд через
+            <code>drive_to_point_closed_loop</code>.</li>
       </ol>
+      <p><strong>Closed-loop коррекция курса.</strong> Вместо одного
+      «слепого» проезда (open-loop) робот едет короткими шагами
+      (≈ 100 мс). На каждом шаге читает гироскоп, считает <em>текущую</em>
+      невязку курса до цели и подруливает. Если робота сбило (зацепился
+      при развороте, гироскоп дрейфанул, кто-то толкнул) — на следующем
+      такте курс будет автоматически скорректирован, и робот всё равно
+      доедет до цели.</p>
+      <p><strong>Оптимизация на этапе генерации кода.</strong> В момент
+      добавления команды кодогенератор смотрит на ТЕКУЩИЕ позицию и курс
+      робота (важно: до фактического выполнения команды) и выбирает один
+      из четырёх режимов:</p>
+      <ul>
+        <li><strong>skip</strong> — distance &lt; 5 см. Робот уже в цели.
+            В код пишется <code># уже в точке (x, y)</code>.</li>
+        <li><strong>forward</strong> — bearing к цели в пределах ±5° от текущего курса.
+            В код пишется простой <code>robot.move(+speed, ...)</code> без вызова
+            <code>goto_cmd</code> и его зависимостей. Helper из преамбулы — только
+            <code>duration_for_distance</code>.</li>
+        <li><strong>backward</strong> — bearing противоположен курсу (180°±5°).
+            То же самое, но с минусовой мощностью — едем задом без разворота.</li>
+        <li><strong>goto</strong> — произвольное направление. В код пишется
+            полный <code>goto_cmd(x, y)</code>, преамбула тянет всю инфраструктуру:
+            <code>Odometry</code>, <code>face_cardinal_cmd</code>,
+            <code>drive_to_point_closed_loop</code>, <code>goto_cmd</code>.</li>
+      </ul>
+      <p>Это и читать проще, и выполняется быстрее, и преамбула получается
+      минимальная: для типового сценария «вперёд 100 → юг → ещё вперёд» в коде
+      будет пара <code>robot.move(...)</code> вместо нескольких сотен строк
+      def-блоков.</p>
+      <div class="formula">
+        bearing = atan2(target_x − x, target_y − y)
+        <br>diff = (bearing − heading + 540) mod 360 − 180
+        <br>steer = clip(<em>kp</em> × diff, ±DEFAULT_TURN_ANGLE), &nbsp; <em>kp</em> = 0.7
+      </div>
     </div>
   </div>
 
@@ -1149,47 +1220,53 @@ bypass_cmd(+1, 30, 60, 0.7)  <span class="c"># помягче (30°), помед
     <li><code>tolerance_cm</code> — допустимая ошибка в см (по умолчанию 5 см).</li>
   </ul>
 
-<pre class="alg-code"><span class="k">def</span> goto_cmd(target_x, target_y, power_pct=DEFAULT_SPEED, tolerance_cm=5):
+<pre class="alg-code"><span class="c"># Closed-loop проезд: едем короткими шагами и подруливаем по гироскопу.</span>
+<span class="c"># Если робота сбило (зацепился, толкнули, дрейф) — на следующем такте</span>
+<span class="c"># курс будет скорректирован, и робот всё равно доедет до цели.</span>
+<span class="k">def</span> drive_to_point_closed_loop(target_x, target_y, power_pct, tolerance_cm,
+                               step_sec=0.1, kp=0.7):
+    sign = 1 <span class="k">if</span> power_pct >= 0 <span class="k">else</span> -1                     <span class="c"># знак: вперёд / назад</span>
+    robot.move(power_pct)                                         <span class="c"># мотор без duration — крутим до явного stop</span>
+    <span class="k">while</span> True:                                               <span class="c"># шагаем по step_sec секунд (по умолчанию 100 мс)</span>
+        odo.sync_heading()                                        <span class="c"># каждый такт — реальный курс с гироскопа</span>
+        dx = target_x - odo.x; dy = target_y - odo.y              <span class="c"># вектор от робота к цели</span>
+        dist = math.hypot(dx, dy)                                 <span class="c"># текущая дистанция до цели</span>
+        <span class="k">if</span> dist < tolerance_cm:                               <span class="c"># дошли — выходим из цикла</span>
+            <span class="k">break</span>
+        bearing = math.degrees(math.atan2(dx, dy)) % 360.0        <span class="c"># куда сейчас «смотрит» цель</span>
+        <span class="k">if</span> sign < 0:                                          <span class="c"># задним ходом — целимся «зеркально»</span>
+            bearing = (bearing + 180.0) % 360.0
+        diff = (bearing - odo.heading + 540.0) % 360.0 - 180.0    <span class="c"># знаковая невязка курса</span>
+        steer = max(-DEFAULT_TURN_ANGLE, min(DEFAULT_TURN_ANGLE, diff * kp))  <span class="c"># P-регулятор</span>
+        robot.set_angle(int(steer))                               <span class="c"># подать руль на расчётный угол</span>
+        odo.move_step(power_pct, step_sec, steer)                 <span class="c"># учесть прошедшие 100 мс в одометрии</span>
+        time.sleep(step_sec)                                      <span class="c"># подождать следующего такта</span>
+    robot.stop()                                                  <span class="c"># финальная остановка</span>
+    robot.set_servo_center()                                      <span class="c"># вернуть руль в нейтраль</span>
+
+
+<span class="k">def</span> goto_cmd(target_x, target_y, power_pct=DEFAULT_SPEED, tolerance_cm=5):
     odo.sync_heading()                                            <span class="c"># обновить курс из гироскопа</span>
     dx = target_x - odo.x                                         <span class="c"># смещение по X (см)</span>
     dy = target_y - odo.y                                         <span class="c"># смещение по Y (см)</span>
     distance = math.hypot(dx, dy)                                 <span class="c"># √(Δx² + Δy²) — длина прямой</span>
     <span class="k">if</span> distance < tolerance_cm:                               <span class="c"># уже на месте — выходим</span>
-        <span class="k">return</span>                                                   <span class="c"># ничего не делаем</span>
-    target_heading = math.degrees(math.atan2(dx, dy)) % 360.0     <span class="c"># целевой курс, 0° = север (+y)</span>
-    bearing = ((target_heading - odo.heading + 540) % 360) - 180  <span class="c"># знаковая невязка курса [-180..+180]</span>
+        <span class="k">return</span>
+    target_heading = math.degrees(math.atan2(dx, dy)) % 360.0     <span class="c"># целевой курс</span>
+    bearing = ((target_heading - odo.heading + 540) % 360) - 180  <span class="c"># знаковая невязка курса</span>
 
-    <span class="k">if</span> abs(bearing) < 30:                                     <span class="c"># ── Shortcut «вперёд» ─────────────</span>
-        <span class="c"># Цель почти прямо перед роботом — подруливаем без разворота.</span>
-        steer = max(-DEFAULT_TURN_ANGLE, min(DEFAULT_TURN_ANGLE, bearing))   <span class="c"># P-регулятор по углу руля</span>
-        robot.set_angle(int(steer))                               <span class="c"># чуть подрулить к цели</span>
-        dur = duration_for_distance(distance, power_pct)          <span class="c"># время на прямую</span>
-        robot.move(power_pct, dur)                                <span class="c"># едем вперёд</span>
-        odo.move_step(power_pct, dur, steer)                      <span class="c"># обновить одометрию (x, y)</span>
-        robot.stop()                                              <span class="c"># стоп после прибытия</span>
-        robot.set_servo_center()                                  <span class="c"># вернуть руль в нейтраль</span>
-        <span class="k">return</span>                                                   <span class="c"># команда выполнена</span>
+    <span class="k">if</span> abs(bearing) < 30:                                     <span class="c"># Цель почти прямо</span>
+        <span class="c"># Едем сразу с коррекцией курса по гироскопу.</span>
+        drive_to_point_closed_loop(target_x, target_y, power_pct, tolerance_cm)
+    <span class="k">elif</span> abs(bearing) > 150:                                  <span class="c"># Цель почти позади</span>
+        <span class="c"># Едем задом с коррекцией курса (closed-loop сам зеркалит bearing).</span>
+        drive_to_point_closed_loop(target_x, target_y, -power_pct, tolerance_cm)
+    <span class="k">else</span>:                                                     <span class="c"># Общий случай</span>
+        <span class="c"># Сначала разворот на месте, потом проезд с коррекцией.</span>
+        face_cardinal_cmd(target_heading)                         <span class="c"># встать лицом к цели через K-turn</span>
+        odo.sync_heading()                                        <span class="c"># перечитать курс после поворота</span>
+        drive_to_point_closed_loop(target_x, target_y, power_pct, tolerance_cm)
 
-    <span class="k">if</span> abs(bearing) >= 150:                                   <span class="c"># ── Shortcut «задним ходом» ───────</span>
-        <span class="c"># Цель почти за спиной — едем задом без 180° разворота.</span>
-        back_diff = ((target_heading + 180 - odo.heading + 540) % 360) - 180 <span class="c"># невязка для зеркального курса</span>
-        steer = max(-DEFAULT_TURN_ANGLE, min(DEFAULT_TURN_ANGLE, back_diff)) <span class="c"># руль на «зеркальную» цель</span>
-        robot.set_angle(int(steer))                               <span class="c"># подать руль</span>
-        dur = duration_for_distance(distance, power_pct)          <span class="c"># время на прямую</span>
-        robot.move(-power_pct, dur)                               <span class="c"># минус → задний ход</span>
-        odo.move_step(-power_pct, dur, steer)                     <span class="c"># обновить одометрию (со знаком backward)</span>
-        robot.stop()                                              <span class="c"># стоп после прибытия</span>
-        robot.set_servo_center()                                  <span class="c"># вернуть руль в нейтраль</span>
-        <span class="k">return</span>                                                   <span class="c"># команда выполнена</span>
-
-    <span class="c"># ── Общий случай: разворот на месте + прямая ────────────────────</span>
-    face_cardinal_cmd(target_heading)                             <span class="c"># встать лицом к цели через K-turn</span>
-    odo.sync_heading()                                            <span class="c"># перечитать курс после поворота</span>
-    dur = duration_for_distance(distance, power_pct)              <span class="c"># время на прямую до цели</span>
-    robot.set_angle(0)                                            <span class="c"># руль прямо — пойдём по прямой</span>
-    robot.move(power_pct, dur)                                    <span class="c"># едем вперёд</span>
-    odo.move_step(power_pct, dur, 0)                              <span class="c"># обновить (x, y)</span>
-    robot.stop()                                                  <span class="c"># стоп после прибытия</span>
 
 <span class="k">def</span> home_cmd():
     goto_cmd(START_X_CM, START_Y_CM)                              <span class="c"># возврат в стартовую точку (домой)</span></pre>

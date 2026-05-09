@@ -40,14 +40,20 @@ def _make_cfg() -> UserCfg:
 @dataclass
 class _RobotStateStub:
     steer: float = 0.0
+    x:     float = 0.0
+    y:     float = 0.0
+    heading: float = 0.0
 
 
 class _SessionStub(UserSession):
     """Минимальная версия UserSession, минующая __init__ (не нужны БД/WebSocket)."""
     def __init__(self, cfg: UserCfg):
         # Намеренно НЕ зовём super().__init__ — он бы поднял World/Driver/etc.
+        import itertools
         self.cfg = cfg
         self.robot_state = _RobotStateStub()
+        self._cmd_counter = itertools.count(1)
+        self._program: list = []
 
 
 def _cmd(intent: str, raw: str = "", code: str = "", label: str = "") -> RobotCmd:
@@ -107,16 +113,26 @@ class TestCollectHelpers(unittest.TestCase):
     def test_home_pulls_all_deps(self):
         helpers = self.s._collect_helpers([_cmd("home", "Вега домой")])
         # home → goto → face_cardinal + Odometry + duration_for_distance
-        # Порядок: каждая зависимость должна стоять ДО зависимого.
+        #            → drive_to_point_closed_loop (closed-loop проезд)
         self.assertEqual(set(helpers),
                          {"Odometry", "duration_for_distance",
-                          "face_cardinal_cmd", "goto_cmd", "home_cmd"})
-        # Проверяем что зависимости идут до своих зависимых:
+                          "face_cardinal_cmd", "drive_to_point_closed_loop",
+                          "goto_cmd", "home_cmd"})
+        # Каждая зависимость должна стоять ДО зависимого:
         idx = {n: i for i, n in enumerate(helpers)}
         self.assertLess(idx["Odometry"], idx["face_cardinal_cmd"])
         self.assertLess(idx["duration_for_distance"], idx["face_cardinal_cmd"])
+        self.assertLess(idx["Odometry"], idx["drive_to_point_closed_loop"])
         self.assertLess(idx["face_cardinal_cmd"], idx["goto_cmd"])
+        self.assertLess(idx["drive_to_point_closed_loop"], idx["goto_cmd"])
         self.assertLess(idx["goto_cmd"], idx["home_cmd"])
+
+    def test_goto_pulls_closed_loop(self):
+        """goto_cmd должна тянуть drive_to_point_closed_loop (коррекция курса)."""
+        c = _cmd("goto", raw="Вега в точку 100 50", code="goto(100,50)")
+        helpers = self.s._collect_helpers([c])
+        self.assertIn("drive_to_point_closed_loop", helpers,
+                      "goto_cmd должна включать closed-loop helper")
 
     def test_no_dup_when_two_circles(self):
         cmds = [_cmd("circle"), _cmd("circle")]
@@ -223,6 +239,216 @@ class TestParser(unittest.TestCase):
 
     def test_unknown(self):
         self.assertIsNone(UserSession._parse_dsl_line("definitely_not_a_command", ""))
+
+    def test_face_cardinal_generic_180_maps_to_south(self):
+        """face_cardinal(180) должна распознаваться как face_s (на юг)."""
+        result = UserSession._parse_dsl_line("face_cardinal", "180")
+        self.assertIsNotNone(result, "face_cardinal(180) теряется парсером")
+        intent, _ = result
+        self.assertEqual(intent, "face_s")
+
+    def test_face_cardinal_generic_via_cmd_suffix(self):
+        """face_cardinal_cmd(180) (как в сгенерированном коде) тоже работает."""
+        result = UserSession._parse_dsl_line("face_cardinal_cmd", "180")
+        self.assertIsNotNone(result)
+        intent, _ = result
+        self.assertEqual(intent, "face_s")
+
+    def test_face_cardinal_all_8_directions(self):
+        cases = [
+            (0,   "face_n"),
+            (45,  "face_ne"),
+            (90,  "face_e"),
+            (135, "face_se"),
+            (180, "face_s"),
+            (225, "face_sw"),
+            (270, "face_w"),
+            (315, "face_nw"),
+        ]
+        for deg, expected_intent in cases:
+            with self.subTest(deg=deg):
+                result = UserSession._parse_dsl_line("face_cardinal_cmd", str(deg))
+                self.assertIsNotNone(result, f"face_cardinal({deg}) не распознан")
+                self.assertEqual(result[0], expected_intent)
+
+    def test_face_cardinal_rounds_to_nearest(self):
+        """face_cardinal(190) → ближайшее = face_s (180°)."""
+        result = UserSession._parse_dsl_line("face_cardinal_cmd", "190")
+        self.assertEqual(result[0], "face_s")
+        # 350° ближе к 0° (= 10° дельты), чем к 315° (= 35° дельты) → face_n
+        result = UserSession._parse_dsl_line("face_cardinal_cmd", "350")
+        self.assertEqual(result[0], "face_n")
+
+
+class TestGotoOptimization(unittest.TestCase):
+    """goto оптимизируется в forward/backward, если курс совпадает/противоположен."""
+
+    def setUp(self):
+        self.s = _SessionStub(_make_cfg())
+
+    def _goto(self, tx, ty):
+        return _cmd("goto",
+                    raw=f"Вега в точку {tx:g} {ty:g}",
+                    code=f"goto({tx:g},{ty:g})")
+
+    def test_aligned_forward_emits_simple_forward(self):
+        """Робот в (0,0) heading=0 (N), цель (0, 100) — курс совпадает.
+        Должен генерироваться простой forward, без goto_cmd."""
+        self.s.robot_state.x, self.s.robot_state.y = 0, 0
+        self.s.robot_state.heading = 0   # north
+        cmd = self._goto(0, 100)
+
+        # Helpers: только duration_for_distance, не goto_cmd
+        helpers = self.s._helpers_for_cmd(cmd)
+        self.assertEqual(helpers, ["duration_for_distance"])
+
+        # Call lines: robot.move с положительной мощностью
+        lines = self.s._python_call_lines_for_cmd(cmd)
+        joined = "\n".join(lines)
+        self.assertIn("robot.move(40, duration_for_distance(100", joined)
+        self.assertNotIn("goto_cmd", joined)
+        self.assertNotIn("-40", joined)   # не задом
+
+    def test_opposite_heading_emits_backward(self):
+        """Робот в (0,100) heading=0 (N), цель (0, 0) — курс противоположен.
+        Должен генерироваться backward (минусовая мощность), без goto_cmd."""
+        self.s.robot_state.x, self.s.robot_state.y = 0, 100
+        self.s.robot_state.heading = 0   # north, but target is south
+        cmd = self._goto(0, 0)
+
+        helpers = self.s._helpers_for_cmd(cmd)
+        self.assertEqual(helpers, ["duration_for_distance"])
+
+        lines = self.s._python_call_lines_for_cmd(cmd)
+        joined = "\n".join(lines)
+        self.assertIn("robot.move(-40, duration_for_distance(100", joined)
+        self.assertNotIn("goto_cmd", joined)
+
+    def test_arbitrary_angle_uses_full_goto(self):
+        """Робот в (0,0) heading=0 (N), цель (50, 50) — bearing 45°.
+        45° > ALIGN_TOL (5°), нужен полный goto_cmd."""
+        self.s.robot_state.x, self.s.robot_state.y = 0, 0
+        self.s.robot_state.heading = 0
+        cmd = self._goto(50, 50)
+
+        helpers = self.s._helpers_for_cmd(cmd)
+        self.assertIn("goto_cmd", helpers)
+        self.assertNotIn("duration_for_distance", helpers)   # transitively через goto_cmd
+
+        lines = self.s._python_call_lines_for_cmd(cmd)
+        joined = "\n".join(lines)
+        self.assertIn("goto_cmd(50, 50)", joined)
+
+    def test_already_at_target_emits_skip(self):
+        """Робот уже в нужной точке (distance < 5 см) — пустая команда."""
+        self.s.robot_state.x, self.s.robot_state.y = 100, 100
+        self.s.robot_state.heading = 0
+        cmd = self._goto(102, 101)   # 2.2 см от цели
+
+        helpers = self.s._helpers_for_cmd(cmd)
+        self.assertEqual(helpers, [])   # ничего не нужно
+
+        lines = self.s._python_call_lines_for_cmd(cmd)
+        joined = "\n".join(lines)
+        self.assertIn("уже в точке", joined)
+        self.assertNotIn("robot.move", joined)
+        self.assertNotIn("goto_cmd", joined)
+
+    def test_almost_aligned_within_tolerance(self):
+        """Курс отличается на 3° — в пределах ALIGN_TOL=5° → forward."""
+        self.s.robot_state.x, self.s.robot_state.y = 0, 0
+        self.s.robot_state.heading = 3   # чуть отклонён
+        cmd = self._goto(0, 100)
+        mode, _, _ = self.s._goto_execution_mode(cmd)
+        self.assertEqual(mode, "forward")
+
+    def test_just_outside_tolerance_uses_full_goto(self):
+        """Курс отличается на 6° — за пределами ALIGN_TOL=5° → goto."""
+        self.s.robot_state.x, self.s.robot_state.y = 0, 0
+        self.s.robot_state.heading = 6
+        cmd = self._goto(0, 100)
+        mode, _, _ = self.s._goto_execution_mode(cmd)
+        self.assertEqual(mode, "goto")
+
+    def test_codegen_uses_pre_command_state_not_post(self):
+        """Регрессия. Кодоген goto должен видеть СТАРТ-позицию робота,
+        а не финальную (где он окажется ПОСЛЕ выполнения goto).
+
+        Раньше был баг: codegen вызывался в конце _dispatch (после
+        выполнения), и для goto(50, 50) симулятор уже довёз робота до
+        (50, 50) → distance=0 → mode="skip" → в код шло
+        `# уже в точке (50, 50)` вместо реального вызова."""
+        # Симулируем: робот в (0, 0) heading 45° (NE), команда goto(50, 50).
+        # Так как _dispatch теперь делает codegen ПЕРЕД exec, robot_state
+        # должен отражать СТАРТОВУЮ позицию.
+        self.s.robot_state.x, self.s.robot_state.y = 0, 0
+        self.s.robot_state.heading = 45     # NE
+        cmd = self._goto(50, 50)            # bearing тоже 45° → mode="forward"
+
+        mode, distance, _ = self.s._goto_execution_mode(cmd)
+        self.assertEqual(mode, "forward",
+                         "Робот в старте (0,0) NE, цель (50,50) NE → forward")
+        self.assertGreater(distance, 60.0)  # ≈ 70.7 см
+
+        lines = self.s._python_call_lines_for_cmd(cmd)
+        joined = "\n".join(lines)
+        # Должна быть РЕАЛЬНАЯ команда движения, не «уже в точке»
+        self.assertIn("robot.move(40, duration_for_distance(", joined)
+        self.assertNotIn("уже в точке", joined,
+                         "Если бы codegen видел post-state (50,50), было бы skip")
+
+
+class TestProgramTextParser(unittest.TestCase):
+    """Парсер _parse_program_text должен принимать строки с inline-комментариями."""
+
+    def setUp(self):
+        self.s = _SessionStub(_make_cfg())
+
+    def test_call_with_trailing_inline_comment(self):
+        """Регулярка _DSL_LINE должна допускать `func(args)  # комментарий` в конце строки.
+        Иначе все сгенерированные нами call-строки тихо отбрасываются."""
+        text = """
+forward_to_wall_cmd(40)  # вперёд до стены
+face_cardinal_cmd(180)  # на юг
+"""
+        cmds = self.s._parse_program_text(text)
+        self.assertEqual(len(cmds), 2,
+                         f"должны распознаться 2 команды, а получили {len(cmds)}: "
+                         f"{[c.intent for c in cmds]}")
+        self.assertEqual(cmds[0].intent, "forward_to_wall")
+        self.assertEqual(cmds[1].intent, "face_s")
+
+    def test_full_textarea_with_helpers_and_calls(self):
+        """Полный сценарий: преамбула + def-блоки + call-строки с комментариями.
+        Должны быть распознаны ТОЛЬКО call-строки (def/class/etc игнорируются)."""
+        text = """
+# === НАЧАЛО ПРОГРАММЫ ===
+
+# Движение вперёд до препятствия по дальномеру
+def forward_to_wall_cmd(power_pct=DEFAULT_SPEED, stop_margin_mm=150):
+    robot.move(power_pct)
+    while True:
+        dist = robot.get_laser()
+        if dist is None or dist <= stop_margin_mm:
+            robot.stop()
+            break
+        time.sleep(0.05)
+
+robot.set_angle(0)
+forward_to_wall_cmd(40)  # вперёд до стены
+
+face_cardinal_cmd(180)  # на юг
+robot.set_angle(0)
+forward_to_wall_cmd(40)  # вперёд до стены
+face_cardinal_cmd(180)  # на юг
+"""
+        cmds = self.s._parse_program_text(text)
+        intents = [c.intent for c in cmds]
+        # Ожидаем 4 команды (2 forward_to_wall + 2 face_s),
+        # def-блок и robot.set_angle(0) должны быть проигнорированы
+        self.assertEqual(intents,
+                         ["forward_to_wall", "face_s",
+                          "forward_to_wall", "face_s"])
 
 
 class TestProgramTextRoundTrip(unittest.TestCase):

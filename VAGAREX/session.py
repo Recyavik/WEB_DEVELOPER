@@ -1531,18 +1531,18 @@ class UserSession:
     # ── Развернуться лицом к указанному курсу (на месте, K-turn) ────────────
 
     async def _k_turn_to_heading(self, target_deg: float):
-        """Многошаговый разворот на месте до target_deg.
+        """Разворот на месте до target_deg с возвратом в исходную точку.
 
-        Стратегия трех фаз — без рывков:
-          Фаза 1: серия коротких симметричных дуг (forward+back) с малым
-                  per_arc (~10°). Чем мельче дуга, тем меньше дрейф
-                  позиции за одну пару, и сумма дрейфа минимальна.
-          Фаза 2: если позиция все-таки уехала больше чем на TOLERANCE —
-                  пропорциональный регулятор довозит робот в исходную
-                  точку (за счет этого курс может сбиться).
-          Фаза 3: если курс сбился больше PORT_TOL — короткий доразворот
-                  такими же мелкими дугами, чтобы вернуть точный курс.
-        Никаких принудительных snap-ов координат."""
+        Стратегия 3 фаз:
+          Фаза 1: аналитический 3-дуговой K-turn (Reeds-Shepp) — даёт
+                  курс, но из-за погрешностей физики симулятора может
+                  оставить дрейф позиции до десятков см.
+          Фаза 2: если позиция уехала больше TOL_POS — пропорциональный
+                  регулятор довозит робот обратно в исходную (x, y).
+                  При этом курс может слегка сбиться.
+          Фаза 3: если курс сбился больше TOL_HDG — короткий доразворот
+                  мелкими дугами (по 5..8° каждая), чтобы вернуть точный курс.
+        Фазы 2+3 повторяются итеративно до сходимости либо MAX_ITER раз."""
         s = self.robot_state
         target_deg = float(target_deg) % 360
         diff = (target_deg - s.heading + 540.0) % 360.0 - 180.0
@@ -1554,6 +1554,11 @@ class UserSession:
         spd       = self.cfg.move_speed
         STEER     = 36
         direction = +1 if diff > 0 else -1
+        # Сохраняем стартовую позицию — после K-turn вернёмся сюда.
+        start_x, start_y = s.x, s.y
+        TOL_POS = 1.5      # допуск по позиции (см)
+        TOL_HDG = 1.5      # допуск по курсу (град)
+        MAX_ITER = 5
 
         # ── Аналитический 3-дуговой паттерн (Reeds-Shepp) ────────────────
         # Симметричный K-turn forward(α) – backward(β) – forward(α).
@@ -1571,6 +1576,7 @@ class UserSession:
             await self.push_message(
                 f"3-дуговой K-turn: α={alpha_deg:.1f}°, β={beta_deg:.1f}°, "
                 f"α={alpha_deg:.1f}° (Δh={diff:+.0f}°)", "info")
+            # ── Фаза 1: 3-дуговой K-turn ──────────────────────────────
             # Дуга 1: вперед, рулем в нужную сторону
             if alpha_deg > 0.5:
                 await self._arc_at_steer(direction * STEER, alpha_deg, spd)
@@ -1580,6 +1586,28 @@ class UserSession:
             # Дуга 3: вперед, тот же руль, что дуга 1
             if alpha_deg > 0.5:
                 await self._arc_at_steer(direction * STEER, alpha_deg, spd)
+
+            # ── Фазы 2+3 итеративно: возврат в точку + коррекция курса ──
+            for it in range(MAX_ITER):
+                pos_err = math.hypot(start_x - s.x, start_y - s.y)
+                hdg_err = (target_deg - s.heading + 540.0) % 360.0 - 180.0
+                if pos_err < TOL_POS and abs(hdg_err) < TOL_HDG:
+                    break
+                # Фаза 2: вернуться в (start_x, start_y), если уехали
+                if pos_err >= TOL_POS:
+                    if it == 0:
+                        await self.push_message(
+                            f"Возврат в исходную точку (дрейф {pos_err:.1f} см)…",
+                            "info")
+                    await self._drive_to_point(start_x, start_y, TOL_POS, spd)
+                # Фаза 3: при возврате курс мог сбиться — корректируем
+                hdg_err = (target_deg - s.heading + 540.0) % 360.0 - 180.0
+                if abs(hdg_err) >= TOL_HDG:
+                    await self.push_message(
+                        f"Коррекция курса: {hdg_err:+.1f}° (итерация {it+1})",
+                        "info")
+                    per_arc = 8.0 if it == 0 else 5.0
+                    await self._k_turn_arcs(hdg_err, STEER, spd, per_arc_deg=per_arc)
         except asyncio.CancelledError:
             pass
         finally:
@@ -1589,7 +1617,7 @@ class UserSession:
             await self.robot.stop()
             await self.robot.set_servo_center()
 
-        # Финальный мягкий снэп ТОЛЬКО курса (без позиции)
+        # Финальный мягкий снэп ТОЛЬКО курса (позиция уже корректирована Фазой 2).
         s.heading = target_deg
         await self.push_state()
 
@@ -1723,9 +1751,68 @@ class UserSession:
         await self.robot.set_servo_center()
         await asyncio.sleep(0.15)
 
+    def _kturn_forward_clearance_needed(self, delta_deg: float) -> float:
+        """Сколько см свободного пространства нужно ВПЕРЁД для K-turn на delta_deg.
+        Берётся из геометрии Reeds-Shepp: после первой forward-дуги α робот
+        смещается на R·sin(α) вперёд от старта (это максимум forward-сдвига
+        за всю последовательность 3 дуг)."""
+        delta = abs(delta_deg)
+        if delta < 1.0:
+            return 0.0
+        # Минимальный радиус поворота (см)
+        steer_ratio = 36.0 / 45.0   # STEER / max
+        if steer_ratio < 1e-6:
+            return 0.0
+        R = (self.cfg.wheel_circ_cm * 360.0) / (
+            2.0 * math.pi * self.cfg.heading_per_rot * steer_ratio)
+        # α по формулам K-turn: 2α + β = |Δh|, sin(β/2) = sin(|Δh|/2)/2
+        half = math.radians(delta / 2.0)
+        s_half = math.sin(half)
+        if abs(s_half / 2.0) > 1.0:
+            return 0.0
+        beta = 2.0 * math.degrees(math.asin(s_half / 2.0))
+        alpha = (delta - beta) / 2.0
+        return R * math.sin(math.radians(alpha))
+
+    async def _ensure_kturn_clearance(self, target_deg: float) -> bool:
+        """Проверяет, помещается ли K-turn на target_deg в свободном пространстве.
+        Если ВПЕРЁДНОЙ свободы недостаточно, отъезжает назад на нужную величину
+        (в пределах того, сколько места есть СЗАДИ).
+
+        Возвращает True, если был отъезд, False — если уже было достаточно места.
+        Курс не меняет."""
+        s = self.robot_state
+        diff = (float(target_deg) - s.heading + 540.0) % 360.0 - 180.0
+        if abs(diff) < 3.0:
+            return False
+        forward_need  = self._kturn_forward_clearance_needed(abs(diff))
+        forward_need += 20.0      # запас на безопасность
+        forward_have  = self._wall_dist_cm(s.heading) - self.cfg.wall_thickness_cm
+        if forward_have >= forward_need:
+            return False          # места хватает, ничего не делаем
+        # Не помещается — нужно отъехать назад. Сколько можно?
+        bwd_heading  = (s.heading + 180.0) % 360.0
+        backward_have = self._wall_dist_cm(bwd_heading) - self.cfg.wall_thickness_cm - 5.0
+        backup_need  = forward_need - forward_have
+        backup       = min(backup_need, backward_have)
+        if backup < 5.0:
+            await self.push_message(
+                f"⚠ Места для разворота мало (нужно {forward_need:.0f} см впереди, "
+                f"есть {forward_have:.0f}; сзади тоже только {backward_have:.0f}). "
+                f"Попытаюсь развернуться как есть.", "warning")
+            return False
+        await self.push_message(
+            f"⚠ Для разворота нужно {forward_need:.0f} см впереди, "
+            f"а есть только {forward_have:.0f}. Отъезжаю назад на {backup:.0f} см.",
+            "warning")
+        await self._run_back(backup, self.cfg.move_speed)
+        return True
+
     async def _run_face_cardinal(self, deg: float, label: str):
         await self.push_message(
             f"🧭 Развернуться лицом к {label} (курс {deg:.0f}°).", "info")
+        # Если впереди стена ближе, чем требует геометрия K-turn — отъезжаем назад.
+        await self._ensure_kturn_clearance(deg)
         await self._k_turn_to_heading(deg)
 
     async def _run_mark_danger(self,
@@ -2021,11 +2108,13 @@ class UserSession:
     # Ключи в _HELPER_DEPS должны совпадать с _HELPER_CODE; имя def внутри
     # кода — тоже с этим ключом (для дедупа на стороне клиента).
     _HELPER_DEPS = {
-        "duration_for_distance":  [],
-        "Odometry":               [],
-        "face_cardinal_cmd":      ["Odometry", "duration_for_distance"],
-        "goto_cmd":               ["Odometry", "duration_for_distance", "face_cardinal_cmd"],
-        "home_cmd":               ["goto_cmd"],
+        "duration_for_distance":         [],
+        "Odometry":                      [],
+        "face_cardinal_cmd":             ["Odometry", "duration_for_distance"],
+        "drive_to_point_closed_loop":    ["Odometry"],
+        "goto_cmd":                      ["Odometry", "duration_for_distance",
+                                          "face_cardinal_cmd", "drive_to_point_closed_loop"],
+        "home_cmd":                      ["goto_cmd"],
         "follow_path_cmd":        ["Odometry"],
         "forward_to_wall_cmd":    [],
         "backward_to_wall_cmd":   [],
@@ -2103,9 +2192,39 @@ odo = Odometry()    # глобальный экземпляр одометрии
     robot.set_servo_center()
     odo.heading = target_deg % 360.0
 '''),
+        "drive_to_point_closed_loop": (
+            "Прямой проезд в (x,y) с пошаговой коррекцией курса по гироскопу",
+            r'''def drive_to_point_closed_loop(target_x, target_y, power_pct, tolerance_cm,
+                               step_sec=0.1, kp=0.7):
+    # Едем к точке короткими шагами по step_sec секунд. На каждом шаге:
+    #   1) читаем реальный курс с гироскопа,
+    #   2) считаем bearing от текущей позиции к цели,
+    #   3) подруливаем на угол ~ kp * (bearing - heading) с насыщением.
+    # Это закрытая петля: если робота сбило (зацепился, толкнули, дрейф
+    # гироскопа), на следующем такте курс будет скорректирован.
+    sign = 1 if power_pct >= 0 else -1
+    robot.move(power_pct)
+    while True:
+        odo.sync_heading()
+        dx = target_x - odo.x; dy = target_y - odo.y
+        dist = math.hypot(dx, dy)
+        if dist < tolerance_cm:
+            break
+        bearing = math.degrees(math.atan2(dx, dy)) % 360.0
+        if sign < 0:
+            bearing = (bearing + 180.0) % 360.0   # для заднего хода целимся «зеркально»
+        diff = (bearing - odo.heading + 540.0) % 360.0 - 180.0
+        steer = max(-DEFAULT_TURN_ANGLE, min(DEFAULT_TURN_ANGLE, diff * kp))
+        robot.set_angle(int(steer))
+        odo.move_step(power_pct, step_sec, steer)
+        time.sleep(step_sec)
+    robot.stop()
+    robot.set_servo_center()
+'''),
         "goto_cmd": (
-            "Перейти в точку (x, y) — поворот к цели + прямая",
+            "Перейти в точку (x, y) — поворот к цели + прямая с коррекцией курса",
             r'''def goto_cmd(target_x, target_y, power_pct=DEFAULT_SPEED, tolerance_cm=5):
+    odo.sync_heading()
     dx = target_x - odo.x
     dy = target_y - odo.y
     distance = math.hypot(dx, dy)
@@ -2114,25 +2233,16 @@ odo = Odometry()    # глобальный экземпляр одометрии
     target_heading = math.degrees(math.atan2(dx, dy)) % 360.0
     bearing = (target_heading - odo.heading + 540.0) % 360.0 - 180.0
     if abs(bearing) < 30.0:
-        robot.set_angle(0)
-        duration = duration_for_distance(distance, power_pct)
-        robot.move(power_pct, duration)
-        odo.move_step(power_pct, duration, 0)
+        # Цель почти прямо — едем сразу с коррекцией курса по гироскопу.
+        drive_to_point_closed_loop(target_x, target_y, power_pct, tolerance_cm)
     elif abs(bearing) > 150.0:
-        robot.set_angle(0)
-        duration = duration_for_distance(distance, power_pct)
-        robot.move(-power_pct, duration)
-        odo.move_step(-power_pct, duration, 0)
+        # Цель почти позади — едем задом с коррекцией курса.
+        drive_to_point_closed_loop(target_x, target_y, -power_pct, tolerance_cm)
     else:
+        # Общий случай: поворот на месте, потом проезд с коррекцией.
         face_cardinal_cmd(target_heading, power_pct)
-        robot.set_angle(0)
-        dx2 = target_x - odo.x; dy2 = target_y - odo.y
-        d2  = math.hypot(dx2, dy2)
-        if d2 > tolerance_cm:
-            duration = duration_for_distance(d2, power_pct)
-            robot.move(power_pct, duration)
-            odo.move_step(power_pct, duration, 0)
-    robot.stop()
+        odo.sync_heading()
+        drive_to_point_closed_loop(target_x, target_y, power_pct, tolerance_cm)
 '''),
         "home_cmd": (
             "Возврат в стартовую точку",
@@ -2303,6 +2413,39 @@ odo = Odometry()    # глобальный экземпляр одометрии
 '''),
     }
 
+    def _goto_execution_mode(self, cmd) -> tuple[str, float, float]:
+        """Определяет, как лучше выполнить команду «иди в точку», исходя из
+        ТЕКУЩЕЙ позиции и курса робота:
+
+          • "skip"     — уже на месте (distance < 5 см)
+          • "forward"  — курс совпадает с направлением на цель (±5°),
+                         можно просто проехать вперёд
+          • "backward" — курс противоположен направлению на цель (180°±5°),
+                         можно проехать задом без разворота
+          • "goto"     — общий случай (нужен полный goto_cmd)
+          • "invalid"  — координаты не указаны
+
+        Возвращает (mode, distance_cm, signed_bearing_deg)."""
+        ALIGN_TOL = 5.0    # допуск по курсу для оптимизации, градусы
+        SKIP_TOL  = 5.0    # уже «на месте», см
+        xy = nlu.extract_coordinates(cmd.raw)
+        if xy is None:
+            return ("invalid", 0.0, 0.0)
+        tx, ty = xy
+        s = self.robot_state
+        dx = float(tx) - float(s.x)
+        dy = float(ty) - float(s.y)
+        distance = math.hypot(dx, dy)
+        if distance < SKIP_TOL:
+            return ("skip", 0.0, 0.0)
+        target_heading = math.degrees(math.atan2(dx, dy)) % 360.0
+        bearing = ((target_heading - float(s.heading) + 540.0) % 360.0) - 180.0
+        if abs(bearing) <= ALIGN_TOL:
+            return ("forward", distance, bearing)
+        if abs(bearing) >= 180.0 - ALIGN_TOL:
+            return ("backward", distance, bearing)
+        return ("goto", distance, bearing)
+
     def _helpers_for_cmd(self, cmd) -> list[str]:
         """Какие def-блоки нужны для генерации тела одной команды."""
         intent = cmd.intent
@@ -2334,7 +2477,14 @@ odo = Odometry()    # глобальный экземпляр одометрии
         if intent in ("forward", "back"):
             return ["duration_for_distance"] if nlu.extract_distance(raw) else []
         if intent == "goto":
-            return ["goto_cmd"] if nlu.extract_coordinates(raw) is not None else []
+            mode, _, _ = self._goto_execution_mode(cmd)
+            if mode in ("forward", "backward"):
+                # Оптимизация: курс уже совпадает или противоположен —
+                # достаточно простого forward/back, тяжёлый goto_cmd не нужен.
+                return ["duration_for_distance"]
+            if mode == "goto":
+                return ["goto_cmd"]
+            return []   # invalid / skip — helpers не нужны
         if intent == "mark_danger":
             return ["mark_danger_cmd"] if nlu.extract_coordinates(raw) is not None else ["mark_danger_here_cmd"]
         if intent == "set_algorithm_zone":
@@ -2507,7 +2657,25 @@ odo = Odometry()    # глобальный экземпляр одометрии
                 code_lines += ["# координаты не указаны"]
             else:
                 tx, ty = xy
-                code_lines += [f"goto_cmd({tx:g}, {ty:g})  # перейти в точку ({tx:g}, {ty:g})"]
+                # Оптимизация: если курс уже совпадает (или противоположен) —
+                # генерируем простой forward/back вместо тяжёлого goto_cmd.
+                mode, distance, bearing = self._goto_execution_mode(cmd)
+                if mode == "skip":
+                    code_lines += [f"# уже в точке ({tx:g}, {ty:g})"]
+                elif mode == "forward":
+                    code_lines += [
+                        "robot.set_angle(0)",
+                        f"robot.move({default_speed}, duration_for_distance({distance:.0f}, {default_speed}))  # вперёд {distance:.0f} см к ({tx:g}, {ty:g})",
+                        "robot.stop()",
+                    ]
+                elif mode == "backward":
+                    code_lines += [
+                        "robot.set_angle(0)",
+                        f"robot.move(-{default_speed}, duration_for_distance({distance:.0f}, {default_speed}))  # задом {distance:.0f} см к ({tx:g}, {ty:g})",
+                        "robot.stop()",
+                    ]
+                else:
+                    code_lines += [f"goto_cmd({tx:g}, {ty:g})  # перейти в точку ({tx:g}, {ty:g})"]
         elif intent == "home":
             code_lines += ["home_cmd()  # вернуться в стартовую точку"]
         elif intent in ("face_n", "face_ne", "face_e", "face_se",
@@ -2598,6 +2766,16 @@ odo = Odometry()    # глобальный экземпляр одометрии
         msg    = ""
         ok     = True
 
+        # ── Кодогенерация ПЕРЕД выполнением ────────────────────────────
+        # Чтобы оптимизации в _python_call_lines_for_cmd (например, для goto)
+        # видели позицию РОБОТА ДО команды, а не после её исполнения.
+        # Если бы мы делали кодоген после run, для goto(50,50) состояние
+        # robot_state уже было бы (50,50) → распознавалось бы как «уже на месте».
+        if not cmd.playback:
+            python_desc, python_code = self._python_code_for_cmd(cmd)
+        else:
+            python_desc, python_code = None, None
+
         if intent == "forward":
             dist = nlu.extract_distance(raw)
             spd  = nlu.extract_speed(raw, c.move_speed)
@@ -2650,12 +2828,17 @@ odo = Odometry()    # глобальный экземпляр одометрии
             n = nlu.norm(raw)
             direction = -1 if any(w in n for w in ("налево", "влево", "против")) else 1
             side = "влево" if direction == -1 else "вправо"
+            # Перед разворотом: проверка clearance, при необходимости отъезд назад.
+            target_180 = (s.heading + 180.0) % 360.0
+            await self._ensure_kturn_clearance(target_180)
             await self._k_turn_n(direction, steps=1)
             msg = f"Разворот {side} завершен."
         elif intent == "turn_around_place":
             n = nlu.norm(raw)
             direction = -1 if any(w in n for w in ("налево", "влево", "против")) else 1
             steps = nlu.extract_kturn_steps(raw)
+            target_180 = (s.heading + 180.0) % 360.0
+            await self._ensure_kturn_clearance(target_180)
             await self._k_turn_n(direction, steps)
             msg = "Разворот на месте завершен."
         elif intent == "circle":
@@ -2814,11 +2997,8 @@ odo = Odometry()    # глобальный экземпляр одометрии
         else:
             msg, ok = "Команда не выполнена.", False
 
-        # Для воспроизведения — Python-код не отправляем (textarea не дублируется)
-        if not cmd.playback:
-            python_desc, python_code = self._python_code_for_cmd(cmd)
-        else:
-            python_desc, python_code = None, None
+        # python_desc / python_code были сгенерированы в начале _dispatch
+        # ДО выполнения команды (с использованием pre-команды robot_state).
 
         if db and self._db_session_id:
             db.add(CommandLog(session_id=self._db_session_id,
@@ -2909,7 +3089,7 @@ odo = Odometry()    # глобальный экземпляр одометрии
 
     # ── Парсинг textarea (DSL) и запуск ──────────────────────────────────────
 
-    _DSL_LINE = re.compile(r'^\s*([a-z_]+)\s*\(\s*([^)]*)\s*\)\s*$')
+    _DSL_LINE = re.compile(r'^\s*([a-z_]+)\s*\(\s*([^)]*)\s*\)\s*(?:#.*)?$')
 
     @staticmethod
     def _parse_dsl_line(fn: str, args: str) -> Optional[tuple[str, str]]:
@@ -2985,6 +3165,26 @@ odo = Odometry()    # глобальный экземпляр одометрии
         if fn == "face_sw":          return ("face_sw", "Вега на юго-запад")
         if fn == "face_w":           return ("face_w",  "Вега на запад")
         if fn == "face_nw":          return ("face_nw", "Вега на северо-запад")
+        if fn == "face_cardinal":
+            # face_cardinal(deg) — обобщённая форма из сгенерированного Python.
+            # Округляем до ближайшей стороны света и делегируем face_X-интенту.
+            try:
+                deg = float(args.split(",")[0]) % 360
+            except (ValueError, IndexError):
+                return None
+            cardinals = [
+                (0,   "face_n",  "Вега на север"),
+                (45,  "face_ne", "Вега на северо-восток"),
+                (90,  "face_e",  "Вега на восток"),
+                (135, "face_se", "Вега на юго-восток"),
+                (180, "face_s",  "Вега на юг"),
+                (225, "face_sw", "Вега на юго-запад"),
+                (270, "face_w",  "Вега на запад"),
+                (315, "face_nw", "Вега на северо-запад"),
+            ]
+            best = min(cardinals,
+                       key=lambda c: min(abs(deg - c[0]), 360 - abs(deg - c[0])))
+            return (best[1], best[2])
         if fn == "set_course":
             if args.lstrip("-").isdigit():
                 return ("set_course", f"Вега курс {int(args)}")
