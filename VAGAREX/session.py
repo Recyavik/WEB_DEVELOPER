@@ -2557,11 +2557,29 @@ odo = Odometry()    # глобальный экземпляр одометрии
         full = self._python_code_preamble([cmd]) + body
         return description, full
 
+    # Атомарные команды — те, чьё тело состоит из сырых `robot.X(...)`
+    # вызовов (forward, steer, stop, light и т.п.). Парсер не может извлечь
+    # из них исходную команду (regex DSL не пропускает точку в `robot.set_angle`),
+    # поэтому для них генерируется маркер `# CMD: name(args)` — единственный
+    # источник истины при «Запуске».
+    # Для compound-команд (face_cardinal_cmd, goto_cmd, circle_cmd, …) маркер
+    # не нужен: их call-строка сама по себе парсится напрямую.
+    _ATOMIC_INTENTS = frozenset({
+        "forward", "back",
+        "steer_right", "steer_left", "steer_right_small", "steer_left_small",
+        "steer_center", "brake", "stop", "set_speed",
+        "pause", "light_on", "light_off", "light_color", "recharge",
+        "mode_inspector", "mode_cautious", "path_show", "path_hide",
+        "reset", "report_pos", "report_status",
+    })
+
     def _python_call_lines_for_cmd(self, cmd: RobotCmd) -> list[str]:
-        """Только строки вызова команды (без преамбулы и def).
-        Парсер программы (на «Запуск») распознаёт каждый вызов вида
-        `circle_cmd(args)` / `forward(args)` напрямую — отдельный маркер
-        `# CMD: ...` больше не генерируется (он лишь дублировал вызов)."""
+        """Строки вызова команды (без преамбулы и def-блоков).
+
+        Для атомарных команд (raw robot.X-вызовы) добавляется маркер
+        `# CMD: name(args)` сверху — иначе парсер на «Запуск» не сможет
+        восстановить команду из текста textarea (regex DSL не матчит
+        строки вида `robot.set_angle(13)`)."""
         raw = cmd.raw
         intent = cmd.intent
         c = self.cfg
@@ -2569,6 +2587,8 @@ odo = Odometry()    # глобальный экземпляр одометрии
         dist = nlu.extract_distance(raw)
         cur_steer = int(self.robot_state.steer)
         code_lines: list[str] = []
+        if intent in self._ATOMIC_INTENTS:
+            code_lines.append(f"# CMD: {cmd.code}")
 
         def steer(angle_expr: str) -> str: return f"robot.set_angle({angle_expr})"
         def move(power: str, dur: str) -> str: return f"robot.move({power}, {dur})"
@@ -3089,7 +3109,8 @@ odo = Odometry()    # глобальный экземпляр одометрии
 
     # ── Парсинг textarea (DSL) и запуск ──────────────────────────────────────
 
-    _DSL_LINE = re.compile(r'^\s*([a-z_]+)\s*\(\s*([^)]*)\s*\)\s*(?:#.*)?$')
+    _DSL_LINE   = re.compile(r'^\s*([a-z_]+)\s*\(\s*([^)]*)\s*\)\s*(?:#.*)?$')
+    _CMD_MARKER = re.compile(r'^\s*#\s*CMD\s*:\s*([a-z_]+)\s*\(\s*([^)]*)\s*\)')
 
     @staticmethod
     def _parse_dsl_line(fn: str, args: str) -> Optional[tuple[str, str]]:
@@ -3254,29 +3275,44 @@ odo = Odometry()    # глобальный экземпляр одометрии
     def _parse_program_text(self, text: str) -> list[RobotCmd]:
         """Парсит команды из textarea.
 
-        Источник истины — строки вызовов вида:
-          • `circle_cmd(args)`, `goto_cmd(x, y)`, `home_cmd()`     — суффикс _cmd
-          • `circle_cmd_here()` / `mark_danger_here_cmd()`         — _here-варианты
-          • `forward(100)`, `set_course(90)`, …                    — короткая DSL
-          • `cmd_X(args)`                                          — legacy префикс
-
-        Маркеры `# CMD: ...` больше не генерируются (они дублировали вызов),
-        но если встретятся в старых сохранённых программах — пропускаются как
-        обычные комментарии (вызов ниже всё равно будет распознан).
+        Источник истины (в порядке приоритета):
+          1) Маркер `# CMD: name(args)` — для АТОМАРНЫХ команд (forward, steer,
+             stop, light, …), чьё тело — сырые `robot.X(...)` вызовы. Сами
+             эти вызовы regex `_DSL_LINE` не пропускает (точка в имени).
+          2) Строка вызова `name(args)` (без точек) — для COMPOUND-команд
+             (`circle_cmd(args)`, `face_cardinal_cmd(180)`, `goto_cmd(x,y)`),
+             а также короткая DSL-форма (`forward(100)`, `set_course(90)`)
+             и legacy-префикс `cmd_X(args)`.
 
         Игнорируется:
-          • пустые строки и любые `# комментарии` (включая legacy `# CMD: ...`);
-          • неопознанные конструкции (определения def/class из преамбулы и т.п.);
+          • пустые строки и обычные `# комментарии` (не CMD-маркеры);
+          • def/class и сырые `robot.X(...)` вызовы (отсекает regex);
           • reset/brake/stop — они оборачивают воспроизведение автоматически."""
         cmds: list[RobotCmd] = []
 
         for line in text.split("\n"):
             stripped = line.strip()
-            # Пустая строка или комментарий — пропустить.
-            if not stripped or stripped.startswith("#"):
+            if not stripped:
                 continue
-            # Сама команда — простой вызов name(args). def/class/многострочные
-            # выражения в _DSL_LINE не подходят — они отсеются регулярным.
+            # 1) Маркер `# CMD: foo(args)` — приоритетно. Это единственный
+            #    способ распознать атомарные команды.
+            mm = self._CMD_MARKER.match(stripped)
+            if mm:
+                fn, args = mm.group(1), mm.group(2)
+                parsed = self._parse_dsl_line(fn, args)
+                if parsed:
+                    intent, raw = parsed
+                    if intent not in ("reset", "brake", "stop"):
+                        cmd = self._build_cmd(intent, raw)
+                        if cmd:
+                            cmds.append(cmd)
+                continue
+            # Любые другие комментарии — пропускаем.
+            if stripped.startswith("#"):
+                continue
+            # 2) Простой вызов name(args). def/class/многострочные выражения
+            #    в _DSL_LINE не подходят — отсекаются регуляркой. Сырые
+            #    `robot.X(...)` тоже отсекаются (точка в имени).
             md = self._DSL_LINE.match(stripped)
             if not md:
                 continue

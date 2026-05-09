@@ -418,6 +418,52 @@ face_cardinal_cmd(180)  # на юг
         self.assertEqual(cmds[0].intent, "forward_to_wall")
         self.assertEqual(cmds[1].intent, "face_s")
 
+    def test_atomic_cmds_via_cmd_marker(self):
+        """Регрессия: атомарные команды (forward, steer, stop) генерируют
+        сырые `robot.X(...)` вызовы. regex `_DSL_LINE` их не пропускает
+        из-за точки в имени, поэтому без маркера `# CMD:` парсер находил 0
+        команд → «В текстовом поле не найдено команд»."""
+        text = """
+robot.set_angle(13)  # руль направо на 13°
+# CMD: steer(13)
+
+# CMD: forward(20)
+robot.set_angle(13)                      # руль текущий (13°)
+robot.move(40, duration_for_distance(20, 40))  # вперёд 20 см
+robot.stop()                            # остановка
+
+# CMD: forward(20)
+robot.set_angle(13)
+robot.move(40, duration_for_distance(20, 40))
+robot.stop()
+
+# CMD: steer(0)
+robot.set_angle(0)  # руль прямо
+"""
+        cmds = self.s._parse_program_text(text)
+        intents = [c.intent for c in cmds]
+        # 1×steer_right(13) + 2×forward + 1×steer_center
+        self.assertEqual(intents,
+                         ["steer_right", "forward", "forward", "steer_center"],
+                         f"должны распознаться 4 команды, найдено: {intents}")
+
+    def test_codegen_emits_marker_for_atomic_intents(self):
+        """forward/steer/stop должны генерировать `# CMD: ...` маркер."""
+        cmd = _cmd("forward", raw="Вега вперед 50 см", code="forward(50)")
+        lines = self.s._python_call_lines_for_cmd(cmd)
+        self.assertTrue(any(l.lstrip().startswith("# CMD: forward(50)") for l in lines),
+                        f"forward должен иметь # CMD: маркер. Получено: {lines}")
+
+    def test_codegen_no_marker_for_compound_intents(self):
+        """face_cardinal_cmd / circle_cmd / goto_cmd — call-строка сама
+        парсится, маркер не нужен (иначе двойной счёт)."""
+        # circle_cmd
+        cmd = _cmd("circle", raw="Вега вокруг", code="circle()")
+        lines = self.s._python_call_lines_for_cmd(cmd)
+        for line in lines:
+            self.assertFalse(line.lstrip().startswith("# CMD"),
+                             f"circle не должен иметь # CMD маркер: {line!r}")
+
     def test_full_textarea_with_helpers_and_calls(self):
         """Полный сценарий: преамбула + def-блоки + call-строки с комментариями.
         Должны быть распознаны ТОЛЬКО call-строки (def/class/etc игнорируются)."""

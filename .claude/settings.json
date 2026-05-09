@@ -24,7 +24,8 @@
       "Bash(python -m unittest tests.test_codegen -v)",
       "Bash(python -m unittest tests.test_codegen)",
       "Bash(python -c \"import ast; ast.parse\\(open\\('session.py', encoding='utf-8'\\).read\\(\\)\\); print\\('session.py OK'\\)\")",
-      "Bash(python -c \"import ast; ast.parse\\(open\\('main.py', encoding='utf-8'\\).read\\(\\)\\); print\\('main.py OK'\\)\")"
+      "Bash(python -c \"import ast; ast.parse\\(open\\('main.py', encoding='utf-8'\\).read\\(\\)\\); print\\('main.py OK'\\)\")",
+      "Bash(git add *)"
     ]
   }
 }
