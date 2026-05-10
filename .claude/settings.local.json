@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(awk '/^class TestZoneCancellation/,/^# ────/' M:/WEB_DEVELOPER/VAGAREX/tests/test_codegen.py)",
+      "Bash(git -C M:/WEB_DEVELOPER status -s)",
+      "Bash(git -C M:/WEB_DEVELOPER log --oneline -5)",
+      "Bash(git -C M:/WEB_DEVELOPER status)"
+    ]
+  }
+}
