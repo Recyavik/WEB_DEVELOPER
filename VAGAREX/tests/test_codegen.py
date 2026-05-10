@@ -642,5 +642,279 @@ class TestZoneCancellation(unittest.TestCase):
 
 # ────────────────────────────────────────────────────────────────────────────
 
+
+class TestFaceTo(unittest.TestCase):
+    """Регрессии для нового intent `face_to` (поворот на месте на любой угол).
+
+    Все эти фразы должны быть ОДНОЙ командой — face_cmd(N):
+      «поверни на N» / «повернись на N» / «поворот на N»
+      «разверни на N» / «развернись на N»
+      «лицом на N»  (с ЧИСЛОМ; без числа — это сторона света)
+    """
+
+    def setUp(self):
+        self.s = _SessionStub(_make_cfg())
+
+    # ── NLU: фразировки → один intent face_to ───────────────────────────
+
+    def test_voice_phrases_route_to_face_to(self):
+        from nlu import predict
+        cases = [
+            "вега поверни на 70",
+            "вега повернись на 70",
+            "вега поворот на 70",
+            "вега разверни на 70",
+            "вега развернись на 70",
+            "вега развернись на 90 градусов",
+            "вега лицом на 70",
+            "вега лицом на 137",
+            "вега повернись на -30",   # отрицательный угол
+        ]
+        for phrase in cases:
+            with self.subTest(phrase=phrase):
+                intent, _ = predict(phrase)
+                self.assertEqual(
+                    intent, "face_to",
+                    f"{phrase!r} → ожидался face_to, получен {intent}")
+
+    def test_litsom_na_cardinal_still_works(self):
+        """«лицом на восток/север/...» БЕЗ числа должно идти в face_X,
+        а не перехватываться правилом face_to (callable-предикат
+        срабатывает только при наличии цифры после «на»)."""
+        from nlu import predict
+        cases = [
+            ("вега лицом на восток",       "face_e"),
+            ("вега лицом на север",        "face_n"),
+            ("вега лицом на юго-запад",    "face_sw"),
+            ("вега на запад",              "face_w"),
+            ("вега к северу",              "face_n"),
+        ]
+        for phrase, expected in cases:
+            with self.subTest(phrase=phrase):
+                intent, _ = predict(phrase)
+                self.assertEqual(
+                    intent, expected,
+                    f"{phrase!r} → ожидался {expected}, получен {intent}")
+
+    def test_razvernis_without_number_still_turn_around(self):
+        """«Вега развернись» без числа = разворот 180° (turn_around),
+        НЕ face_to. Регрессия: правило face_to идёт раньше turn_around,
+        но без «на N» оно не должно матчиться."""
+        from nlu import predict
+        intent, _ = predict("вега развернись")
+        self.assertEqual(intent, "turn_around")
+
+    # ── extract_face_angle ──────────────────────────────────────────────
+
+    def test_extract_face_angle_all_verbs(self):
+        from nlu import extract_face_angle
+        cases = [
+            ("поверни на 70",                70),
+            ("повернись на 45",              45),
+            ("поворот на 180",               180),
+            ("разверни на 90",               90),
+            ("развернись на 270",            270),
+            ("лицом на 137",                 137),
+            ("повернись на -30",             330),  # модуль 360
+            ("развернись на 90 градусов",    90),
+        ]
+        for text, expected in cases:
+            with self.subTest(text=text):
+                self.assertEqual(extract_face_angle(text), expected)
+
+    def test_extract_face_angle_returns_none_when_no_number(self):
+        from nlu import extract_face_angle
+        self.assertIsNone(extract_face_angle("лицом на восток"))
+        self.assertIsNone(extract_face_angle("развернись"))
+        self.assertIsNone(extract_face_angle("просто текст"))
+
+    # ── _build_cmd ──────────────────────────────────────────────────────
+
+    def test_build_cmd_emits_face_cmd_call(self):
+        cmd = self.s._build_cmd("face_to", "вега поверни на 70")
+        self.assertIsNotNone(cmd, "_build_cmd для face_to не должен возвращать None")
+        self.assertEqual(cmd.intent, "face_to")
+        self.assertIn("face_cmd(70)", cmd.code)
+        self.assertIn("70", cmd.label)
+
+    def test_build_cmd_returns_none_without_angle(self):
+        """_build_cmd для face_to без угла → None (нечего исполнять)."""
+        cmd = self.s._build_cmd("face_to", "вега поверни на")
+        self.assertIsNone(cmd)
+
+    # ── Codegen: face_to → face_cmd(N) ──────────────────────────────────
+
+    def test_codegen_emits_face_cmd_line(self):
+        cmd = _cmd("face_to", raw="вега лицом на 70",
+                   code="face_cmd(70)", label="Поворот на 70°")
+        lines = self.s._python_call_lines_for_cmd(cmd)
+        joined = "\n".join(lines)
+        self.assertIn("face_cmd(70)", joined,
+                      "Codegen должен эмитить face_cmd(70) для face_to")
+
+    def test_helpers_for_face_to_includes_face_cmd(self):
+        cmd = _cmd("face_to", raw="вега поверни на 70",
+                   code="face_cmd(70)")
+        helpers = self.s._helpers_for_cmd(cmd)
+        self.assertIn("face_cmd", helpers,
+                      "face_to должен тянуть в преамбулу def face_cmd")
+
+    # ── Parser: face_cmd(N) round-trip ──────────────────────────────────
+
+    def test_parser_face_cmd_arbitrary_to_face_to(self):
+        """face_cmd(70) → face_to (произвольный угол сохраняется в raw)."""
+        result = UserSession._parse_dsl_line("face_cmd", "70")
+        self.assertEqual(result[0], "face_to")
+        self.assertIn("70", result[1])
+
+    def test_parser_face_cmd_cardinal_to_face_X(self):
+        """face_cmd(0/45/90/...) → конкретный face_X (точное совпадение)."""
+        for deg, expected in [(0, "face_n"), (45, "face_ne"), (90, "face_e"),
+                               (180, "face_s"), (315, "face_nw")]:
+            with self.subTest(deg=deg):
+                result = UserSession._parse_dsl_line("face_cmd", str(deg))
+                self.assertEqual(result[0], expected)
+
+
+class TestStableCommandSurface(unittest.TestCase):
+    """Smoke-тест: каждый известный intent должен либо строиться через
+    _build_cmd в валидный RobotCmd, либо явно возвращать None по причине
+    «без обязательного аргумента». Никаких исключений."""
+
+    def setUp(self):
+        self.s = _SessionStub(_make_cfg())
+
+    # Карта: intent → (raw для теста, ожидание None?)
+    INTENT_PROBES = [
+        # Движение
+        ("forward",            "вега вперед 100 см",          False),
+        ("back",               "вега назад 50 см",            False),
+        ("forward_to_wall",    "вега вперед до упора",        False),
+        ("backward_to_wall",   "вега назад до упора",         False),
+        ("brake",              "вега тормоз",                 False),
+        ("stop",               "вега стоп",                   False),
+        # Руль
+        ("steer_right",        "вега направо 20",             False),
+        ("steer_left",         "вега налево 20",              False),
+        ("steer_right_small",  "вега правее",                 False),
+        ("steer_left_small",   "вега левее",                  False),
+        ("steer_center",       "вега руль прямо",             False),
+        ("set_speed",          "вега скорость 50",            False),
+        # Маневры
+        ("turn_around",        "вега разворот",               False),
+        ("turn_around_place",  "вега разворот на месте",      False),
+        ("circle",             "вега вокруг",                 False),
+        ("figure_eight",       "вега восьмерка",              False),
+        ("spiral_out",         "вега спираль наружу",         False),
+        ("spiral_in",          "вега спираль внутрь",         False),
+        ("bypass_right",       "вега объезд справа",          False),
+        ("bypass_left",        "вега объезд слева",           False),
+        # Навигация
+        ("home",               "вега домой",                  False),
+        ("goto",               "вега в точку 100 50",         False),
+        ("goto",               "вега в точку",                True),   # без коорд
+        # Стороны света и поворот на угол
+        ("face_n",             "вега север",                  False),
+        ("face_ne",            "вега северо-восток",          False),
+        ("face_e",             "вега восток",                 False),
+        ("face_se",            "вега юго-восток",             False),
+        ("face_s",             "вега юг",                     False),
+        ("face_sw",            "вега юго-запад",              False),
+        ("face_w",             "вега запад",                  False),
+        ("face_nw",            "вега северо-запад",           False),
+        ("face_to",            "вега поверни на 70",          False),
+        ("face_to",            "вега лицом на 137",           False),
+        ("face_to",            "вега поверни на",             True),   # без угла
+        ("set_course",         "вега курс 90",                False),
+        ("set_course",         "вега курс",                   True),   # без угла
+        # Зоны
+        ("mark_danger",        "вега опасная зона 100 50 20", False),
+        ("mark_danger",        "вега опасная зона",           False),  # under robot
+        ("set_algorithm_zone", "вега установи зону 100 100",  False),
+        ("set_algorithm_zone", "вега установи зону",          True),
+        ("remove_zone",        "вега убрать зону",            False),
+        ("remove_zone",        "вега убрать зону 100 100",    False),
+        ("remove_danger_zone", "вега убрать опасную зону 100 50", False),
+        # Режимы / сервис
+        ("mode_inspector",     "вега инспектор",              False),
+        ("mode_cautious",      "вега осторожно",              False),
+        ("path_show",          "вега показать путь",          False),
+        ("path_hide",          "вега скрыть путь",            False),
+        ("reset",              "вега новое поле",             False),
+        ("recharge",           "вега зарядить",               False),
+        ("pause",              "вега пауза 2",                False),
+        ("light_on",           "вега включи свет",            False),
+        ("light_off",          "вега выключи свет",           False),
+        ("light_color",        "вега свет красный",           False),
+        ("report_pos",         "вега где ты",                 False),
+        ("report_status",      "вега статус робота",          False),
+    ]
+
+    def test_every_intent_builds_or_explicitly_returns_none(self):
+        for intent, raw, expect_none in self.INTENT_PROBES:
+            with self.subTest(intent=intent, raw=raw):
+                try:
+                    cmd = self.s._build_cmd(intent, raw)
+                except Exception as e:
+                    self.fail(f"_build_cmd({intent!r}, {raw!r}) "
+                              f"бросил {type(e).__name__}: {e}")
+                if expect_none:
+                    self.assertIsNone(
+                        cmd, f"{intent!r} должен вернуть None для {raw!r}")
+                else:
+                    self.assertIsNotNone(
+                        cmd, f"{intent!r} вернул None для {raw!r}")
+                    self.assertEqual(cmd.intent, intent)
+                    self.assertTrue(cmd.code, f"{intent!r}: пустой code")
+                    self.assertTrue(cmd.label, f"{intent!r}: пустой label")
+
+    def test_codegen_for_built_cmds_does_not_crash(self):
+        """Пайплайн: _build_cmd → _python_call_lines_for_cmd → _helpers_for_cmd.
+        Регрессия: ни один known intent не должен бросать исключение
+        при codegen."""
+        for intent, raw, expect_none in self.INTENT_PROBES:
+            if expect_none:
+                continue
+            with self.subTest(intent=intent, raw=raw):
+                cmd = self.s._build_cmd(intent, raw)
+                if cmd is None:
+                    continue   # tolerated for some optional argument cases
+                try:
+                    self.s._python_call_lines_for_cmd(cmd)
+                    self.s._helpers_for_cmd(cmd)
+                except Exception as e:
+                    self.fail(f"codegen для {intent!r} {raw!r} бросил "
+                              f"{type(e).__name__}: {e}")
+
+    def test_dsl_parser_does_not_crash_on_known_calls(self):
+        """Парсер _parse_dsl_line должен корректно (без исключений)
+        обрабатывать все ключевые сгенерированные DSL-вызовы."""
+        probes = [
+            ("forward", "100"), ("back", "50"),
+            ("steer", "+20"), ("steer", "-20"), ("steer", "0"),
+            ("forward_to_wall", ""), ("backward_to_wall", ""),
+            ("turn_around_place", "3"),
+            ("face_cmd", "70"), ("face_cmd", "0"),  # арбитраж + кардинал
+            ("goto", "100, 50"),
+            ("home", ""),
+            ("mark_danger", "100, 50, 20"),
+            ("attention_zone", "150, 150"),
+            ("remove_zone", "100, 50"),
+            ("course", "90"),
+            ("pause", "2"),
+            ("reset", ""),
+            ("brake", ""),
+        ]
+        for fn, args in probes:
+            with self.subTest(fn=fn, args=args):
+                try:
+                    UserSession._parse_dsl_line(fn, args)
+                except Exception as e:
+                    self.fail(f"_parse_dsl_line({fn!r}, {args!r}) бросил "
+                              f"{type(e).__name__}: {e}")
+
+
+# ────────────────────────────────────────────────────────────────────────────
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
