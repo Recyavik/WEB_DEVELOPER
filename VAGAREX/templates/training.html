@@ -333,6 +333,50 @@
         <tr><td><code>Вега северо-запад</code> · <code>Вега на северо-запад</code></td><td>315°</td><td>СЗ</td></tr>
       </tbody>
     </table>
+    <h3 style="margin-top:1rem">Поворот на произвольный угол</h3>
+    <p class="hint">
+      Тот же 3-дуговой K-turn, что и для сторон света — просто цель
+      не округляется до 8 направлений. Все приведённые ниже фразы —
+      <strong>один и тот же intent <code>face_to</code></strong>, который
+      генерирует один и тот же вызов <code>face_cmd(N)</code>. Выбирайте
+      фразу, которая удобнее произносится.
+    </p>
+    <table class="cmd-table">
+      <thead><tr><th>Фраза</th><th>Что делает</th><th>Пример кода</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>Вега поверни на 70</code> ·
+              <code>Вега повернись на 70</code> ·
+              <code>Вега поворот на 70</code></td>
+          <td>Развернуться лицом к курсу 70° (K-turn на месте)</td>
+          <td><code>face_cmd(70)</code></td>
+        </tr>
+        <tr>
+          <td><code>Вега лицом на 70</code> ·
+              <code>Вега лицом на 137</code></td>
+          <td>То же: «лицом на N» с числом — face_to. Без числа
+              («лицом на восток») — обычная сторона света.</td>
+          <td><code>face_cmd(70)</code></td>
+        </tr>
+        <tr>
+          <td><code>Вега разверни на 90 градусов</code> ·
+              <code>Вега развернись на 45</code></td>
+          <td>Эквивалентно: тот же K-turn на месте</td>
+          <td><code>face_cmd(90)</code></td>
+        </tr>
+        <tr>
+          <td><code>Вега развернись</code> (без числа)</td>
+          <td>Старая команда — разворот на 180° (turn_around). Не путать!</td>
+          <td><code>turn_around_cmd()</code></td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="note">
+      <strong>Отличие от <code>Вега курс N</code>:</strong>
+      «курс» едет дугой <em>с движением вперёд</em> до цели —
+      робот описывает окружность. «Поверни на N» / «лицом на N»
+      крутится <strong>на месте</strong> без смещения.
+    </p>
   </section>
 
   <!-- ── 9. Пауза ─────────────────────────────────────────────────── -->
@@ -708,7 +752,7 @@
                 <code>robot.X(...)</code> вызовы; источником истины служит
                 комментарий-маркер <code># CMD: name(args)</code> над ними.</li>
             <li><strong>Compound-команды</strong> (<code>circle_cmd(...)</code>,
-                <code>face_cardinal_cmd(180)</code>, <code>goto_cmd(x, y)</code>,
+                <code>face_cmd(180)</code>, <code>goto_cmd(x, y)</code>,
                 <code>mark_danger_cmd(...)</code> и т.п.) — парсятся
                 по самой строке вызова, маркер не нужен. Поддерживаются
                 варианты <code>X_here_cmd()</code> (без аргументов = берём
@@ -723,11 +767,11 @@
       <li>Можно <strong>дописывать вызовы вручную</strong>: например,
           добавить ещё одну строку <code>mark_danger_cmd(10, 10, 30)</code>
           в раздел вызовов — при «▶ Запуск» парсер увидит её и поставит зону.
-          Аналогично работают <code>set_algorithm_zone_cmd(X, Y, R)</code>,
+          Аналогично работают <code>attention_zone_cmd(X, Y, R)</code>,
           <code>remove_zone_cmd(X, Y)</code>, <code>goto_cmd(X, Y)</code>,
-          <code>home_cmd()</code>, <code>face_cardinal_cmd(deg)</code>
+          <code>home_cmd()</code>, <code>face_cmd(deg)</code>
           (округлится до ближайшей стороны света),
-          <code>set_course_cmd(deg)</code>.</li>
+          <code>course_cmd(deg)</code>.</li>
       <li><strong>⛯ Режим зон</strong> — самый быстрый способ расставить
           опасные зоны обстановки. Щёлкаешь мышью по карте — зоны появляются.
           Подробности — в разделе 10 выше.</li>
@@ -753,8 +797,8 @@
       <li>Если робот «забыл» где он — скажите <code>Вега где робот</code> или
           сделайте <code>Вега новое поле</code> для полного сброса.</li>
       <li>Подробное описание всех функций библиотеки и алгоритмов с
-          диаграммами — на вкладках <a href="/system">API 1T REX</a>
-          и <a href="/maneuvers">Маневры</a>.</li>
+          диаграммами — в разделе <a href="/system">Справка → API 1T REX</a>
+          и <a href="/maneuvers">Справка → Маневры</a>.</li>
       <li>Список заданий (упражнений) — на странице
           <a href="/tasks">Задания</a>. История прогонов — в
           <a href="/missions">История</a>.</li>

@@ -70,6 +70,107 @@ body {
 .brand-rex  { font-size: 1.5rem; font-weight: 800; color: var(--accent2); letter-spacing: -1px; }
 .brand-sub  { font-size: 0.7rem; color: var(--text-dim); margin-left: 0.5rem; }
 
+/* ── Хаб-страница «Справка»: 3 карточки разделов ────────────────────── */
+.help-grid {
+  display: grid; gap: 1.4rem;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  margin-top: 1.6rem;
+}
+/* Каждая карточка получает свой акцент через CSS-переменную --card-accent
+   (задаётся inline-style в HTML), это влияет на полоску, hover-бордер и
+   фоновый ореол иконки. */
+.help-card {
+  position: relative; overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.7rem 1.5rem 1.4rem;
+  display: flex; flex-direction: column;
+  transition: transform 0.18s ease, border-color 0.18s, box-shadow 0.18s;
+}
+.help-card::before {
+  content: ''; position: absolute; left: 0; right: 0; top: 0;
+  height: 3px;
+  background: var(--card-accent, var(--accent));
+  opacity: 0.85;
+}
+.help-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--card-accent, var(--accent));
+  box-shadow: 0 12px 28px rgba(0,0,0,0.40);
+}
+.help-card__icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 56px; height: 56px;
+  font-size: 2rem; line-height: 1;
+  background: color-mix(in srgb, var(--card-accent, var(--accent)) 15%, transparent);
+  border-radius: 12px;
+  margin-bottom: 1rem;
+}
+.help-card__title {
+  font-size: 1.25rem; font-weight: 700;
+  margin: 0 0 0.7rem;
+  color: var(--text);
+  letter-spacing: -0.2px;
+}
+.help-card__desc {
+  flex: 1;
+  margin: 0 0 1.3rem;
+  font-size: 0.88rem;
+  color: var(--text-dim);
+  line-height: 1.55;
+}
+.help-card__desc code {
+  background: var(--bg-panel); padding: 1px 5px; border-radius: 3px;
+  font-size: 0.8rem; color: var(--accent2);
+}
+.help-card .btn {
+  align-self: flex-start;
+  padding: 0.55rem 1.1rem;
+  background: var(--card-accent, var(--accent));
+  color: #fff;
+}
+.help-card .btn:hover { opacity: 0.9; }
+
+/* ── Статус-подвал ──────────────────────────────────────────────────────
+   Полностью непрозрачный, фиксирован внизу. Содержит статус-строку слева
+   и версию справа. Контент основного грида (control-layout) отнимает
+   высоту подвала из своего расчёта, поэтому пересечения нет. */
+.appbar {
+  position: fixed; left: 0; right: 0; bottom: 0;
+  height: 22px; padding: 0 0.7rem;
+  background: #161b22;                        /* solid, не прозрачно */
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -2px 6px rgba(0,0,0,0.35);    /* лёгкая тень над контентом */
+  display: flex; align-items: center; gap: 0.6rem;
+  font-size: 0.7rem; line-height: 1; color: var(--text-dim);
+  z-index: 60;
+}
+.appbar__status {
+  flex: 1; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  /* Базовый цвет — голубой (как кнопка «Инспектор»). Уровни
+     info/success/warning не перебивают цвет режима (как просил
+     пользователь): только режим робота определяет тон, а ошибки
+     и подсказки выделяются явно. */
+  color: var(--accent);
+}
+/* В режиме «осторожно» — жёлтый, как кнопка Осторожно. */
+.appbar--cautious .appbar__status { color: var(--warning); }
+/* Sticky-подсказка (Режим зон) — серая, нейтральная подсказка. */
+.appbar__status--hint    { color: var(--text-dim) !important; }
+/* Ошибки — красные, перебивают режим. */
+.appbar__status--error   { color: var(--danger)  !important; }
+.appbar__version {
+  flex-shrink: 0;
+  padding-left: 0.7rem; border-left: 1px solid var(--border);
+  color: var(--text-dim); opacity: 0.7;
+  font-size: 0.66rem; font-variant-numeric: tabular-nums;
+}
+
+/* Резерв снизу — высота appbar; контент не уезжает под подвал. */
+body { padding-bottom: 22px; }
+
 .topbar__nav { display: flex; gap: 0.25rem; flex: 1; }
 .nav-link {
   padding: 0.35rem 0.8rem;
@@ -77,10 +178,18 @@ body {
   color: var(--text-dim);
   text-decoration: none;
   font-size: 0.85rem;
-  transition: background 0.15s, color 0.15s;
+  font-weight: 500;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  border: 1px solid transparent;
 }
-.nav-link:hover      { background: var(--border); color: var(--text); }
-.nav-link--active    { background: var(--accent); color: #fff !important; }
+.nav-link:hover      { background: rgba(255,255,255,0.04); color: var(--text); }
+.nav-link--active {
+  /* Тёмный фон с акцент-бордером — лучше контраст, чем сплошной голубой. */
+  background: rgba(88,166,255,0.10);
+  color: var(--accent) !important;
+  border-color: rgba(88,166,255,0.35);
+  font-weight: 600;
+}
 
 .topbar__status { display: flex; align-items: center; gap: 0.5rem; }
 
@@ -104,9 +213,10 @@ body {
   display: grid;
   grid-template-columns: minmax(240px, 280px) minmax(0, 1fr) minmax(240px, 320px);
   gap: 0.75rem;
-  /* Подвал убран → используем больше высоты под контент.
-     Topbar ≈ 3.5rem, main-content padding 1rem сверху и снизу = 2rem. */
-  height: calc(100vh - 5.5rem);
+  /* Topbar ≈ 3.5rem, main-content padding 1rem×2 = 2rem, appbar 22px.
+     Итого вычитаем из 100vh, чтобы основные панели + статус-подвал
+     поместились без вертикального скролла. */
+  height: calc(100vh - 5.5rem - 22px);
   min-width: 0;
 }
 
@@ -117,7 +227,13 @@ body {
   overflow-x: hidden;
   min-width: 0;
 }
-.log-panel, .viz-container { overflow-y: auto; }
+.viz-container { overflow-y: auto; }
+/* Правая панель: код-карточка фиксированной высоты сверху, журнал ниже
+   занимает всё оставшееся место и скроллится внутри своей .cmd-log
+   (как в левой панели для side-panel__scroll). Внешнего скролла нет. */
+.log-panel       { overflow: hidden; }
+.log-panel > .card             { flex-shrink: 0; }      /* карточка кода фиксирована */
+.log-panel > .card--full       { flex: 1; min-height: 0; }  /* журнал тянется */
 
 /* Левая панель: верх (state + СТОП) фиксирован, низ скроллится отдельно */
 .side-panel { overflow: hidden; }
@@ -140,16 +256,10 @@ body {
   scrollbar-gutter: stable;
 }
 
-/* Та же логика автоскрытия — для журнала справа и логов */
-.log-panel, .cmd-log {
-  scrollbar-width: none;
-}
-.log-panel::-webkit-scrollbar,
-.cmd-log::-webkit-scrollbar { width: 0; height: 0; }
-.log-panel:hover, .cmd-log:hover {
-  scrollbar-width: thin;
-}
-.log-panel:hover::-webkit-scrollbar,
+/* Скроллбар внутри журнала — скрытый по умолчанию, появляется на hover. */
+.cmd-log                     { scrollbar-width: none; }
+.cmd-log::-webkit-scrollbar  { width: 0; height: 0; }
+.cmd-log:hover               { scrollbar-width: thin; }
 .cmd-log:hover::-webkit-scrollbar { width: 8px; }
 
 .side-panel { max-width: 280px; }
@@ -239,14 +349,14 @@ body {
 .state-item {
   display: flex;
   align-items: baseline;
-  gap: 0.25rem;
-  padding: 0.35rem 0.4rem;
+  gap: 0.2rem;
+  padding: 0.22rem 0.4rem;
   background: var(--bg-panel);
   border-radius: 5px;
 }
-.state-label { font-size: 0.65rem; color: var(--text-dim); min-width: 40px; }
-.state-value { font-size: 1rem; font-weight: 700; color: var(--accent); }
-.state-unit  { font-size: 0.65rem; color: var(--text-dim); }
+.state-label { font-size: 0.62rem; color: var(--text-dim); min-width: 38px; }
+.state-value { font-size: 0.82rem; font-weight: 700; color: var(--accent); line-height: 1.1; }
+.state-unit  { font-size: 0.6rem; color: var(--text-dim); }
 
 /* ── Buttons ─────────────────────────────────────────────────────────────────── */
 .btn {
@@ -255,44 +365,52 @@ body {
   justify-content: center;
   gap: 0.3rem;
   padding: 0.45rem 0.9rem;
-  border: none;
+  border: 1px solid transparent;     /* единая толщина обводки у всех */
   border-radius: 6px;
   font-size: 0.85rem;
-  font-weight: 600;
+  font-weight: 500;                  /* обычный вес; жирнее — только активные */
   cursor: pointer;
-  transition: opacity 0.15s, transform 0.1s;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.1s;
   background: var(--border);
   color: var(--text);
+  text-decoration: none;             /* для <a class="btn"> */
+  font-family: inherit;
 }
-.btn:active { transform: scale(0.96); }
-.btn:hover  { opacity: 0.85; }
-.btn--primary { background: var(--accent); color: #fff; }
-.btn--voice   { background: #21262d; border: 1px solid var(--accent); color: var(--accent); width: 100%; }
+/* Унифицированная система кнопок:
+   - Базовая толщина обводки: 1px у всех (transparent → виден цвет варианта)
+   - Жирность: 500 в обычном состоянии, 700 — только когда .is-active
+   - Hover: бордер чуть ярче, фон чуть ярче (без opacity-трюков)
+   - Active (нажатие): легкий «давим» через scale */
+.btn:active     { transform: scale(0.97); }
+.btn.is-active  { font-weight: 700; }
+
+.btn--primary   { background: var(--accent);  color: #fff; border-color: var(--accent); }
+.btn--primary:hover { background: #4090ee; border-color: #4090ee; }
+
+.btn--voice     { background: #21262d; border-color: var(--accent); color: var(--accent); width: 100%; }
 .btn--voice.listening { background: #1a2f4a; border-color: var(--accent2); color: var(--accent2); }
-.btn--stop    { background: #3d1a1a; color: var(--danger); }
-.btn--center  { background: #1a2430; color: var(--accent); }
-.btn--danger  { background: #3d1a1a; color: var(--caution); }
-.btn--danger.is-active {
-  background: #6b2424; color: #fff; border-color: var(--caution);
-  box-shadow: 0 0 0 1px var(--caution) inset;
-}
-/* Голубая «инспектор» — приглушенная, ярче в .is-active */
-.btn--info    { background: #14202f; color: #4a6e96; border: 1px solid #1e2c40; }
-.btn--info:hover { background: #1a2a3d; opacity: 1; color: var(--accent); }
-.btn--info.is-active {
-  background: #1f4068; color: #fff; border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent) inset;
-}
-/* Желтая «осторожно» — приглушенная, ярче в .is-active */
-.btn--warn    { background: #2a1d05; color: #7a6231; border: 1px solid #3a2a0f; }
-.btn--warn:hover { background: #3a280a; opacity: 1; color: var(--warning); }
-.btn--warn.is-active {
-  background: #6b4200; color: #fff; border-color: var(--warning);
-  box-shadow: 0 0 0 1px var(--warning) inset;
-}
-/* Зеленая «зарядить» */
-.btn--success { background: #16321f; color: var(--success); border: 1px solid #1f4d2c; }
-.btn--success:hover { background: #1d4028; opacity: 1; }
+
+.btn--stop      { background: #3d1a1a; color: var(--danger); border-color: rgba(248,81,73,0.35); }
+.btn--stop:hover{ background: #4a1f1f; border-color: var(--danger); }
+
+.btn--center    { background: #1a2430; color: var(--accent); border-color: rgba(88,166,255,0.25); }
+.btn--center:hover { background: #1f2a38; border-color: var(--accent); }
+
+/* Тонированные «состояния»: приглушены в покое, ярче по hover, активны = .is-active */
+.btn--info      { background: #14202f; color: #4a6e96; border-color: #1e2c40; }
+.btn--info:hover    { background: #1a2a3d; color: var(--accent); border-color: rgba(88,166,255,0.4); }
+.btn--info.is-active{ background: #1f4068; color: #fff; border-color: var(--accent); }
+
+.btn--warn      { background: #2a1d05; color: #7a6231; border-color: #3a2a0f; }
+.btn--warn:hover    { background: #3a280a; color: var(--warning); border-color: rgba(245,184,40,0.4); }
+.btn--warn.is-active{ background: #6b4200; color: #fff; border-color: var(--warning); }
+
+.btn--danger    { background: #3d1a1a; color: var(--caution); border-color: rgba(248,81,73,0.3); }
+.btn--danger:hover    { background: #4a1f1f; color: var(--danger); border-color: rgba(248,81,73,0.55); }
+.btn--danger.is-active{ background: #6b2424; color: #fff; border-color: var(--danger); }
+
+.btn--success   { background: #16321f; color: var(--success); border-color: #1f4d2c; }
+.btn--success:hover { background: #1d4028; color: #5fcc7e; border-color: rgba(63,185,80,0.5); }
 .btn--sm      { padding: 0.3rem 0.6rem; font-size: 0.78rem; }
 .btn--xs      { padding: 0.2rem 0.45rem; font-size: 0.72rem; }
 

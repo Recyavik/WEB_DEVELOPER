@@ -112,26 +112,26 @@ class TestCollectHelpers(unittest.TestCase):
 
     def test_home_pulls_all_deps(self):
         helpers = self.s._collect_helpers([_cmd("home", "Вега домой")])
-        # home → goto → face_cardinal + Odometry + duration_for_distance
-        #            → drive_to_point_closed_loop (closed-loop проезд)
+        # home → goto → face_cardinal + Odometry + duration
+        #            → drive_loop (closed-loop проезд)
         self.assertEqual(set(helpers),
-                         {"Odometry", "duration_for_distance",
-                          "face_cardinal_cmd", "drive_to_point_closed_loop",
+                         {"Odometry", "duration",
+                          "face_cmd", "drive_loop",
                           "goto_cmd", "home_cmd"})
         # Каждая зависимость должна стоять ДО зависимого:
         idx = {n: i for i, n in enumerate(helpers)}
-        self.assertLess(idx["Odometry"], idx["face_cardinal_cmd"])
-        self.assertLess(idx["duration_for_distance"], idx["face_cardinal_cmd"])
-        self.assertLess(idx["Odometry"], idx["drive_to_point_closed_loop"])
-        self.assertLess(idx["face_cardinal_cmd"], idx["goto_cmd"])
-        self.assertLess(idx["drive_to_point_closed_loop"], idx["goto_cmd"])
+        self.assertLess(idx["Odometry"], idx["face_cmd"])
+        self.assertLess(idx["duration"], idx["face_cmd"])
+        self.assertLess(idx["Odometry"], idx["drive_loop"])
+        self.assertLess(idx["face_cmd"], idx["goto_cmd"])
+        self.assertLess(idx["drive_loop"], idx["goto_cmd"])
         self.assertLess(idx["goto_cmd"], idx["home_cmd"])
 
     def test_goto_pulls_closed_loop(self):
-        """goto_cmd должна тянуть drive_to_point_closed_loop (коррекция курса)."""
+        """goto_cmd должна тянуть drive_loop (коррекция курса)."""
         c = _cmd("goto", raw="Вега в точку 100 50", code="goto(100,50)")
         helpers = self.s._collect_helpers([c])
-        self.assertIn("drive_to_point_closed_loop", helpers,
+        self.assertIn("drive_loop", helpers,
                       "goto_cmd должна включать closed-loop helper")
 
     def test_no_dup_when_two_circles(self):
@@ -142,7 +142,7 @@ class TestCollectHelpers(unittest.TestCase):
     def test_forward_with_dist_pulls_duration(self):
         c = _cmd("forward", raw="Вега вперед 100 см", code="forward(100)")
         helpers = self.s._collect_helpers([c])
-        self.assertEqual(helpers, ["duration_for_distance"])
+        self.assertEqual(helpers, ["duration"])
 
     def test_forward_no_dist_no_helpers(self):
         c = _cmd("forward", raw="Вега вперед", code="forward()")
@@ -178,7 +178,7 @@ class TestPreambleEmission(unittest.TestCase):
         out = self.s._python_code_preamble([_cmd("home", "Вега домой")])
         # home -> goto -> face_cardinal -> Odometry/duration
         deps_order = [m.start() for m in re.finditer(
-            r"def (?:duration_for_distance|face_cardinal_cmd|goto_cmd|home_cmd)\(", out)]
+            r"def (?:duration|face_cmd|goto_cmd|home_cmd)\(", out)]
         # помимо порядка проверяем, что всё есть
         self.assertEqual(len(deps_order), 4)
         # порядок вхождения должен быть отсортирован
@@ -206,7 +206,7 @@ class TestCallLines(unittest.TestCase):
     def test_face_cardinal_inline_comment(self):
         lines = self.s._python_call_lines_for_cmd(
             _cmd("face_s", raw="Вега на юг", code="face_s()", label="Лицом на юг"))
-        self.assertEqual(lines, ["face_cardinal_cmd(180)  # на юг"])
+        self.assertEqual(lines, ["face_cmd(180)  # на юг"])
 
 
 class TestParser(unittest.TestCase):
@@ -232,7 +232,7 @@ class TestParser(unittest.TestCase):
         self.assertIn("100", raw)
 
     def test_here_suffix(self):
-        result = UserSession._parse_dsl_line("mark_danger_here_cmd", "")
+        result = UserSession._parse_dsl_line("danger_here_cmd", "")
         self.assertIsNotNone(result)
         intent, _ = result
         self.assertEqual(intent, "mark_danger")
@@ -248,8 +248,8 @@ class TestParser(unittest.TestCase):
         self.assertEqual(intent, "face_s")
 
     def test_face_cardinal_generic_via_cmd_suffix(self):
-        """face_cardinal_cmd(180) (как в сгенерированном коде) тоже работает."""
-        result = UserSession._parse_dsl_line("face_cardinal_cmd", "180")
+        """face_cmd(180) (как в сгенерированном коде) тоже работает."""
+        result = UserSession._parse_dsl_line("face_cmd", "180")
         self.assertIsNotNone(result)
         intent, _ = result
         self.assertEqual(intent, "face_s")
@@ -267,17 +267,27 @@ class TestParser(unittest.TestCase):
         ]
         for deg, expected_intent in cases:
             with self.subTest(deg=deg):
-                result = UserSession._parse_dsl_line("face_cardinal_cmd", str(deg))
+                result = UserSession._parse_dsl_line("face_cmd", str(deg))
                 self.assertIsNotNone(result, f"face_cardinal({deg}) не распознан")
                 self.assertEqual(result[0], expected_intent)
 
-    def test_face_cardinal_rounds_to_nearest(self):
-        """face_cardinal(190) → ближайшее = face_s (180°)."""
-        result = UserSession._parse_dsl_line("face_cardinal_cmd", "190")
-        self.assertEqual(result[0], "face_s")
-        # 350° ближе к 0° (= 10° дельты), чем к 315° (= 35° дельты) → face_n
-        result = UserSession._parse_dsl_line("face_cardinal_cmd", "350")
-        self.assertEqual(result[0], "face_n")
+    def test_face_cardinal_exact_value_routes_to_cardinal(self):
+        """face_cmd(N) с углом ≈ кардинальной точки (±2°) даёт face_X.
+        Иначе — новый интент face_to с точным значением (не округляем,
+        чтобы пользователь мог произвольно повернуться на 70/190/350°)."""
+        # 0/45/90/.../315 (или ±2° от них) → конкретный face_X
+        for deg, expected in [(0, "face_n"), (180, "face_s"), (315, "face_nw"),
+                               (1, "face_n"), (179, "face_s")]:
+            result = UserSession._parse_dsl_line("face_cmd", str(deg))
+            self.assertEqual(result[0], expected,
+                             f"face_cmd({deg}) ожидался {expected}, получен {result}")
+        # Произвольный угол → face_to с точным значением (НЕ округляется)
+        for deg in (70, 190, 350):
+            result = UserSession._parse_dsl_line("face_cmd", str(deg))
+            self.assertEqual(result[0], "face_to",
+                             f"face_cmd({deg}) должен быть face_to, получен {result}")
+            self.assertIn(str(deg), result[1],
+                          f"raw-текст для face_to должен содержать угол {deg}")
 
 
 class TestGotoOptimization(unittest.TestCase):
@@ -298,14 +308,14 @@ class TestGotoOptimization(unittest.TestCase):
         self.s.robot_state.heading = 0   # north
         cmd = self._goto(0, 100)
 
-        # Helpers: только duration_for_distance, не goto_cmd
+        # Helpers: только duration, не goto_cmd
         helpers = self.s._helpers_for_cmd(cmd)
-        self.assertEqual(helpers, ["duration_for_distance"])
+        self.assertEqual(helpers, ["duration"])
 
         # Call lines: robot.move с положительной мощностью
         lines = self.s._python_call_lines_for_cmd(cmd)
         joined = "\n".join(lines)
-        self.assertIn("robot.move(40, duration_for_distance(100", joined)
+        self.assertIn("robot.move(40, duration(100", joined)
         self.assertNotIn("goto_cmd", joined)
         self.assertNotIn("-40", joined)   # не задом
 
@@ -317,11 +327,11 @@ class TestGotoOptimization(unittest.TestCase):
         cmd = self._goto(0, 0)
 
         helpers = self.s._helpers_for_cmd(cmd)
-        self.assertEqual(helpers, ["duration_for_distance"])
+        self.assertEqual(helpers, ["duration"])
 
         lines = self.s._python_call_lines_for_cmd(cmd)
         joined = "\n".join(lines)
-        self.assertIn("robot.move(-40, duration_for_distance(100", joined)
+        self.assertIn("robot.move(-40, duration(100", joined)
         self.assertNotIn("goto_cmd", joined)
 
     def test_arbitrary_angle_uses_full_goto(self):
@@ -333,26 +343,29 @@ class TestGotoOptimization(unittest.TestCase):
 
         helpers = self.s._helpers_for_cmd(cmd)
         self.assertIn("goto_cmd", helpers)
-        self.assertNotIn("duration_for_distance", helpers)   # transitively через goto_cmd
+        self.assertNotIn("duration", helpers)   # transitively через goto_cmd
 
         lines = self.s._python_call_lines_for_cmd(cmd)
         joined = "\n".join(lines)
         self.assertIn("goto_cmd(50, 50)", joined)
 
-    def test_already_at_target_emits_skip(self):
-        """Робот уже в нужной точке (distance < 5 см) — пустая команда."""
+    def test_already_at_target_skips_record(self):
+        """Робот уже в нужной точке (distance < 5 см) — микро-движение не
+        реализовано: helpers пустые, ни одной строки кода, cmd.skip_record=True
+        (команда не запишется в программу). Пользователь получит подсказку
+        в журнал из диспетчера."""
         self.s.robot_state.x, self.s.robot_state.y = 100, 100
         self.s.robot_state.heading = 0
         cmd = self._goto(102, 101)   # 2.2 см от цели
 
         helpers = self.s._helpers_for_cmd(cmd)
-        self.assertEqual(helpers, [])   # ничего не нужно
+        self.assertEqual(helpers, [])   # никаких хелперов
 
         lines = self.s._python_call_lines_for_cmd(cmd)
-        joined = "\n".join(lines)
-        self.assertIn("уже в точке", joined)
-        self.assertNotIn("robot.move", joined)
-        self.assertNotIn("goto_cmd", joined)
+        self.assertEqual(lines, [],
+                         "при skip строк кода быть не должно")
+        self.assertTrue(cmd.skip_record,
+                        "skip-команда не должна записываться в программу")
 
     def test_almost_aligned_within_tolerance(self):
         """Курс отличается на 3° — в пределах ALIGN_TOL=5° → forward."""
@@ -393,7 +406,7 @@ class TestGotoOptimization(unittest.TestCase):
         lines = self.s._python_call_lines_for_cmd(cmd)
         joined = "\n".join(lines)
         # Должна быть РЕАЛЬНАЯ команда движения, не «уже в точке»
-        self.assertIn("robot.move(40, duration_for_distance(", joined)
+        self.assertIn("robot.move(40, duration(", joined)
         self.assertNotIn("уже в точке", joined,
                          "Если бы codegen видел post-state (50,50), было бы skip")
 
@@ -408,8 +421,8 @@ class TestProgramTextParser(unittest.TestCase):
         """Регулярка _DSL_LINE должна допускать `func(args)  # комментарий` в конце строки.
         Иначе все сгенерированные нами call-строки тихо отбрасываются."""
         text = """
-forward_to_wall_cmd(40)  # вперёд до стены
-face_cardinal_cmd(180)  # на юг
+to_wall_cmd(40)  # вперёд до стены
+face_cmd(180)  # на юг
 """
         cmds = self.s._parse_program_text(text)
         self.assertEqual(len(cmds), 2,
@@ -429,12 +442,12 @@ robot.set_angle(13)  # руль направо на 13°
 
 # CMD: forward(20)
 robot.set_angle(13)                      # руль текущий (13°)
-robot.move(40, duration_for_distance(20, 40))  # вперёд 20 см
+robot.move(40, duration(20, 40))  # вперёд 20 см
 robot.stop()                            # остановка
 
 # CMD: forward(20)
 robot.set_angle(13)
-robot.move(40, duration_for_distance(20, 40))
+robot.move(40, duration(20, 40))
 robot.stop()
 
 # CMD: steer(0)
@@ -455,7 +468,7 @@ robot.set_angle(0)  # руль прямо
                         f"forward должен иметь # CMD: маркер. Получено: {lines}")
 
     def test_codegen_no_marker_for_compound_intents(self):
-        """face_cardinal_cmd / circle_cmd / goto_cmd — call-строка сама
+        """face_cmd / circle_cmd / goto_cmd — call-строка сама
         парсится, маркер не нужен (иначе двойной счёт)."""
         # circle_cmd
         cmd = _cmd("circle", raw="Вега вокруг", code="circle()")
@@ -471,7 +484,7 @@ robot.set_angle(0)  # руль прямо
 # === НАЧАЛО ПРОГРАММЫ ===
 
 # Движение вперёд до препятствия по дальномеру
-def forward_to_wall_cmd(power_pct=DEFAULT_SPEED, stop_margin_mm=150):
+def to_wall_cmd(power_pct=DEFAULT_SPEED, stop_margin_mm=150):
     robot.move(power_pct)
     while True:
         dist = robot.get_laser()
@@ -481,12 +494,12 @@ def forward_to_wall_cmd(power_pct=DEFAULT_SPEED, stop_margin_mm=150):
         time.sleep(0.05)
 
 robot.set_angle(0)
-forward_to_wall_cmd(40)  # вперёд до стены
+to_wall_cmd(40)  # вперёд до стены
 
-face_cardinal_cmd(180)  # на юг
+face_cmd(180)  # на юг
 robot.set_angle(0)
-forward_to_wall_cmd(40)  # вперёд до стены
-face_cardinal_cmd(180)  # на юг
+to_wall_cmd(40)  # вперёд до стены
+face_cmd(180)  # на юг
 """
         cmds = self.s._parse_program_text(text)
         intents = [c.intent for c in cmds]
@@ -520,7 +533,7 @@ class TestProgramTextRoundTrip(unittest.TestCase):
             _cmd("circle"),
         ]
         text = self.s._program_text()
-        self.assertIn("def duration_for_distance(", text)
+        self.assertIn("def duration(", text)
         self.assertIn("def circle_cmd(", text)
 
 
@@ -595,20 +608,21 @@ class TestZoneCancellation(unittest.TestCase):
                 self.assertEqual(intent, expected,
                                  f"{phrase!r} → ожидался {expected}, получен {intent}")
 
-    def test_dispatcher_blocks_mark_danger_on_playback(self):
-        """⛔ Регрессия: опасные зоны нельзя создавать программно.
-        При cmd.playback=True (replay через ▶ Запуск) — no-op."""
-        # Читаем код _dispatch и проверяем что в ветке mark_danger
-        # есть обработка cmd.playback.
+    def test_dispatcher_mark_danger_idempotent_on_playback(self):
+        """⏵ Регрессия: при cmd.playback=True диспетчер должен ВОССТАНАВЛИВАТЬ
+        опасные зоны, если их ещё нет, и пропускать дубликаты, если уже есть.
+        Раньше было полное игнорирование — это ломало replay."""
         import inspect
         from session import UserSession
         src = inspect.getsource(UserSession._dispatch)
-        # Должна быть проверка на playback в ветке mark_danger
+        # В ветке mark_danger должна быть проверка playback и обращение
+        # к идемпотентному helper'у _has_danger_zone_at.
         self.assertIn("if cmd.playback:", src)
-        # И конкретно — игнорирование mark_danger при replay
-        self.assertRegex(src,
-                         r'mark_danger.*игнорируется',
-                         "_dispatch должен игнорировать mark_danger при replay")
+        self.assertIn("_has_danger_zone_at", src,
+                      "при playback должна быть проверка дубликата")
+        # Helper должен быть определён на классе.
+        self.assertTrue(hasattr(UserSession, "_has_danger_zone_at"),
+                        "UserSession._has_danger_zone_at должен существовать")
 
     def test_danger_among_attention_only_danger_cancelled(self):
         """Если в одной точке висят обе зоны, погасится только опасная,

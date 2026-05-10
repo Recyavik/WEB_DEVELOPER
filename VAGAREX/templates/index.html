@@ -156,7 +156,7 @@
             <button class="btn btn--xs" data-cmd="Вега домой" title="Возврат в стартовую точку и стартовый курс">🏠 Домой</button>
             <button class="btn btn--xs" id="btn-goto" title="В произвольную точку (X Y) — поворот к цели и прямая дуга">📍 В точку…</button>
             <button class="btn btn--xs" id="btn-set-zone" title="Установить зону внимания в (X Y): робот доедет туда и пометит зону">📍 Установить зону…</button>
-            <button class="btn btn--xs" id="btn-remove-zone" title="Удалить зону (опасную или внимания), в которую попадает точка. Пусто = под роботом.">✕ Убрать зону…</button>
+            <button class="btn btn--xs" id="btn-remove-zone" title="Удалить зону (опасную или внимания) под текущей позицией робота.">✕ Убрать зону</button>
             <button class="btn btn--xs" data-cmd="Вега где робот" title="Текущие координаты и курс">❓ Где робот</button>
             <button class="btn btn--xs" data-cmd="Вега статус робота" title="Полный статус: позиция, курс, скорость, руль, режим, дальномер, заряд, зоны, поле">📊 Статус</button>
           </div>
@@ -200,7 +200,6 @@
   <div class="viz-container">
     <div class="viz-toolbar">
       <button id="btn-center-view" class="btn btn--sm">⊙ Центрировать</button>
-      <button id="btn-clear-path" class="btn btn--sm">✕ Путь</button>
       <label class="toggle">
         <input type="checkbox" id="chk-grid" checked>
         <span>Сетка</span>
@@ -240,7 +239,7 @@
                   title="Упорядочить код: константы → функции (без дублей) → вызовы">🧹</button>
           <button id="btn-clear-python-code" class="btn btn--xs" title="Очистить код">✕</button>
           <button id="btn-expand-python-code" class="btn btn--xs" title="Развернуть редактор на весь экран">⛶</button>
-          <button id="btn-run-python-code" class="btn btn--xs btn--primary" title="Запустить код">▶ Запуск</button>
+          <button id="btn-run-python-code" class="btn btn--xs btn--primary" title="Запустить код" aria-label="Запустить код">▶</button>
         </div>
       </div>
       <div id="python-code-description" class="code-desc">Код будет автоматически формироваться по командам. Можно редактировать и запускать.</div>
@@ -271,7 +270,7 @@
           <button id="btn-modal-tidy"  class="btn btn--xs"
                   title="Упорядочить код: константы → функции (без дублей) → вызовы">🧹</button>
           <button id="btn-modal-clear" class="btn btn--xs" title="Очистить код">✕</button>
-          <button id="btn-modal-run"   class="btn btn--xs btn--primary" title="Запустить код">▶ Запуск</button>
+          <button id="btn-modal-run"   class="btn btn--xs btn--primary" title="Запустить код" aria-label="Запустить код">▶</button>
           <button id="btn-collapse-python-code" class="btn btn--xs" title="Свернуть">⛶ Свернуть</button>
         </div>
       </div>

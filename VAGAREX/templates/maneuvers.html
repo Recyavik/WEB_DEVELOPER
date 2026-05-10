@@ -118,7 +118,7 @@
     Полное описание всех алгоритмов движения и навигации робота 1T REX:
     схема, формула, реализация на Python с построчными комментариями,
     параметры и пример вызова. Все функции опираются только на примитивы
-    из вкладки <a href="/system">API 1T REX</a> — их можно копировать на
+    из раздела <a href="/system">Справка → API 1T REX</a> — их можно копировать на
     физическую плату как есть.
   </p>
 </div>
@@ -136,13 +136,13 @@
       <a href="#a-light">RGB-индикатор</a>
     <br><strong>2. Одометрия</strong> —
       <a href="#a-odo">класс Odometry</a> ·
-      <a href="#a-duration">duration_for_distance</a>
+      <a href="#a-duration">duration</a>
     <br><strong>3. Развороты и стороны света</strong> —
       <a href="#a-turn180">turn_around_cmd (по дуге)</a> ·
       <a href="#a-kturn">3-дуговой K-turn (Reeds-Shepp)</a> ·
-      <a href="#a-face">face_cardinal_cmd (компас)</a> ·
-      <a href="#a-course">set_course_cmd</a> ·
-      <a href="#a-turnplace">turn_around_place_cmd (зигзаг)</a>
+      <a href="#a-face">face_cmd (компас)</a> ·
+      <a href="#a-course">course_cmd</a> ·
+      <a href="#a-turnplace">kturn_cmd (зигзаг)</a>
     <br><strong>4. Маневры</strong> —
       <a href="#a-circle">круг</a> ·
       <a href="#a-eight">восьмерка</a> ·
@@ -198,7 +198,7 @@
     </div>
   </div>
 
-  <h4>Параметры функции <code>duration_for_distance(distance_cm, power_pct)</code></h4>
+  <h4>Параметры функции <code>duration(distance_cm, power_pct)</code></h4>
   <ul class="params-list">
     <li><code>distance_cm</code> — нужное расстояние в см. Только положительное; направление задается знаком мощности в <code>robot.move</code>.</li>
     <li><code>power_pct</code> — мощность мотора в процентах (по умолчанию <code>DEFAULT_SPEED</code>). Берется по модулю — направление неважно.</li>
@@ -207,13 +207,13 @@
   <h4 class="example-title">Пример вызова</h4>
 <pre class="alg-code"><span class="c"># Едем 100 см вперед на 40% мощности.</span>
 robot.set_angle(0)                              <span class="c"># руль прямо — поедем строго вперед</span>
-duration = duration_for_distance(100, 40)       <span class="c"># 100 / (80 * 0.4) ≈ 3.13 с</span>
+duration = duration(100, 40)       <span class="c"># 100 / (80 * 0.4) ≈ 3.13 с</span>
 robot.move(40, duration)                        <span class="c"># включить мотор на расчетное время</span>
 robot.stop()                                    <span class="c"># явная остановка после длительности</span>
 
 <span class="c"># Едем 100 см назад на 40% — отрицательная мощность.</span>
 robot.set_angle(0)                              <span class="c"># руль прямо</span>
-robot.move(-40, duration_for_distance(100, 40)) <span class="c"># минус → задний ход, длительность та же</span>
+robot.move(-40, duration(100, 40)) <span class="c"># минус → задний ход, длительность та же</span>
 robot.stop()                                    <span class="c"># остановиться</span>
 
 <span class="c"># Без duration — едем «бесконечно» до явного stop().</span>
@@ -223,7 +223,7 @@ robot.stop()                                    <span class="c"># останов
 
 
   <!-- ── forward_to_wall ──────────────────────────────────────────────── -->
-  <h3 id="a-towall">1.2. forward_to_wall_cmd — движение до препятствия по дальномеру</h3>
+  <h3 id="a-towall">1.2. to_wall_cmd — движение до препятствия по дальномеру</h3>
 
   <div class="alg-grid">
     <figure class="alg-svg">
@@ -253,7 +253,7 @@ robot.stop()                                    <span class="c"># останов
     <li><code>stop_margin_mm</code> — минимальный «зазор» до препятствия в миллиметрах (150 мм по умолчанию).</li>
   </ul>
 
-<pre class="alg-code"><span class="k">def</span> forward_to_wall_cmd(power_pct=DEFAULT_SPEED, stop_margin_mm=150):
+<pre class="alg-code"><span class="k">def</span> to_wall_cmd(power_pct=DEFAULT_SPEED, stop_margin_mm=150):
     robot.move(power_pct)                                  <span class="c"># мотор без duration — едет до явного stop</span>
     <span class="k">while</span> True:                                        <span class="c"># бесконечный цикл, выход — break внутри</span>
         dist = robot.get_laser()                           <span class="c"># расстояние в мм (или None — нет данных)</span>
@@ -263,11 +263,11 @@ robot.stop()                                    <span class="c"># останов
         time.sleep(0.05)                                   <span class="c"># 50 мс между опросами дальномера</span></pre>
 
   <h4 class="example-title">Пример вызова</h4>
-<pre class="alg-code">forward_to_wall_cmd()                  <span class="c"># до 150 мм перед стеной на DEFAULT_SPEED</span>
-forward_to_wall_cmd(60, 300)           <span class="c"># помедленнее (60%) и с большим зазором (30 см)</span></pre>
+<pre class="alg-code">to_wall_cmd()                  <span class="c"># до 150 мм перед стеной на DEFAULT_SPEED</span>
+to_wall_cmd(60, 300)           <span class="c"># помедленнее (60%) и с большим зазором (30 см)</span></pre>
 
   <p class="note"><strong>Замечание.</strong> Зеркальная функция
-  <code>backward_to_wall_cmd</code> — то же самое, но с
+  <code>back_to_wall_cmd</code> — то же самое, но с
   <code>robot.move(-power_pct)</code> и задним дальномером, если он есть
   (на 1T REX без заднего сенсора алгоритм опирается на одометрию).</p>
 
@@ -407,7 +407,7 @@ odo = Odometry()                                                     <span class
 
   <h4 class="example-title">Пример использования</h4>
 <pre class="alg-code"><span class="c"># Едем 50 см вперёд на 60% мощности и сами обновляем одометрию.</span>
-duration = duration_for_distance(50, 60)     <span class="c"># расчёт длительности по дистанции и мощности</span>
+duration = duration(50, 60)     <span class="c"># расчёт длительности по дистанции и мощности</span>
 robot.set_angle(0)                           <span class="c"># руль прямо</span>
 robot.move(60, duration)                     <span class="c"># едем 60% на расчётное время</span>
 odo.move_step(60, duration, 0)               <span class="c"># обновить (x, y) после движения</span>
@@ -415,15 +415,15 @@ robot.stop()                                 <span class="c"># явная ост
 print(odo.x, odo.y, odo.heading)             <span class="c"># где мы теперь — координаты и курс</span></pre>
 
 
-  <h3 id="a-duration">2.2. duration_for_distance(distance_cm, power_pct)</h3>
-<pre class="alg-code"><span class="k">def</span> duration_for_distance(distance_cm, power_pct=DEFAULT_SPEED):
+  <h3 id="a-duration">2.2. duration(distance_cm, power_pct)</h3>
+<pre class="alg-code"><span class="k">def</span> duration(distance_cm, power_pct=DEFAULT_SPEED):
     <span class="c"># Сколько секунд держать мотор на power_pct, чтобы пройти distance_cm.</span>
     speed_cm_s = SPEED_CM_PER_S_AT_100 * abs(power_pct) / 100.0   <span class="c"># см/с при заданной мощности</span>
     <span class="k">return</span> max(0.05, distance_cm / max(1.0, speed_cm_s))           <span class="c"># защита: power=0 → не делим на 0</span></pre>
 
   <h4 class="example-title">Пример вызова</h4>
-<pre class="alg-code">duration_for_distance(100, 40)   <span class="c"># 100 см на 40% → ≈ 3.13 с</span>
-duration_for_distance(50,  80)   <span class="c"># 50 см на 80% → ≈ 0.78 с</span></pre>
+<pre class="alg-code">duration(100, 40)   <span class="c"># 100 см на 40% → ≈ 3.13 с</span>
+duration(50,  80)   <span class="c"># 50 см на 80% → ≈ 0.78 с</span></pre>
 </section>
 
 
@@ -438,7 +438,7 @@ duration_for_distance(50,  80)   <span class="c"># 50 см на 80% → ≈ 0.78
     <li><strong>3.1 turn_around_cmd</strong> — обычный разворот: одна большая
         K-turn-пара (петля-«teardrop»). Кнопка <em>«↺ Разворот»</em>,
         голос «<em>Вега разворот</em>». Нужна свободная зона ≈ 1.3 м.</li>
-    <li><strong>3.5 turn_around_place_cmd</strong> — разворот на месте:
+    <li><strong>3.5 kturn_cmd</strong> — разворот на месте:
         N коротких пар «вперёд-право → назад-лево» (≈ 30°/пара).
         Кнопка <em>«↺ На месте»</em>, голос «<em>Вега разворот на месте</em>».
         Помещается в тесном пространстве.</li>
@@ -448,10 +448,10 @@ duration_for_distance(50,  80)   <span class="c"># 50 см на 80% → ≈ 0.78
   <ul>
     <li><strong>3.2 kturn_cmd (Reeds-Shepp)</strong> — внутренний помощник для
         поворота на произвольный угол Δh. Используется внутри
-        <code>face_cardinal_cmd</code>, отдельной кнопки/голоса не имеет.</li>
-    <li><strong>3.3 face_cardinal_cmd</strong> — повернуться лицом к стороне
+        <code>face_cmd</code>, отдельной кнопки/голоса не имеет.</li>
+    <li><strong>3.3 face_cmd</strong> — повернуться лицом к стороне
         света (С/Ю/В/З и т.д.). Кнопки компаса, голос «<em>Вега на север</em>».</li>
-    <li><strong>3.4 set_course_cmd</strong> — выйти на нужный курс плавной
+    <li><strong>3.4 course_cmd</strong> — выйти на нужный курс плавной
         дугой <em>на ходу</em> (без разворота на месте).</li>
   </ul>
 
@@ -466,7 +466,7 @@ duration_for_distance(50,  80)   <span class="c"># 50 см на 80% → ≈ 0.78
     возвращается ≈ в исходную точку, но курс развёрнут на 180°.</p>
     <p>Зона разворота — небольшая «петля» диаметром ≈ 1.3 м (зависит
     от калибровки). В тесном пространстве — используйте
-    <a href="#a-turnplace">turn_around_place_cmd</a> с большим
+    <a href="#a-turnplace">kturn_cmd</a> с большим
     количеством шагов.</p>
   </div>
 
@@ -630,8 +630,8 @@ kturn_cmd(180, -1)   <span class="c"># развернуться на 180° пр�
 kturn_cmd(45,  +1)   <span class="c"># повернуться на 45° по часовой</span></pre>
 
 
-  <!-- ── 3.3. face_cardinal_cmd ──────────────────────────────────────── -->
-  <h3 id="a-face">3.3. face_cardinal_cmd(target_deg) — повернуться лицом к стороне света</h3>
+  <!-- ── 3.3. face_cmd ──────────────────────────────────────── -->
+  <h3 id="a-face">3.3. face_cmd(target_deg) — повернуться лицом к произвольному курсу</h3>
 
   <div class="alg-grid">
     <figure class="alg-svg">
@@ -705,10 +705,26 @@ kturn_cmd(45,  +1)   <span class="c"># повернуться на 45° по ч�
 
   <h4>Параметры</h4>
   <ul class="params-list">
-    <li><code>target_deg</code> — целевой курс в градусах (0=север, 90=восток, 180=юг, 270=запад).</li>
+    <li><code>target_deg</code> — целевой курс в градусах (любое значение 0–359°).
+        Для сторон света — 0/45/90/135/180/225/270/315°. Для произвольных
+        углов (70°, 137°, 210° …) — алгоритм ровно тот же.</li>
   </ul>
 
-<pre class="alg-code"><span class="k">def</span> face_cardinal_cmd(target_deg):
+  <h4>Голосовые фразы</h4>
+  <p>Эти фразы — <strong>одна и та же команда</strong>, маршрутизируются
+     в один и тот же <code>face_cmd(N)</code>:</p>
+  <ul class="params-list">
+    <li><code>Вега поверни на 70</code> · <code>Вега повернись на 70</code>
+        · <code>Вега поворот на 70</code></li>
+    <li><code>Вега разверни на 70</code> · <code>Вега развернись на 70 градусов</code></li>
+    <li><code>Вега лицом на 70</code> (с числом — face_to; без числа —
+        «лицом на восток» — это сторона света)</li>
+  </ul>
+  <p>Без числа: «Вега развернись» = разворот на 180°
+     (<a href="#a-turn180">turn_around_cmd</a>); «Вега лицом на восток» =
+     одна из 8 сторон света (<a href="#a-face">face_X</a>).</p>
+
+<pre class="alg-code"><span class="k">def</span> face_cmd(target_deg):
     cur  = robot.get_angle()[<span class="s">'Z'</span>]               <span class="c"># текущий курс с гироскопа</span>
     diff = ((target_deg - cur + 540) % 360) - 180   <span class="c"># кратчайший знаковый угол [-180..+180]</span>
     <span class="k">if</span> abs(diff) < 3:                            <span class="c"># уже почти смотрим куда надо</span>
@@ -717,14 +733,12 @@ kturn_cmd(45,  +1)   <span class="c"># повернуться на 45° по ч�
     kturn_cmd(abs(diff), direction)                 <span class="c"># делегируем 3-дуговой K-turn</span></pre>
 
   <h4 class="example-title">Пример вызова</h4>
-<pre class="alg-code">face_cardinal_cmd(0)     <span class="c"># встать лицом на север</span>
-face_cardinal_cmd(45)    <span class="c"># на северо-восток</span>
-face_cardinal_cmd(90)    <span class="c"># на восток</span>
-face_cardinal_cmd(135)   <span class="c"># на юго-восток</span>
-face_cardinal_cmd(180)   <span class="c"># на юг</span>
-face_cardinal_cmd(225)   <span class="c"># на юго-запад</span>
-face_cardinal_cmd(270)   <span class="c"># на запад</span>
-face_cardinal_cmd(315)   <span class="c"># на северо-запад</span></pre>
+<pre class="alg-code">face_cmd(0)     <span class="c"># встать лицом на север</span>
+face_cmd(45)    <span class="c"># на северо-восток</span>
+face_cmd(90)    <span class="c"># на восток</span>
+face_cmd(180)   <span class="c"># на юг</span>
+face_cmd(70)    <span class="c"># произвольный угол: «Вега поверни на 70»</span>
+face_cmd(210)   <span class="c"># «Вега развернись на 210»</span></pre>
 
   <h4>Что делает симулятор сверху алгоритма</h4>
   <p>То же самое, что у <a href="#a-turn180">turn_around_cmd</a>:</p>
@@ -737,8 +751,8 @@ face_cardinal_cmd(315)   <span class="c"># на северо-запад</span></
   </ul>
 
 
-  <!-- ── 3.4. set_course_cmd ─────────────────────────────────────────── -->
-  <h3 id="a-course">3.4. set_course_cmd(target_deg) — выставить курс на ходу</h3>
+  <!-- ── 3.4. course_cmd ─────────────────────────────────────────── -->
+  <h3 id="a-course">3.4. course_cmd(target_deg) — выставить курс на ходу</h3>
 
   <div class="alg-grid">
     <figure class="alg-svg">
@@ -793,7 +807,7 @@ face_cardinal_cmd(315)   <span class="c"># на северо-запад</span></
     <li><code>power_pct</code> — мощность мотора (по умолчанию <code>DEFAULT_SPEED</code>).</li>
   </ul>
 
-<pre class="alg-code"><span class="k">def</span> set_course_cmd(target_deg, power_pct=DEFAULT_SPEED):
+<pre class="alg-code"><span class="k">def</span> course_cmd(target_deg, power_pct=DEFAULT_SPEED):
     cur  = robot.get_angle()[<span class="s">'Z'</span>]                          <span class="c"># текущий курс с гироскопа</span>
     diff = ((target_deg - cur + 180) % 360) - 180              <span class="c"># знаковая невязка [-180..+180]</span>
     <span class="c"># P-регулятор по углу руля с насыщением: пропорция 1:1, ограничение ±DEFAULT_TURN_ANGLE.</span>
@@ -803,12 +817,12 @@ face_cardinal_cmd(315)   <span class="c"># на северо-запад</span></
     robot.stop()                                               <span class="c"># стоп после прохождения дуги</span></pre>
 
   <h4 class="example-title">Пример вызова</h4>
-<pre class="alg-code">set_course_cmd(90)        <span class="c"># выйти на курс 90° (восток) дугой</span>
-set_course_cmd(180, 60)   <span class="c"># на юг, помедленнее (60% мощности)</span></pre>
+<pre class="alg-code">course_cmd(90)        <span class="c"># выйти на курс 90° (восток) дугой</span>
+course_cmd(180, 60)   <span class="c"># на юг, помедленнее (60% мощности)</span></pre>
 
 
-  <!-- ── 3.5. turn_around_place_cmd ──────────────────────────────────── -->
-  <h3 id="a-turnplace">3.5. turn_around_place_cmd — разворот на месте N парами</h3>
+  <!-- ── 3.5. kturn_cmd ──────────────────────────────────── -->
+  <h3 id="a-turnplace">3.5. kturn_cmd — разворот на месте N парами</h3>
 
   <p class="note">
     Кнопка <strong>«↺ На месте»</strong> в панели управления и голосовая
@@ -891,7 +905,7 @@ set_course_cmd(180, 60)   <span class="c"># на юг, помедленнее (6
     <li><code>power_pct</code> — мощность мотора (по умолчанию <code>DEFAULT_SPEED</code>).</li>
   </ul>
 
-<pre class="alg-code"><span class="k">def</span> turn_around_place_cmd(steps, power_pct=DEFAULT_SPEED):
+<pre class="alg-code"><span class="k">def</span> kturn_cmd(steps, power_pct=DEFAULT_SPEED):
     <span class="k">for</span> i <span class="k">in</span> range(steps):                          <span class="c"># N пар маленьких подёргиваний</span>
         robot.set_angle(DEFAULT_TURN_ANGLE)             <span class="c"># руль вправо</span>
         robot.move(power_pct, 0.5)                      <span class="c"># вперёд 0.5 с — поворачиваемся ~15°</span>
@@ -901,9 +915,9 @@ set_course_cmd(180, 60)   <span class="c"># на юг, помедленнее (6
     robot.set_servo_center()                            <span class="c"># вернуть руль в нейтраль</span></pre>
 
   <h4 class="example-title">Пример вызова</h4>
-<pre class="alg-code">turn_around_place_cmd(6)     <span class="c"># разворот на 180° за 6 пар</span>
-turn_around_place_cmd(3)     <span class="c"># поворот на 90° за 3 пары</span>
-turn_around_place_cmd(12)    <span class="c"># полный круг 360° (если место позволяет)</span></pre>
+<pre class="alg-code">kturn_cmd(6)     <span class="c"># разворот на 180° за 6 пар</span>
+kturn_cmd(3)     <span class="c"># поворот на 90° за 3 пары</span>
+kturn_cmd(12)    <span class="c"># полный круг 360° (если место позволяет)</span></pre>
 
   <h4>Что делает симулятор сверху алгоритма</h4>
   <ul>
@@ -1176,12 +1190,12 @@ bypass_cmd(+1, 30, 60, 0.7)  <span class="c"># помягче (30°), помед
         <li>Невязку <code>diff = bearing − heading</code> приводим к
             интервалу [−180; +180].</li>
         <li>Shortcut: если |diff| ≤ 30° — едем сразу вперёд через
-            <code>drive_to_point_closed_loop</code>.</li>
+            <code>drive_loop</code>.</li>
         <li>Если |diff| ≥ 150° — едем задом (мощность отрицательная,
             та же closed-loop с зеркальным bearing).</li>
-        <li>Иначе — выполняем <code>face_cardinal_cmd(bearing)</code>
+        <li>Иначе — выполняем <code>face_cmd(bearing)</code>
             и потом прямой проезд через
-            <code>drive_to_point_closed_loop</code>.</li>
+            <code>drive_loop</code>.</li>
       </ol>
       <p><strong>Closed-loop коррекция курса.</strong> Вместо одного
       «слепого» проезда (open-loop) робот едет короткими шагами
@@ -1200,13 +1214,13 @@ bypass_cmd(+1, 30, 60, 0.7)  <span class="c"># помягче (30°), помед
         <li><strong>forward</strong> — bearing к цели в пределах ±5° от текущего курса.
             В код пишется простой <code>robot.move(+speed, ...)</code> без вызова
             <code>goto_cmd</code> и его зависимостей. Helper из преамбулы — только
-            <code>duration_for_distance</code>.</li>
+            <code>duration</code>.</li>
         <li><strong>backward</strong> — bearing противоположен курсу (180°±5°).
             То же самое, но с минусовой мощностью — едем задом без разворота.</li>
         <li><strong>goto</strong> — произвольное направление. В код пишется
             полный <code>goto_cmd(x, y)</code>, преамбула тянет всю инфраструктуру:
-            <code>Odometry</code>, <code>face_cardinal_cmd</code>,
-            <code>drive_to_point_closed_loop</code>, <code>goto_cmd</code>.</li>
+            <code>Odometry</code>, <code>face_cmd</code>,
+            <code>drive_loop</code>, <code>goto_cmd</code>.</li>
       </ul>
       <p>Это и читать проще, и выполняется быстрее, и преамбула получается
       минимальная: для типового сценария «вперёд 100 → юг → ещё вперёд» в коде
@@ -1230,7 +1244,7 @@ bypass_cmd(+1, 30, 60, 0.7)  <span class="c"># помягче (30°), помед
 <pre class="alg-code"><span class="c"># Closed-loop проезд: едем короткими шагами и подруливаем по гироскопу.</span>
 <span class="c"># Если робота сбило (зацепился, толкнули, дрейф) — на следующем такте</span>
 <span class="c"># курс будет скорректирован, и робот всё равно доедет до цели.</span>
-<span class="k">def</span> drive_to_point_closed_loop(target_x, target_y, power_pct, tolerance_cm,
+<span class="k">def</span> drive_loop(target_x, target_y, power_pct, tolerance_cm,
                                step_sec=0.1, kp=0.7):
     sign = 1 <span class="k">if</span> power_pct >= 0 <span class="k">else</span> -1                     <span class="c"># знак: вперёд / назад</span>
     robot.move(power_pct)                                         <span class="c"># мотор без duration — крутим до явного stop</span>
@@ -1264,15 +1278,15 @@ bypass_cmd(+1, 30, 60, 0.7)  <span class="c"># помягче (30°), помед
 
     <span class="k">if</span> abs(bearing) < 30:                                     <span class="c"># Цель почти прямо</span>
         <span class="c"># Едем сразу с коррекцией курса по гироскопу.</span>
-        drive_to_point_closed_loop(target_x, target_y, power_pct, tolerance_cm)
+        drive_loop(target_x, target_y, power_pct, tolerance_cm)
     <span class="k">elif</span> abs(bearing) > 150:                                  <span class="c"># Цель почти позади</span>
         <span class="c"># Едем задом с коррекцией курса (closed-loop сам зеркалит bearing).</span>
-        drive_to_point_closed_loop(target_x, target_y, -power_pct, tolerance_cm)
+        drive_loop(target_x, target_y, -power_pct, tolerance_cm)
     <span class="k">else</span>:                                                     <span class="c"># Общий случай</span>
         <span class="c"># Сначала разворот на месте, потом проезд с коррекцией.</span>
-        face_cardinal_cmd(target_heading)                         <span class="c"># встать лицом к цели через K-turn</span>
+        face_cmd(target_heading)                         <span class="c"># встать лицом к цели через K-turn</span>
         odo.sync_heading()                                        <span class="c"># перечитать курс после поворота</span>
-        drive_to_point_closed_loop(target_x, target_y, power_pct, tolerance_cm)
+        drive_loop(target_x, target_y, power_pct, tolerance_cm)
 
 
 <span class="k">def</span> home_cmd():
@@ -1427,7 +1441,7 @@ follow_path_cmd(path, 60, 25)          <span class="c"># помедленнее 
             Создаётся ВО ВРЕМЯ движения по условию (планируется: повышенная
             радиация, температура и т.п.) — алгоритм помечает зоны для
             дальнейшего исследования. Ставится ТОЛЬКО когда робот находится
-            в этой координате (через <code>set_algorithm_zone_cmd</code> —
+            в этой координате (через <code>attention_zone_cmd</code> —
             робот доезжает в точку). Мышью НЕ ставятся.</li>
       </ul>
 
@@ -1440,7 +1454,7 @@ follow_path_cmd(path, 60, 25)          <span class="c"># помедленнее 
             это pre-flight чистка карты. <strong>Не записывается в Python-код</strong>
             программы.</li>
         <li><strong>Программно</strong>: <code>remove_zone_cmd(x, y)</code> или
-            <code>remove_zone_here_cmd()</code> — может убрать любой тип
+            <code>clear_here_cmd()</code> — может убрать любой тип
             (опасную или зону внимания), но <strong>ТРЕБУЕТ чтобы робот
             находился внутри зоны</strong>. Это runtime-сценарий из алгоритма (например,
             «зона внимания больше не актуальна, робот в ней — снимаем»). Если
@@ -1468,12 +1482,12 @@ follow_path_cmd(path, 60, 25)          <span class="c"># помедленнее 
     pass                                  <span class="c"># на физическом роботе: отправить в карту обстановки</span>
 
 <span class="c"># 2. Отметить «здесь» — берем текущие координаты робота.</span>
-<span class="k">def</span> mark_danger_here_cmd():
+<span class="k">def</span> danger_here_cmd():
     pos = robot.get_gps()                 <span class="c"># на 1T REX get_gps() = текущая одометрия (x, y)</span>
     <span class="c"># карта.add_danger_zone(pos['x'], pos['y'], DANGER_RADIUS)</span>
 
 <span class="c"># 3. Алгоритмическая зона: доехать в точку и пометить.</span>
-<span class="k">def</span> set_algorithm_zone_cmd(target_x, target_y, radius):
+<span class="k">def</span> attention_zone_cmd(target_x, target_y, radius):
     goto_cmd(target_x, target_y)          <span class="c"># сначала добираемся до точки</span>
     pos = robot.get_gps()                 <span class="c"># берем фактические координаты после goto</span>
     <span class="c"># карта.add_algo_zone(pos['x'], pos['y'], radius)</span>
@@ -1484,8 +1498,8 @@ follow_path_cmd(path, 60, 25)          <span class="c"># помедленнее 
 
   <h4 class="example-title">Пример вызова</h4>
 <pre class="alg-code">mark_danger_cmd(100, 50, 30)         <span class="c"># опасная зона радиусом 30 см в точке (100, 50)</span>
-mark_danger_here_cmd()               <span class="c"># отметить опасную зону под текущей позицией робота</span>
-set_algorithm_zone_cmd(200, 200, 40) <span class="c"># доехать в (200, 200) и пометить зону внимания 40 см</span>
+danger_here_cmd()               <span class="c"># отметить опасную зону под текущей позицией робота</span>
+attention_zone_cmd(200, 200, 40) <span class="c"># доехать в (200, 200) и пометить зону внимания 40 см</span>
 remove_zone_cmd(100, 50)             <span class="c"># снять зону, накрывающую (100, 50)</span></pre>
 </section>
 
@@ -1513,8 +1527,8 @@ remove_zone_cmd(100, 50)             <span class="c"># снять зону, на
     </figure>
     <div>
       <h4>Идея</h4>
-      <p>Симметричные маневры (<code>face_cardinal_cmd</code>,
-      <code>set_course_cmd</code>, <code>turn_around_cmd</code>) выполняются
+      <p>Симметричные маневры (<code>face_cmd</code>,
+      <code>course_cmd</code>, <code>turn_around_cmd</code>) выполняются
       в одном «естественном» направлении (по часовой). В режиме осторожности:</p>
       <ol>
         <li>Симулируем все три дуги K-turn в исходном направлении.
@@ -1581,7 +1595,7 @@ ok = kturn_smart_cmd(180, zones)         <span class="c"># попробоват�
 
   <p>Для прямолинейных команд (<code>forward</code>, <code>goto_cmd</code>)
   в режиме осторожности проверяем дальномер перед каждым микро-шагом.
-  Алгоритм такой же, как в <a href="#a-towall">forward_to_wall_cmd</a>,
+  Алгоритм такой же, как в <a href="#a-towall">to_wall_cmd</a>,
   только при срабатывании дальномера вместо выхода — приостанавливаем
   команду и предлагаем в журнале изменить ее на
   <code>goto_cmd(x, y)</code> с обходом A* по карте опасных зон.</p>
@@ -1595,7 +1609,7 @@ ok = kturn_smart_cmd(180, zones)         <span class="c"># попробоват�
 
 <pre class="alg-code"><span class="k">def</span> safe_forward(distance_cm, power_pct=DEFAULT_SPEED, stop_margin_mm=200):
     micro_sec = 0.1                                                       <span class="c"># шаг управления 100 мс</span>
-    target    = duration_for_distance(distance_cm, power_pct)             <span class="c"># общее время на всю дистанцию</span>
+    target    = duration(distance_cm, power_pct)             <span class="c"># общее время на всю дистанцию</span>
     elapsed   = 0.0                                                       <span class="c"># уже потраченное время</span>
     robot.move(power_pct)                                                 <span class="c"># едем без duration — крутим до явного stop</span>
     <span class="k">while</span> elapsed < target:                                           <span class="c"># пока не пройдено всё запланированное время</span>

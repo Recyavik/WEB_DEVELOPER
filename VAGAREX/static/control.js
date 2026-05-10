@@ -322,6 +322,11 @@
     const btnCaut = document.getElementById('btn-mode-cautious');
     if (btnInsp) btnInsp.classList.toggle('is-active', !cautious);
     if (btnCaut) btnCaut.classList.toggle('is-active',  cautious);
+    // Цвет статусной строки в подвале повторяет цвет кнопки активного
+    // режима: серый = инспектор, жёлтый = осторожно. Ошибки/подсказки
+    // перебивают через свои !important-классы.
+    const appbar = document.querySelector('.appbar');
+    if (appbar) appbar.classList.toggle('appbar--cautious', cautious);
 
     // Дублирующий бейдж больше не нужен — режим уже виден в строке «Режим».
     const caut = document.getElementById('caution-badge');
@@ -342,18 +347,43 @@
 
   function logMsg(text, level = 'info') {
     const log = document.getElementById('cmd-log');
-    if (!log) return;
+    if (log) {
+      const now  = new Date();
+      const time = `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}`;
+      const entry = document.createElement('div');
+      entry.className = `log-entry log-entry--${level}`;
+      entry.innerHTML = `<span class="log-time">${time}</span>${escHtml(text)}`;
+      log.appendChild(entry);
+      log.scrollTop = log.scrollHeight;
+      if (log.children.length > 200) log.children[0].remove();
+    }
+    // Mirror в подвал. Hint-сообщения (режим зон) приоритетнее — их
+    // снимает только переключение режима, не следующий лог.
+    setStatus(text, level);
+  }
 
-    const now  = new Date();
-    const time = `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}`;
-
-    const entry = document.createElement('div');
-    entry.className = `log-entry log-entry--${level}`;
-    entry.innerHTML = `<span class="log-time">${time}</span>${escHtml(text)}`;
-    log.appendChild(entry);
-    log.scrollTop = log.scrollHeight;
-
-    if (log.children.length > 200) log.children[0].remove();
+  // ── Статус-подвал ────────────────────────────────────────────────────────
+  // hint-режим (зоны) — sticky, держится пока его не снимут явно через
+  // setStatus(null, 'hint:clear'). Прочие уровни перетирают друг друга.
+  let _statusHintActive = false;
+  function setStatus(text, level = 'info') {
+    const bar = document.getElementById('status-bar');
+    if (!bar) return;
+    if (level === 'hint') {
+      _statusHintActive = true;
+      bar.textContent = text;
+      bar.className = 'appbar__status appbar__status--hint';
+      return;
+    }
+    if (level === 'hint:clear') {
+      _statusHintActive = false;
+      bar.textContent = bar.dataset.default || '';
+      bar.className = 'appbar__status';
+      return;
+    }
+    if (_statusHintActive) return;   // не перетираем sticky-подсказку
+    bar.textContent = text;
+    bar.className = `appbar__status appbar__status--${level}`;
   }
 
   function escHtml(s) {
@@ -776,9 +806,6 @@
     const btnCenter = document.getElementById('btn-center-view');
     if (btnCenter) btnCenter.addEventListener('click', () => canvas && canvas.centerView());
 
-    const btnClearPath = document.getElementById('btn-clear-path');
-    if (btnClearPath) btnClearPath.addEventListener('click', () => sendCmd('Вега сброс'));
-
     const chkGrid = document.getElementById('chk-grid');
     if (chkGrid) chkGrid.addEventListener('change', e => {
       if (canvas) { canvas.showGrid = e.target.checked; canvas.draw(); }
@@ -918,16 +945,9 @@
       sendCmd('Вега установи зону ' + cleaned);
     });
 
-    // «✕ Убрать зону…» — спросить координаты (пусто = текущая позиция робота)
+    // «✕ Убрать зону» — сразу убирает зону под роботом, без диалога.
     document.getElementById('btn-remove-zone')?.addEventListener('click', () => {
-      const xy = prompt(
-        'Координаты точки, в которой убрать зону (X Y).\n' +
-        'Оставьте пустым — снимется зона под роботом.',
-        '');
-      if (xy === null) return;
-      const cleaned = xy.trim();
-      if (cleaned) sendCmd('Вега убрать зону ' + cleaned);
-      else         sendCmd('Вега убрать зону');
+      sendCmd('Вега убрать зону');
     });
 
     // ── ⛯ Режим установки опасных зон мышью ───────────────────────────
@@ -942,7 +962,13 @@
         logMsg(`⛯ Режим зон ВКЛ. Радиус ${canvas.zoneRadius} см. ` +
                `ЛКМ ставит опасную зону, ПКМ удаляет опасную (зоны внимания не трогаются), ` +
                `[+/-] меняет радиус, ESC выход.`, 'info');
+        // Закрепить sticky-подсказку в подвале — пока режим включён,
+        // обычные log-сообщения её не перебьют.
+        setStatus(`⛯ Режим зон  •  радиус ${canvas.zoneRadius} см  •  ` +
+                  `ЛКМ — поставить, ПКМ — удалить (опасные), ` +
+                  `[+/-] — радиус, ESC — выход`, 'hint');
       } else {
+        setStatus(null, 'hint:clear');
         logMsg('⛯ Режим зон выключен.', 'info');
       }
     }
@@ -962,6 +988,12 @@
       };
       canvas.onZoneRadiusChange = (r) => {
         logMsg(`⛯ Радиус зоны: ${r} см.`, 'info');
+        // Обновим текст sticky-подсказки в подвале с новым радиусом.
+        if (canvas.zoneMode) {
+          setStatus(`⛯ Режим зон  •  радиус ${r} см  •  ` +
+                    `ЛКМ — поставить, ПКМ — удалить (опасные), ` +
+                    `[+/-] — радиус, ESC — выход`, 'hint');
+        }
       };
       // Глобальные клавиши: +/-/= меняют радиус, ESC выходит
       document.addEventListener('keydown', (e) => {

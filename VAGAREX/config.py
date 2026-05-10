@@ -6,6 +6,9 @@ from dotenv import load_dotenv
 # жестко прописанные значения в docker-compose.yml environment:.
 load_dotenv(override=True)
 
+# Версия прошивки робота 1T REX (отображается в шапке UI).
+ROBOT_VERSION = "2.2.1"
+
 # Папка с пользовательскими данными (БД, загруженные файлы и т. п.).
 # В Docker/Coolify сюда монтируется persistent volume — переживает rebuild.
 BASE_DIR     = Path(__file__).parent

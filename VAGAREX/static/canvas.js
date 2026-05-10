@@ -623,25 +623,8 @@ class RobotCanvas {
       }
       ctx.restore();
     }
-
-    // 2) Статус-плашка сверху холста
-    ctx.save();
-    const status = `⚠ Режим опасных зон  •  радиус ${this.zoneRadius} см  •  ` +
-                   `ЛКМ — поставить, ПКМ — удалить (только красные), ` +
-                   `[+/-] (Shift+колесо) — радиус, ESC — выход`;
-    ctx.font = 'bold 12px sans-serif';
-    const w = ctx.measureText(status).width + 16;
-    const h = 22;
-    const x = (this._cssW - w) / 2;
-    const y = 8;
-    ctx.fillStyle = 'rgba(248, 81, 73, 0.18)';
-    ctx.fillRect(x, y, w, h);
-    ctx.strokeStyle = '#f85149';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(x, y, w, h);
-    ctx.fillStyle = '#f85149';
-    ctx.fillText(status, x + 8, y + 15);
-    ctx.restore();
+    // Статус-подсказка о режиме теперь не рисуется поверх холста —
+    // её показывает подвал страницы (.appbar), см. control.js.
   }
 
   _drawPath() {

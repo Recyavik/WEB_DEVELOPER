@@ -1469,6 +1469,14 @@ class UserSession:
                     await self.push_message(
                         f"✓ Дошел до ({target_x:.0f}, {target_y:.0f}) "
                         f"с {attempt}-й попытки.", "success")
+                else:
+                    await self.push_message(
+                        f"⚠ До ({target_x:.0f}, {target_y:.0f}) всего "
+                        f"{distance:.1f} см — микро-движения короче "
+                        f"{TOL_CM:.0f} см не реализованы. "
+                        f"Команда не записана. Совет: отъедьте подальше или "
+                        f"развернитесь и подойдите к точке заново.",
+                        "warning")
                 return
 
             target_heading = math.degrees(math.atan2(dx, dy)) % 360
@@ -1854,6 +1862,17 @@ class UserSession:
         await self._ensure_kturn_clearance(deg)
         await self._k_turn_to_heading(deg)
 
+    def _has_danger_zone_at(self, x: float, y: float, radius: float,
+                            tol_cm: float = 1.0) -> bool:
+        """Уже ли есть опасная зона (kind="danger") в (x, y) того же радиуса?
+        Используется для идемпотентности `mark_danger_cmd` при replay."""
+        for z in self.world.danger_zones:
+            if getattr(z, "kind", "danger") != "danger":
+                continue
+            if math.hypot(z.x - x, z.y - y) <= tol_cm and abs(z.radius - radius) <= tol_cm:
+                return True
+        return False
+
     async def _run_mark_danger(self,
                                 target_x: Optional[float] = None,
                                 target_y: Optional[float] = None,
@@ -1931,7 +1950,7 @@ class UserSession:
         x = float(target_x) if target_x is not None else s.x
         y = float(target_y) if target_y is not None else s.y
         # Проверка: робот сам находится внутри зоны, которую собираемся удалить.
-        # Если координаты совпадают с позицией робота (remove_zone_here_cmd) —
+        # Если координаты совпадают с позицией робота (clear_here_cmd) —
         # проверка тривиально пройдёт, т.к. (x,y) и есть позиция робота.
         zone_at_point = self.world.zone_at(x, y)
         if zone_at_point is None:
@@ -2119,6 +2138,10 @@ class UserSession:
             code, label = "face_w()",  "Лицом на З"
         elif intent == "face_nw":
             code, label = "face_nw()", "Лицом на СЗ"
+        elif intent == "face_to":
+            deg = nlu.extract_face_angle(raw)
+            if deg is None: return None
+            code, label = f"face_cmd({deg})", f"Поворот на {deg}°"
         elif intent == "set_course":
             target = nlu.extract_course(raw)
             if target is None: return None
@@ -2206,37 +2229,37 @@ class UserSession:
     # Ключи в _HELPER_DEPS должны совпадать с _HELPER_CODE; имя def внутри
     # кода — тоже с этим ключом (для дедупа на стороне клиента).
     _HELPER_DEPS = {
-        "duration_for_distance":         [],
+        "duration":         [],
         "Odometry":                      [],
-        "face_cardinal_cmd":             ["Odometry", "duration_for_distance"],
-        "drive_to_point_closed_loop":    ["Odometry"],
-        "goto_cmd":                      ["Odometry", "duration_for_distance",
-                                          "face_cardinal_cmd", "drive_to_point_closed_loop"],
+        "face_cmd":             ["Odometry", "duration"],
+        "drive_loop":    ["Odometry"],
+        "goto_cmd":                      ["Odometry", "duration",
+                                          "face_cmd", "drive_loop"],
         "home_cmd":                      ["goto_cmd"],
         "follow_path_cmd":        ["Odometry"],
-        "forward_to_wall_cmd":    [],
-        "backward_to_wall_cmd":   [],
+        "to_wall_cmd":    [],
+        "back_to_wall_cmd":   [],
         "turn_around_cmd":        [],
-        "turn_around_place_cmd":  [],
+        "kturn_cmd":  [],
         "circle_cmd":             [],
         "figure_eight_cmd":       [],
         "spiral_cmd":             [],
         "bypass_cmd":             [],
-        "set_course_cmd":         [],
+        "course_cmd":         [],
         "mark_danger_cmd":        [],
-        "mark_danger_here_cmd":   [],
-        "set_algorithm_zone_cmd": ["goto_cmd"],
+        "danger_here_cmd":   [],
+        "attention_zone_cmd": ["goto_cmd"],
         "remove_zone_cmd":        [],
-        "remove_zone_here_cmd":   [],
+        "clear_here_cmd":   [],
     }
 
     # Каждый helper — пара (русский заголовок-комментарий, код).
     # При генерации преамбулы клиент видит обычный Python с комментарием
     # над функцией; дедупликация на стороне клиента — по имени def/class.
     _HELPER_CODE = {
-        "duration_for_distance": (
+        "duration": (
             "Расчёт длительности движения для нужной дистанции",
-            r'''def duration_for_distance(distance_cm, power_pct=DEFAULT_SPEED):
+            r'''def duration(distance_cm, power_pct=DEFAULT_SPEED):
     speed_cm_s = SPEED_CM_PER_S_AT_100 * abs(power_pct) / 100.0
     return max(0.05, distance_cm / max(1.0, speed_cm_s))
 '''),
@@ -2261,9 +2284,9 @@ class UserSession:
         self.y += sign * math.cos(h_rad) * dist
 odo = Odometry()    # глобальный экземпляр одометрии
 '''),
-        "face_cardinal_cmd": (
+        "face_cmd": (
             "Поворот лицом к стороне света (3-дуговой K-turn)",
-            r'''def face_cardinal_cmd(target_deg, power_pct=DEFAULT_SPEED):
+            r'''def face_cmd(target_deg, power_pct=DEFAULT_SPEED):
     odo.sync_heading()
     diff = (target_deg - odo.heading + 540.0) % 360.0 - 180.0
     if abs(diff) < 3.0:
@@ -2277,12 +2300,12 @@ odo = Odometry()    # глобальный экземпляр одометрии
     alpha_deg = (abs(diff) - beta_deg) / 2.0
     steer_ratio = DEFAULT_TURN_ANGLE / 45.0
     def arc(sweep_deg, sign):
-        arc_cm   = sweep_deg * WHEEL_CIRC_CM / (HEADING_DEG_PER_ROT * steer_ratio)
-        duration = duration_for_distance(arc_cm, power_pct)
-        steer    = direction * DEFAULT_TURN_ANGLE * (-1 if sign < 0 else 1)
+        arc_cm = sweep_deg * WHEEL_CIRC_CM / (HEADING_DEG_PER_ROT * steer_ratio)
+        secs   = duration(arc_cm, power_pct)
+        steer  = direction * DEFAULT_TURN_ANGLE * (-1 if sign < 0 else 1)
         robot.set_angle(int(steer))
-        robot.move(sign * power_pct, duration)
-        odo.move_step(sign * power_pct, duration, steer)
+        robot.move(sign * power_pct, secs)
+        odo.move_step(sign * power_pct, secs, steer)
     arc(alpha_deg, +1)
     arc(beta_deg,  -1)
     arc(alpha_deg, +1)
@@ -2290,9 +2313,9 @@ odo = Odometry()    # глобальный экземпляр одометрии
     robot.set_servo_center()
     odo.heading = target_deg % 360.0
 '''),
-        "drive_to_point_closed_loop": (
+        "drive_loop": (
             "Прямой проезд в (x,y) с пошаговой коррекцией курса по гироскопу",
-            r'''def drive_to_point_closed_loop(target_x, target_y, power_pct, tolerance_cm,
+            r'''def drive_loop(target_x, target_y, power_pct, tolerance_cm,
                                step_sec=0.1, kp=0.7):
     # Едем к точке короткими шагами по step_sec секунд. На каждом шаге:
     #   1) читаем реальный курс с гироскопа,
@@ -2332,15 +2355,15 @@ odo = Odometry()    # глобальный экземпляр одометрии
     bearing = (target_heading - odo.heading + 540.0) % 360.0 - 180.0
     if abs(bearing) < 30.0:
         # Цель почти прямо — едем сразу с коррекцией курса по гироскопу.
-        drive_to_point_closed_loop(target_x, target_y, power_pct, tolerance_cm)
+        drive_loop(target_x, target_y, power_pct, tolerance_cm)
     elif abs(bearing) > 150.0:
         # Цель почти позади — едем задом с коррекцией курса.
-        drive_to_point_closed_loop(target_x, target_y, -power_pct, tolerance_cm)
+        drive_loop(target_x, target_y, -power_pct, tolerance_cm)
     else:
         # Общий случай: поворот на месте, потом проезд с коррекцией.
-        face_cardinal_cmd(target_heading, power_pct)
+        face_cmd(target_heading, power_pct)
         odo.sync_heading()
-        drive_to_point_closed_loop(target_x, target_y, power_pct, tolerance_cm)
+        drive_loop(target_x, target_y, power_pct, tolerance_cm)
 '''),
         "home_cmd": (
             "Возврат в стартовую точку",
@@ -2385,9 +2408,9 @@ odo = Odometry()    # глобальный экземпляр одометрии
     robot.stop()
     robot.set_servo_center()
 '''),
-        "forward_to_wall_cmd": (
+        "to_wall_cmd": (
             "Движение вперёд до препятствия по дальномеру",
-            r'''def forward_to_wall_cmd(power_pct=DEFAULT_SPEED, stop_margin_mm=150):
+            r'''def to_wall_cmd(power_pct=DEFAULT_SPEED, stop_margin_mm=150):
     robot.move(power_pct)
     while True:
         dist = robot.get_laser()
@@ -2396,9 +2419,9 @@ odo = Odometry()    # глобальный экземпляр одометрии
             break
         time.sleep(0.05)
 '''),
-        "backward_to_wall_cmd": (
+        "back_to_wall_cmd": (
             "Движение назад до препятствия по дальномеру",
-            r'''def backward_to_wall_cmd(power_pct=DEFAULT_SPEED, stop_margin_mm=150):
+            r'''def back_to_wall_cmd(power_pct=DEFAULT_SPEED, stop_margin_mm=150):
     robot.move(-power_pct)
     while True:
         dist = robot.get_laser()
@@ -2419,9 +2442,9 @@ odo = Odometry()    # глобальный экземпляр одометрии
     robot.stop()
     robot.set_servo_center()
 '''),
-        "turn_around_place_cmd": (
+        "kturn_cmd": (
             "Разворот на месте (многошаговый K-turn)",
-            r'''def turn_around_place_cmd(steps, power_pct=DEFAULT_SPEED):
+            r'''def kturn_cmd(steps, power_pct=DEFAULT_SPEED):
     for i in range(steps):
         robot.set_angle(DEFAULT_TURN_ANGLE)
         robot.move(power_pct, 0.5)
@@ -2471,9 +2494,9 @@ odo = Odometry()    # глобальный экземпляр одометрии
     robot.stop()
     robot.set_servo_center()
 '''),
-        "set_course_cmd": (
+        "course_cmd": (
             "Выставить курс на ходу — пропорциональный регулятор",
-            r'''def set_course_cmd(target_deg, power_pct=DEFAULT_SPEED):
+            r'''def course_cmd(target_deg, power_pct=DEFAULT_SPEED):
     current = robot.get_angle()['Z']
     diff = (target_deg - current + 180) % 360 - 180
     robot.set_angle(max(-DEFAULT_TURN_ANGLE, min(DEFAULT_TURN_ANGLE, diff)))
@@ -2485,15 +2508,15 @@ odo = Odometry()    # глобальный экземпляр одометрии
             r'''def mark_danger_cmd(x, y, radius):
     pass
 '''),
-        "mark_danger_here_cmd": (
+        "danger_here_cmd": (
             "Отметить опасную зону под текущей позицией робота",
-            r'''def mark_danger_here_cmd():
+            r'''def danger_here_cmd():
     pos = robot.get_gps()
     # отметить (pos['x'], pos['y']) на карте
 '''),
-        "set_algorithm_zone_cmd": (
+        "attention_zone_cmd": (
             "Доехать в точку и пометить зону внимания",
-            r'''def set_algorithm_zone_cmd(target_x, target_y, radius):
+            r'''def attention_zone_cmd(target_x, target_y, radius):
     goto_cmd(target_x, target_y)
     pos = robot.get_gps()
     # отметить зону: (pos['x'], pos['y'], radius)
@@ -2503,9 +2526,9 @@ odo = Odometry()    # глобальный экземпляр одометрии
             r'''def remove_zone_cmd(x, y):
     pass
 '''),
-        "remove_zone_here_cmd": (
+        "clear_here_cmd": (
             "Удалить зону под текущей позицией робота",
-            r'''def remove_zone_here_cmd():
+            r'''def clear_here_cmd():
     pos = robot.get_gps()
     # удалить зону под (pos['x'], pos['y'])
 '''),
@@ -2549,46 +2572,47 @@ odo = Odometry()    # глобальный экземпляр одометрии
         intent = cmd.intent
         raw    = cmd.raw
         static = {
-            "forward_to_wall":    ["forward_to_wall_cmd"],
-            "backward_to_wall":   ["backward_to_wall_cmd"],
+            "forward_to_wall":    ["to_wall_cmd"],
+            "backward_to_wall":   ["back_to_wall_cmd"],
             "turn_around":        ["turn_around_cmd"],
-            "turn_around_place":  ["turn_around_place_cmd"],
+            "turn_around_place":  ["kturn_cmd"],
             "circle":             ["circle_cmd"],
             "figure_eight":       ["figure_eight_cmd"],
             "spiral_in":          ["spiral_cmd"],
             "spiral_out":         ["spiral_cmd"],
             "bypass_right":       ["bypass_cmd"],
             "bypass_left":        ["bypass_cmd"],
-            "set_course":         ["set_course_cmd"],
+            "set_course":         ["course_cmd"],
             "home":               ["home_cmd"],
-            "face_n":             ["face_cardinal_cmd"],
-            "face_ne":            ["face_cardinal_cmd"],
-            "face_e":             ["face_cardinal_cmd"],
-            "face_se":            ["face_cardinal_cmd"],
-            "face_s":             ["face_cardinal_cmd"],
-            "face_sw":            ["face_cardinal_cmd"],
-            "face_w":             ["face_cardinal_cmd"],
-            "face_nw":            ["face_cardinal_cmd"],
+            "face_n":             ["face_cmd"],
+            "face_ne":            ["face_cmd"],
+            "face_e":             ["face_cmd"],
+            "face_se":            ["face_cmd"],
+            "face_s":             ["face_cmd"],
+            "face_sw":            ["face_cmd"],
+            "face_w":             ["face_cmd"],
+            "face_nw":            ["face_cmd"],
+            "face_to":            ["face_cmd"],
         }
         if intent in static:
             return list(static[intent])
         if intent in ("forward", "back"):
-            return ["duration_for_distance"] if nlu.extract_distance(raw) else []
+            return ["duration"] if nlu.extract_distance(raw) else []
         if intent == "goto":
             mode, _, _ = self._goto_execution_mode(cmd)
             if mode in ("forward", "backward"):
                 # Оптимизация: курс уже совпадает или противоположен —
                 # достаточно простого forward/back, тяжёлый goto_cmd не нужен.
-                return ["duration_for_distance"]
+                return ["duration"]
             if mode == "goto":
                 return ["goto_cmd"]
-            return []   # invalid / skip — helpers не нужны
+            return []   # "skip" — команда не записывается, helpers не нужны
         if intent == "mark_danger":
-            return ["mark_danger_cmd"] if nlu.extract_coordinates(raw) is not None else ["mark_danger_here_cmd"]
+            return ["mark_danger_cmd"] if nlu.extract_coordinates(raw) is not None else ["danger_here_cmd"]
         if intent == "set_algorithm_zone":
-            return ["set_algorithm_zone_cmd"] if nlu.extract_coordinates(raw) is not None else []
+            return ["attention_zone_cmd"] if nlu.extract_coordinates(raw) is not None else []
         if intent == "remove_zone":
-            return ["remove_zone_cmd"] if nlu.extract_coordinates(raw) is not None else ["remove_zone_here_cmd"]
+            return ["remove_zone_cmd"] if nlu.extract_coordinates(raw) is not None else ["clear_here_cmd"]
         return []
 
     def _collect_helpers(self, cmds) -> list[str]:
@@ -2609,7 +2633,7 @@ odo = Odometry()    # глобальный экземпляр одометрии
     def _python_constants_block(self) -> str:
         c = self.cfg
         return (
-            "# Python-скрипт для 1T REX. Описание системы команд — вкладка «API 1T REX».\n"
+            "# Python-скрипт для 1T REX. Описание системы команд — раздел «Справка → API 1T REX».\n"
             "import math, time\n"
             "\n"
             f"DEFAULT_SPEED         = {c.move_speed}\n"
@@ -2661,7 +2685,7 @@ odo = Odometry()    # глобальный экземпляр одометрии
     # из них исходную команду (regex DSL не пропускает точку в `robot.set_angle`),
     # поэтому для них генерируется маркер `# CMD: name(args)` — единственный
     # источник истины при «Запуске».
-    # Для compound-команд (face_cardinal_cmd, goto_cmd, circle_cmd, …) маркер
+    # Для compound-команд (face_cmd, goto_cmd, circle_cmd, …) маркер
     # не нужен: их call-строка сама по себе парсится напрямую.
     _ATOMIC_INTENTS = frozenset({
         "forward", "back",
@@ -2698,7 +2722,7 @@ odo = Odometry()    # глобальный экземпляр одометрии
             if dist:
                 code_lines += [
                     f"{steer(str(cur_steer))}                      # руль текущий ({cur_steer}°)",
-                    f"{move(str(default_speed), f'duration_for_distance({dist}, {default_speed})')}  # вперёд {dist} см",
+                    f"{move(str(default_speed), f'duration({dist}, {default_speed})')}  # вперёд {dist} см",
                     f"{stop()}                            # остановка",
                 ]
             else:
@@ -2710,7 +2734,7 @@ odo = Odometry()    # глобальный экземпляр одометрии
             if dist:
                 code_lines += [
                     f"{steer(str(cur_steer))}                      # руль текущий ({cur_steer}°)",
-                    f"{move(f'-{default_speed}', f'duration_for_distance({dist}, {default_speed})')}  # назад {dist} см",
+                    f"{move(f'-{default_speed}', f'duration({dist}, {default_speed})')}  # назад {dist} см",
                     f"{stop()}                            # остановка",
                 ]
             else:
@@ -2720,10 +2744,10 @@ odo = Odometry()    # глобальный экземпляр одометрии
                 ]
         elif intent == "forward_to_wall":
             code_lines += [steer(str(cur_steer)),
-                           f"forward_to_wall_cmd({default_speed})  # вперёд до стены"]
+                           f"to_wall_cmd({default_speed})  # вперёд до стены"]
         elif intent == "backward_to_wall":
             code_lines += [steer(str(cur_steer)),
-                           f"backward_to_wall_cmd({default_speed})  # назад до стены"]
+                           f"back_to_wall_cmd({default_speed})  # назад до стены"]
         elif intent == "brake":
             code_lines += [f"{stop()}  # тормоз"]
         elif intent == "stop":
@@ -2745,7 +2769,7 @@ odo = Odometry()    # глобальный экземпляр одометрии
             code_lines += [f"turn_around_cmd({direction})  # разворот на 180° {side}"]
         elif intent == "turn_around_place":
             steps = nlu.extract_kturn_steps(raw)
-            code_lines += [f"turn_around_place_cmd({steps})  # разворот на месте за {steps} шагов"]
+            code_lines += [f"kturn_cmd({steps})  # разворот на месте за {steps} шагов"]
         elif intent == "circle":
             n = nlu.norm(raw)
             direction = +1 if any(w in n for w in ("направо", "вправо", "по часовой")) else -1
@@ -2778,22 +2802,28 @@ odo = Odometry()    # глобальный экземпляр одометрии
                 tx, ty = xy
                 # Оптимизация: если курс уже совпадает (или противоположен) —
                 # генерируем простой forward/back вместо тяжёлого goto_cmd.
+                # Режим "skip" (робот уже в tolerance от цели): микро-движения
+                # не реализуем (см. диспетчер — там подсказка пользователю).
+                # В код НИЧЕГО не пишем, и команда не записывается в программу.
                 mode, distance, bearing = self._goto_execution_mode(cmd)
                 if mode == "skip":
-                    code_lines += [f"# уже в точке ({tx:g}, {ty:g})"]
+                    cmd.skip_record = True
+                    # пусто — return [] упадёт ниже как code_lines
                 elif mode == "forward":
                     code_lines += [
                         "robot.set_angle(0)",
-                        f"robot.move({default_speed}, duration_for_distance({distance:.0f}, {default_speed}))  # вперёд {distance:.0f} см к ({tx:g}, {ty:g})",
+                        f"robot.move({default_speed}, duration({distance:.0f}, {default_speed}))  # вперёд {distance:.0f} см к ({tx:g}, {ty:g})",
                         "robot.stop()",
                     ]
                 elif mode == "backward":
                     code_lines += [
                         "robot.set_angle(0)",
-                        f"robot.move(-{default_speed}, duration_for_distance({distance:.0f}, {default_speed}))  # задом {distance:.0f} см к ({tx:g}, {ty:g})",
+                        f"robot.move(-{default_speed}, duration({distance:.0f}, {default_speed}))  # задом {distance:.0f} см к ({tx:g}, {ty:g})",
                         "robot.stop()",
                     ]
                 else:
+                    # mode == "goto" или "skip": в обоих случаях пишем вызов.
+                    # При "skip" goto_cmd сама вернётся рано по tolerance.
                     code_lines += [f"goto_cmd({tx:g}, {ty:g})  # перейти в точку ({tx:g}, {ty:g})"]
         elif intent == "home":
             code_lines += ["home_cmd()  # вернуться в стартовую точку"]
@@ -2807,18 +2837,24 @@ odo = Odometry()    # глобальный экземпляр одометрии
                             "face_w":"на запад",      "face_nw":"на северо-запад"}
             tgt = cardinal_deg[intent]
             lbl = cardinal_lbl[intent]
-            code_lines += [f"face_cardinal_cmd({tgt})  # {lbl}"]
+            code_lines += [f"face_cmd({tgt})  # {lbl}"]
+        elif intent == "face_to":
+            deg = nlu.extract_face_angle(raw)
+            if deg is None:
+                code_lines += ["# угол поворота не распознан"]
+            else:
+                code_lines += [f"face_cmd({deg})  # поворот на месте на {deg}°"]
         elif intent == "set_course":
             target = nlu.extract_course(raw)
             if target is None:
                 code_lines += ["# курс не распознан"]
             else:
-                code_lines += [f"set_course_cmd({target})  # выставить курс {target}°"]
+                code_lines += [f"course_cmd({target})  # выставить курс {target}°"]
         elif intent == "mark_danger":
             xy = nlu.extract_coordinates(raw)
             r  = nlu.extract_radius(raw)
             if xy is None:
-                code_lines += ["mark_danger_here_cmd()  # отметить опасную зону здесь"]
+                code_lines += ["danger_here_cmd()  # отметить опасную зону здесь"]
             else:
                 tx, ty = xy
                 radius_arg = f"{r:g}" if r is not None else f"{c.danger_zone_radius:g}"
@@ -2837,11 +2873,11 @@ odo = Odometry()    # глобальный экземпляр одометрии
             else:
                 tx, ty = xy
                 radius_arg = f"{r:g}" if r is not None else f"{c.danger_zone_radius:g}"
-                code_lines += [f"set_algorithm_zone_cmd({tx:g}, {ty:g}, {radius_arg})  # доехать в ({tx:g}, {ty:g}) и пометить зону внимания"]
+                code_lines += [f"attention_zone_cmd({tx:g}, {ty:g}, {radius_arg})  # доехать в ({tx:g}, {ty:g}) и пометить зону внимания"]
         elif intent == "remove_zone":
             xy = nlu.extract_coordinates(raw)
             if xy is None:
-                code_lines += ["remove_zone_here_cmd()  # удалить зону под роботом"]
+                code_lines += ["clear_here_cmd()  # удалить зону под роботом"]
             else:
                 tx, ty = xy
                 code_lines += [f"remove_zone_cmd({tx:g}, {ty:g})  # удалить зону, накрывающую ({tx:g}, {ty:g})"]
@@ -2994,8 +3030,16 @@ odo = Odometry()    # глобальный экземпляр одометрии
                 msg, ok = "Координаты не распознаны (нужно: 'в точку X Y').", False
             else:
                 tx, ty = xy
+                # Запоминаем дистанцию ДО запуска: если робот уже в tolerance
+                # от цели — _run_goto ничего не сделает, нужна другая формулировка.
+                pre_dist = math.hypot(tx - s.x, ty - s.y)
                 await self._run_goto(tx, ty)
-                msg = f"Прибыл в окрестность ({tx:.0f}, {ty:.0f})."
+                if pre_dist < 5.0:
+                    # Робот не двигался — показываем его реальную позицию,
+                    # а не цель (иначе пользователь видит ложное «я в (tx,ty)»).
+                    msg = f"Остался в точке ({s.x:.0f}, {s.y:.0f})."
+                else:
+                    msg = f"Прибыл в окрестность ({tx:.0f}, {ty:.0f})."
         elif intent == "home":
             await self._run_home()
             msg = "🏠 Возврат в стартовую точку завершен."
@@ -3015,6 +3059,13 @@ odo = Odometry()    # глобальный экземпляр одометрии
             await self._run_face_cardinal(270, "западу"); msg = "Лицом на запад."
         elif intent == "face_nw":
             await self._run_face_cardinal(315, "северо-западу"); msg = "Лицом на северо-запад."
+        elif intent == "face_to":
+            deg = nlu.extract_face_angle(raw)
+            if deg is None:
+                msg, ok = "Угол не распознан (нужно: 'поверни на 70').", False
+            else:
+                await self._run_face_cardinal(deg, f"{deg}°")
+                msg = f"Поворот на месте на {deg}° завершен."
         elif intent == "set_course":
             target = nlu.extract_course(raw)
             if target is not None:
@@ -3023,14 +3074,23 @@ odo = Odometry()    # глобальный экземпляр одометрии
             else:
                 msg, ok = "Курс не распознан.", False
         elif intent == "mark_danger":
-            # Опасные зоны нельзя создавать ПРОГРАММНО (во время Run/replay).
-            # Они — часть pre-flight обстановки: ставятся мышью или
-            # генератором заданий ДО запуска программы. На запуске
-            # `mark_danger_cmd(...)` строки в коде — это документация
-            # initial setup; зоны уже в `world.danger_zones` из БД/мыши.
+            # Опасные зоны — часть pre-flight обстановки. На replay строки
+            # `mark_danger_cmd(...)` нужно воспроизводить, но идемпотентно:
+            # если в этой точке уже есть опасная зона того же радиуса —
+            # пропускаем, чтобы не плодить дубликаты при повторных запусках.
             if cmd.playback:
-                msg = (f"⏵ mark_danger игнорируется при replay "
-                       f"(опасные зоны — pre-flight обстановка, не runtime).")
+                xy = nlu.extract_coordinates(raw)
+                r  = nlu.extract_radius(raw) or float(self.cfg.danger_zone_radius)
+                if xy is not None and self._has_danger_zone_at(xy[0], xy[1], r):
+                    msg = (f"⏵ mark_danger пропущен: зона в "
+                           f"({xy[0]:.0f}, {xy[1]:.0f}) уже на карте.")
+                elif xy is not None:
+                    tx, ty = xy
+                    await self._run_mark_danger(tx, ty, r, db)
+                    msg = (f"⏵ Восстановлена опасная зона в "
+                           f"({tx:.0f}, {ty:.0f}), радиус {r:.0f}.")
+                else:
+                    msg, ok = "mark_danger: координаты не указаны.", False
             else:
                 xy = nlu.extract_coordinates(raw)
                 r  = nlu.extract_radius(raw)
@@ -3277,6 +3337,20 @@ odo = Odometry()    # глобальный экземпляр одометрии
             fn = fn[:-5]
             args = ""    # _here-варианты вызываются без координат
         args = args.strip()
+        # Алиасы коротких имён хелперов → канонические intent-имена.
+        # Нужно для парсинга нового codegen (face_cmd, kturn_cmd, ...)
+        # и старых сохранённых программ (face_cardinal_cmd → face_cardinal).
+        _FN_ALIASES = {
+            "to_wall":         "forward_to_wall",
+            "back_to_wall":    "backward_to_wall",
+            "kturn":           "turn_around_place",
+            "face":            "face_cardinal",
+            "course":          "set_course",
+            "attention_zone":  "set_algorithm_zone",
+            "danger":          "mark_danger",
+            "clear":           "remove_zone",
+        }
+        fn = _FN_ALIASES.get(fn, fn)
         if fn == "reset":            return ("reset", "Вега новое поле")
         if fn == "brake":            return ("brake", "Вега тормоз")
         if fn == "stop":             return ("stop",  "Вега стоп")
@@ -3329,8 +3403,10 @@ odo = Odometry()    # глобальный экземпляр одометрии
         if fn == "face_w":           return ("face_w",  "Вега на запад")
         if fn == "face_nw":          return ("face_nw", "Вега на северо-запад")
         if fn == "face_cardinal":
-            # face_cardinal(deg) — обобщённая форма из сгенерированного Python.
-            # Округляем до ближайшей стороны света и делегируем face_X-интенту.
+            # face_cardinal(deg): если угол ≈ кардинальной точке (±2°) →
+            # делегируем соответствующему face_X-интенту. Иначе — это
+            # «поворот на произвольный угол» (face_to), точное значение
+            # сохраняется как есть.
             try:
                 deg = float(args.split(",")[0]) % 360
             except (ValueError, IndexError):
@@ -3347,7 +3423,11 @@ odo = Odometry()    # глобальный экземпляр одометрии
             ]
             best = min(cardinals,
                        key=lambda c: min(abs(deg - c[0]), 360 - abs(deg - c[0])))
-            return (best[1], best[2])
+            best_diff = min(abs(deg - best[0]), 360 - abs(deg - best[0]))
+            if best_diff < 2.0:
+                return (best[1], best[2])
+            # Произвольный угол (не кардинальный) → face_to
+            return ("face_to", f"Вега поверни на {int(deg)}")
         if fn == "set_course":
             if args.lstrip("-").isdigit():
                 return ("set_course", f"Вега курс {int(args)}")
@@ -3422,7 +3502,7 @@ odo = Odometry()    # глобальный экземпляр одометрии
              stop, light, …), чьё тело — сырые `robot.X(...)` вызовы. Сами
              эти вызовы regex `_DSL_LINE` не пропускает (точка в имени).
           2) Строка вызова `name(args)` (без точек) — для COMPOUND-команд
-             (`circle_cmd(args)`, `face_cardinal_cmd(180)`, `goto_cmd(x,y)`),
+             (`circle_cmd(args)`, `face_cmd(180)`, `goto_cmd(x,y)`),
              а также короткая DSL-форма (`forward(100)`, `set_course(90)`)
              и legacy-префикс `cmd_X(args)`.
 

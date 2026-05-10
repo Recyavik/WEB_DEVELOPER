@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block title %}VEGAREX — Справка{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>📖 Справка</h1>
+  <p class="subtitle">
+    Документация разделена на три раздела. Выберите подходящий.
+  </p>
+</div>
+
+<div class="help-grid">
+
+  <article class="help-card" style="--card-accent: #58a6ff;">
+    <span class="help-card__icon">📘</span>
+    <h2 class="help-card__title">Инструкция</h2>
+    <p class="help-card__desc">
+      С чего начать: голосовой режим, базовые команды, режимы движения,
+      работа с зонами и режимом «⛯ Режим зон», взаимное гашение зон,
+      советы по голосовой работе. Самый практичный раздел для новичка.
+    </p>
+    <a href="/training" class="btn">Открыть Инструкцию →</a>
+  </article>
+
+  <article class="help-card" style="--card-accent: #a371f7;">
+    <span class="help-card__icon">🤖</span>
+    <h2 class="help-card__title">API 1T REX</h2>
+    <p class="help-card__desc">
+      Полный справочник примитивов реального робота
+      (<code>robot.move</code>, <code>robot.set_angle</code>,
+      <code>robot.get_laser</code>, <code>robot.set_rgb</code>) и
+      готовых helper-функций (<code>goto_cmd</code>, <code>face_cmd</code>,
+      <code>kturn_cmd</code> и т.д.). Используется при ручной правке
+      Python-кода программы.
+    </p>
+    <a href="/system" class="btn">Открыть API 1T REX →</a>
+  </article>
+
+  <article class="help-card" style="--card-accent: #f0883e;">
+    <span class="help-card__icon">🧭</span>
+    <h2 class="help-card__title">Маневры</h2>
+    <p class="help-card__desc">
+      Подробное объяснение алгоритмов движения с диаграммами и формулами:
+      3-дуговой K-turn, объезд S-волной, восьмёрка, спираль, A*-планировщик,
+      pure-pursuit, режим осторожности, проверка проходимости. Для тех,
+      кто хочет понять, что происходит «под капотом».
+    </p>
+    <a href="/maneuvers" class="btn">Открыть Маневры →</a>
+  </article>
+
+</div>
+{% endblock %}

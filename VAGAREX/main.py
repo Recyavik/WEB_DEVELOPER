@@ -149,6 +149,7 @@ def _seed_missions():
 app = FastAPI(title="VEGAREX", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
+templates.env.globals["robot_version"] = config.ROBOT_VERSION
 
 
 _PUBLIC_PATHS = ("/login", "/register", "/static", "/favicon.ico")
@@ -479,6 +480,16 @@ async def index(request: Request,
     return templates.TemplateResponse(request, "index.html", {
         "simulated":    sess.cfg.simulation_mode,
         "robot_host":   sess.cfg.rex_host,
+        "current_user": current_user,
+    })
+
+
+@app.get("/help", response_class=HTMLResponse)
+async def help_index(request: Request,
+                     current_user: User = Depends(require_user)):
+    """Хаб-страница «Справка»: список разделов с кратким описанием
+    и кнопкой перехода в каждый."""
+    return templates.TemplateResponse(request, "help.html", {
         "current_user": current_user,
     })
 

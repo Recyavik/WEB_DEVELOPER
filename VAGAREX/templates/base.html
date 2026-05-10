@@ -16,32 +16,30 @@
   </div>
   <nav class="topbar__nav">
     <a href="/" class="nav-link {% if request.url.path == '/' %}nav-link--active{% endif %}">
-      Управление
-    </a>
-    <a href="/training" class="nav-link {% if request.url.path == '/training' %}nav-link--active{% endif %}">
-      Инструкция
-    </a>
-    <a href="/system" class="nav-link {% if request.url.path == '/system' %}nav-link--active{% endif %}">
-      API 1T REX
-    </a>
-    <a href="/maneuvers" class="nav-link {% if request.url.path == '/maneuvers' %}nav-link--active{% endif %}">
-      Маневры
+      🎮 Управление
     </a>
     <a href="/tasks" class="nav-link {% if request.url.path == '/tasks' %}nav-link--active{% endif %}">
-      Задания
+      🎯 Задания
     </a>
     <a href="/missions" class="nav-link {% if request.url.path == '/missions' %}nav-link--active{% endif %}">
-      История
+      🕘 История
     </a>
     <a href="/library" class="nav-link {% if request.url.path.startswith('/library') %}nav-link--active{% endif %}">
       📚 Библиотека
     </a>
     <a href="/settings" class="nav-link {% if request.url.path == '/settings' %}nav-link--active{% endif %}">
-      Настройки
+      ⚙️ Настройки
+    </a>
+    {# Справка — хаб-страница со списком разделов и описаниями.
+       Активна также для дочерних страниц (Инструкция / API / Маневры). #}
+    {% set _help_paths = ('/help', '/training', '/system', '/maneuvers') %}
+    <a href="/help"
+       class="nav-link {% if request.url.path in _help_paths %}nav-link--active{% endif %}">
+      📖 Справка
     </a>
     {% if current_user and current_user.is_admin %}
     <a href="/admin" class="nav-link {% if request.url.path == '/admin' %}nav-link--active{% endif %}">
-      🛡 Админ
+      🛡️ Админ
     </a>
     {% endif %}
   </nav>
@@ -65,6 +63,11 @@
 <main class="main-content">
   {% block content %}{% endblock %}
 </main>
+
+<footer class="appbar" role="status">
+  <span class="appbar__status" id="status-bar" data-default="Готов к работе">Готов к работе</span>
+  <span class="appbar__version" title="Версия прошивки робота 1T REX">v{{ robot_version }}</span>
+</footer>
 
 {% block scripts %}{% endblock %}
 </body>
