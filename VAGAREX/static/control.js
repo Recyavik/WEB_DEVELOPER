@@ -918,20 +918,6 @@
       sendCmd('Вега установи зону ' + cleaned);
     });
 
-    // «⚠ Зона…» — поставить красную зону обстановки В КООРДИНАТЕ (без движения).
-    document.getElementById('btn-mark-danger')?.addEventListener('click', () => {
-      const xy = prompt(
-        'Координаты опасной (красной) зоны обстановки (X Y [радиус_см]).\n' +
-        'Робот не поедет туда — зона рисуется на карте как «константа обстановки».\n' +
-        'Пусто — поставить под роботом.\n' +
-        'Пример: -100 50 30',
-        '0 0');
-      if (xy === null) return;
-      const cleaned = xy.trim();
-      if (cleaned) sendCmd('Вега опасная зона ' + cleaned);
-      else         sendCmd('Вега опасная зона');
-    });
-
     // «✕ Убрать зону…» — спросить координаты (пусто = текущая позиция робота)
     document.getElementById('btn-remove-zone')?.addEventListener('click', () => {
       const xy = prompt(
@@ -943,6 +929,54 @@
       if (cleaned) sendCmd('Вега убрать зону ' + cleaned);
       else         sendCmd('Вега убрать зону');
     });
+
+    // ── ⛯ Режим установки опасных зон мышью ───────────────────────────
+    // Toggle-кнопка: ЛКМ ставит, Ctrl+ЛКМ удаляет, +/- меняет радиус,
+    // ESC/ПКМ выход. Видимое состояние — класс .is-active на кнопке.
+    const btnZoneMode = document.getElementById('btn-zone-mode');
+    function setZoneModeActive(on) {
+      if (!canvas) return;
+      canvas.setZoneMode(on);
+      if (btnZoneMode) btnZoneMode.classList.toggle('is-active', on);
+      if (on) {
+        logMsg(`⛯ Режим зон ВКЛ. Радиус ${canvas.zoneRadius} см. ` +
+               `ЛКМ ставит, ПКМ удаляет, [+/-] меняет радиус, ESC выход.`, 'info');
+      } else {
+        logMsg('⛯ Режим зон выключен.', 'info');
+      }
+    }
+    if (btnZoneMode && canvas) {
+      btnZoneMode.addEventListener('click', () => {
+        setZoneModeActive(!canvas.zoneMode);
+      });
+      // Коллбеки от canvas — отправляют команды на сервер
+      canvas.onZonePlace = (wx, wy, r) => {
+        sendCmd(`Вега опасная зона ${wx.toFixed(0)} ${wy.toFixed(0)} ${r}`);
+      };
+      canvas.onZoneRemove = (wx, wy) => {
+        sendCmd(`Вега убрать зону ${wx.toFixed(0)} ${wy.toFixed(0)}`);
+      };
+      canvas.onZoneRadiusChange = (r) => {
+        logMsg(`⛯ Радиус зоны: ${r} см.`, 'info');
+      };
+      // Глобальные клавиши: +/-/= меняют радиус, ESC выходит
+      document.addEventListener('keydown', (e) => {
+        if (!canvas.zoneMode) return;
+        // Не перехватываем, если фокус на input/textarea (там +/- — это символы)
+        const tag = (e.target && e.target.tagName) || '';
+        if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          setZoneModeActive(false);
+        } else if (e.key === '+' || e.key === '=') {
+          e.preventDefault();
+          canvas.changeZoneRadius(+canvas.zoneRadiusStep);
+        } else if (e.key === '-' || e.key === '_') {
+          e.preventDefault();
+          canvas.changeZoneRadius(-canvas.zoneRadiusStep);
+        }
+      });
+    }
 
     // Очистить журнал
     const btnClearLog = document.getElementById('btn-clear-log');

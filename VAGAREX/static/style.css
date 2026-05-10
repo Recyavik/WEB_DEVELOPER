@@ -272,6 +272,10 @@ body {
 .btn--stop    { background: #3d1a1a; color: var(--danger); }
 .btn--center  { background: #1a2430; color: var(--accent); }
 .btn--danger  { background: #3d1a1a; color: var(--caution); }
+.btn--danger.is-active {
+  background: #6b2424; color: #fff; border-color: var(--caution);
+  box-shadow: 0 0 0 1px var(--caution) inset;
+}
 /* Голубая «инспектор» — приглушенная, ярче в .is-active */
 .btn--info    { background: #14202f; color: #4a6e96; border: 1px solid #1e2c40; }
 .btn--info:hover { background: #1a2a3d; opacity: 1; color: var(--accent); }

@@ -524,6 +524,70 @@ class TestProgramTextRoundTrip(unittest.TestCase):
         self.assertIn("def circle_cmd(", text)
 
 
+class TestZoneCancellation(unittest.TestCase):
+    """Взаимное гашение mark_danger ↔ remove_zone — только для красных зон.
+    Жёлтые алгоритмические зоны (set_algorithm_zone) НЕ гасятся."""
+
+    def setUp(self):
+        self.s = _SessionStub(_make_cfg())
+        self.s._program = []
+        # _save_program ходит в БД, в тестах не нужно — заменяем заглушкой.
+        self.s._save_program = lambda: None
+
+    def test_red_zone_inside_radius_cancels(self):
+        """mark_danger(100,100,r=20) → remove_zone(105,98) внутри кольца → гасится."""
+        self.s._program = [
+            _cmd("mark_danger", raw="Вега опасная зона 100 100 20",
+                 code="mark_danger(100,100,20)"),
+        ]
+        cancelled = self.s._cancel_matching_mark_danger(105.0, 98.0)
+        self.assertTrue(cancelled, "точка внутри 20см от центра — должна гаситься")
+        self.assertEqual(len(self.s._program), 0,
+                         "красная зона должна исчезнуть из программы")
+
+    def test_red_zone_outside_radius_keeps(self):
+        """mark_danger(100,100,r=10) → remove_zone(150,150) за кольцом → не гасится."""
+        self.s._program = [
+            _cmd("mark_danger", raw="Вега опасная зона 100 100 10",
+                 code="mark_danger(100,100,10)"),
+        ]
+        cancelled = self.s._cancel_matching_mark_danger(150.0, 150.0)
+        self.assertFalse(cancelled, "точка вне кольца — не должна гасить")
+        self.assertEqual(len(self.s._program), 1)
+
+    def test_yellow_zone_NEVER_cancelled(self):
+        """⚠ Регрессия: set_algorithm_zone (жёлтая) НЕ должна гаситься,
+        даже если remove_zone попадает в её кольцо.
+
+        Жёлтые зоны ставятся алгоритмом по условию (радиация/температура),
+        и их история важна для понимания работы программы."""
+        self.s._program = [
+            _cmd("set_algorithm_zone",
+                 raw="Вега установи зону 100 100 радиус 20",
+                 code="set_algorithm_zone(100,100,20)"),
+        ]
+        cancelled = self.s._cancel_matching_mark_danger(100.0, 100.0)
+        self.assertFalse(cancelled,
+                         "жёлтая зона никогда не гасится взаимным удалением")
+        self.assertEqual(len(self.s._program), 1,
+                         "set_algorithm_zone должна остаться в программе")
+
+    def test_red_among_yellow_only_red_cancelled(self):
+        """Если в одной точке висят обе зоны, погасится только красная,
+        жёлтая останется в логе программы."""
+        self.s._program = [
+            _cmd("set_algorithm_zone", raw="Вега установи зону 50 50 радиус 30",
+                 code="set_algorithm_zone(50,50,30)"),
+            _cmd("mark_danger",        raw="Вега опасная зона 50 50 25",
+                 code="mark_danger(50,50,25)"),
+        ]
+        cancelled = self.s._cancel_matching_mark_danger(50.0, 50.0)
+        self.assertTrue(cancelled)
+        self.assertEqual(len(self.s._program), 1)
+        self.assertEqual(self.s._program[0].intent, "set_algorithm_zone",
+                         "жёлтая должна остаться, красная — пропасть")
+
+
 # ────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":

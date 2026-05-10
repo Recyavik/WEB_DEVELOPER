@@ -46,6 +46,25 @@ class RobotCanvas {
     this.showLaser = true;
     this.showPath  = true;
 
+    // ── Режим установки опасных зон мышью ────────────────────────────
+    // Включается извне через setZoneMode(true), выход — ESC или повторное
+    // нажатие кнопки. В режиме:
+    //   ЛКМ      — поставить красную зону
+    //   ПКМ      — удалить зону, в которую попадает курсор
+    //   +/−      — менять радиус (Shift+колесо тоже)
+    //   ESC      — выход
+    this.zoneMode        = false;
+    this.zoneRadius      = 10;     // см, дефолт
+    this.zoneRadiusMin   = 5;
+    this.zoneRadiusMax   = 40;
+    this.zoneRadiusStep  = 5;
+    this.zoneCursor      = null;   // {wx, wy} текущая позиция мыши в мире (или null)
+    this.zoneInsideField = false;  // курсор внутри игрового поля?
+    // Внешние коллбеки — устанавливаются control.js:
+    this.onZonePlace     = null;   // (wx, wy, radius) — ЛКМ
+    this.onZoneRemove    = null;   // (wx, wy)         — ПКМ
+    this.onZoneRadiusChange = null;// (radius)         — +/- / Shift+колесо
+
     this._resize();
     this._bindEvents();
   }
@@ -90,11 +109,48 @@ class RobotCanvas {
   _bindEvents() {
     let panning = false, lastMX = 0, lastMY = 0;
 
+    const getMouseWorld = (e) => {
+      const rect = this.canvas.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      return { mx, my, ...this.canvasToWorld(mx, my) };
+    };
+    const isInsideField = (wx, wy) => {
+      const hw = this.worldW / 2, hh = this.worldH / 2;
+      return Math.abs(wx) <= hw && Math.abs(wy) <= hh;
+    };
+
     this.canvas.addEventListener('mousedown', e => {
-      panning = true;
-      lastMX = e.clientX; lastMY = e.clientY;
+      // ── Режим установки зон — приоритет над панорамированием ────
+      if (this.zoneMode) {
+        const { x: wx, y: wy } = getMouseWorld(e);
+        if (e.button === 0) {                     // ЛКМ — поставить
+          e.preventDefault();
+          if (isInsideField(wx, wy)) {
+            if (this.onZonePlace) this.onZonePlace(wx, wy, this.zoneRadius);
+          }
+          return;
+        }
+        if (e.button === 2) {                     // ПКМ — удалить под курсором
+          e.preventDefault();
+          if (this.onZoneRemove) this.onZoneRemove(wx, wy);
+          return;
+        }
+      }
+      // Обычное панорамирование (ЛКМ, не в режиме зон)
+      if (e.button === 0) {
+        panning = true;
+        lastMX = e.clientX; lastMY = e.clientY;
+      }
     });
     this.canvas.addEventListener('mousemove', e => {
+      if (this.zoneMode) {
+        const { x: wx, y: wy } = getMouseWorld(e);
+        this.zoneCursor = { wx, wy };
+        this.zoneInsideField = isInsideField(wx, wy);
+        this.draw();
+        return;
+      }
       if (!panning) return;
       this.originX += e.clientX - lastMX;
       this.originY += e.clientY - lastMY;
@@ -102,10 +158,29 @@ class RobotCanvas {
       this.draw();
     });
     this.canvas.addEventListener('mouseup',   () => { panning = false; });
-    this.canvas.addEventListener('mouseleave',() => { panning = false; });
+    this.canvas.addEventListener('mouseleave',() => {
+      panning = false;
+      if (this.zoneMode) {
+        this.zoneCursor = null;
+        this.draw();
+      }
+    });
+
+    // В режиме зон — подавляем стандартное контекстное меню браузера,
+    // потому что ПКМ используется для удаления зоны (см. mousedown).
+    this.canvas.addEventListener('contextmenu', e => {
+      if (this.zoneMode) e.preventDefault();
+    });
 
     this.canvas.addEventListener('wheel', e => {
       e.preventDefault();
+      // В режиме зон + Shift — меняет радиус
+      if (this.zoneMode && e.shiftKey) {
+        const delta = e.deltaY < 0 ? +this.zoneRadiusStep : -this.zoneRadiusStep;
+        this.changeZoneRadius(delta);
+        return;
+      }
+      // Обычный зум
       const factor = e.deltaY < 0 ? 1.1 : 0.9;
       const rect = this.canvas.getBoundingClientRect();
       const mx = e.clientX - rect.left;
@@ -122,6 +197,22 @@ class RobotCanvas {
     } else {
       window.addEventListener('resize', () => this._resize());
     }
+  }
+
+  // ── Публичный API для режима установки зон ───────────────────────────
+  setZoneMode(on) {
+    this.zoneMode = !!on;
+    this.canvas.style.cursor = this.zoneMode ? 'crosshair' : '';
+    if (!this.zoneMode) this.zoneCursor = null;
+    this.draw();
+  }
+  changeZoneRadius(delta) {
+    const r = Math.max(this.zoneRadiusMin,
+              Math.min(this.zoneRadiusMax, this.zoneRadius + delta));
+    if (r === this.zoneRadius) return;
+    this.zoneRadius = r;
+    if (this.onZoneRadiusChange) this.onZoneRadiusChange(r);
+    this.draw();
   }
 
   // ── Обновление данных ──────────────────────────────────────────────────────
@@ -239,6 +330,8 @@ class RobotCanvas {
     if (this.showLaser) this._drawLaser();
     this._drawRobot();
     this._drawLights();
+    // Поверх всего — превью зоны под курсором + статус-плашка режима
+    this._drawZoneModeOverlay();
   }
 
   _drawLights() {
@@ -414,15 +507,26 @@ class RobotCanvas {
 
   _drawDangerZones() {
     const ctx = this.ctx;
+    // Счётчики по типам — для нумерации внутри каждого вида зон.
+    let dangerNum = 0, algoNum = 0;
+    // Если курсор в режиме установки зон — определим, над какой зоной
+    // он сейчас находится (для подсветки кандидата на удаление).
+    const cur = this.zoneMode ? this.zoneCursor : null;
     for (const z of this.dangerZones) {
       const c = this.worldToCanvas(z.x, z.y);
       const r = z.radius * this.scale;
       const isAlgo = z.kind === 'algorithm';
+      const num = isAlgo ? (++algoNum) : (++dangerNum);
+      const isHovered = cur &&
+        Math.hypot(cur.wx - z.x, cur.wy - z.y) <= z.radius;
 
       // Оба типа: тонкий пунктир, заливка 10% соответствующим цветом.
-      // Отличаются только цветом — желтый (алгоритм) vs красный (обстановка).
-      const fill   = isAlgo ? 'rgba(255, 215, 0, 0.10)'    // 10% желтый
-                             : 'rgba(248,  81, 73, 0.10)'; // 10% красный
+      // Под курсором в режиме зон — заливка ярче (подсказка «можно удалить»).
+      const baseFill   = isAlgo ? 'rgba(255, 215, 0, 0.10)'
+                                 : 'rgba(248,  81, 73, 0.10)';
+      const hoverFill  = isAlgo ? 'rgba(255, 215, 0, 0.25)'
+                                 : 'rgba(248,  81, 73, 0.30)';
+      const fill   = isHovered ? hoverFill : baseFill;
       const stroke = isAlgo ? 'rgba(255, 215, 0, 0.95)'
                              : 'rgba(248,  81, 73, 0.95)';
       const labelColor = isAlgo ? '#ffd700' : '#f85149';
@@ -433,19 +537,110 @@ class RobotCanvas {
       ctx.fill();
 
       ctx.strokeStyle = stroke;
-      ctx.lineWidth   = 1.2;          // тонкая линия
-      ctx.setLineDash([4, 3]);        // одинаковый тонкий пунктир
+      ctx.lineWidth   = isHovered ? 2.0 : 1.2;
+      ctx.setLineDash([4, 3]);
       ctx.beginPath();
       ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
       ctx.stroke();
       ctx.setLineDash([]);
 
+      // ── Нумерация зоны: крупная цифра в центре, белая обводка ─────
+      // Размер от scale, но в разумных пределах, чтобы не перекрыть.
+      const numFontPx = Math.max(11, Math.min(22, Math.round(r * 0.55)));
+      ctx.font = `bold ${numFontPx}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.7)';
+      ctx.strokeText(String(num), c.x, c.y);
+      ctx.fillStyle = labelColor;
+      ctx.fillText(String(num), c.x, c.y);
+      ctx.textBaseline = 'alphabetic';
+
+      // Текстовая подпись под зоной (как раньше)
       ctx.fillStyle = labelColor;
       ctx.font = '11px sans-serif';
-      ctx.textAlign = 'center';
       ctx.fillText(z.label, c.x, c.y + r + 14);
       ctx.textAlign = 'left';
     }
+  }
+
+  // ── Превью-кружок будущей зоны под курсором + статус-плашка ─────────
+  _drawZoneModeOverlay() {
+    if (!this.zoneMode) return;
+    const ctx = this.ctx;
+
+    // 1) Превью под курсором (если курсор на холсте)
+    if (this.zoneCursor) {
+      const { wx, wy } = this.zoneCursor;
+      const c = this.worldToCanvas(wx, wy);
+      const r = this.zoneRadius * this.scale;
+      const allowed = this.zoneInsideField;
+
+      ctx.save();
+      // Заливка
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = allowed ? 'rgba(248, 81, 73, 0.20)'
+                              : 'rgba(140, 140, 140, 0.20)';
+      ctx.fill();
+      // Контур
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+      ctx.strokeStyle = allowed ? 'rgba(248, 81, 73, 1.0)'
+                                : 'rgba(140, 140, 140, 1.0)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([6, 4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // Перекрестье в центре
+      ctx.beginPath();
+      ctx.moveTo(c.x - 6, c.y); ctx.lineTo(c.x + 6, c.y);
+      ctx.moveTo(c.x, c.y - 6); ctx.lineTo(c.x, c.y + 6);
+      ctx.strokeStyle = allowed ? '#f85149' : '#888';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      // Лейбл с координатами и радиусом
+      const label = `x=${wx.toFixed(0)}, y=${wy.toFixed(0)}, r=${this.zoneRadius}`;
+      ctx.font = '12px sans-serif';
+      const labelPad = 4;
+      const labelW = ctx.measureText(label).width + labelPad * 2;
+      const labelH = 16;
+      const lx = c.x + 12;
+      const ly = c.y + 12;
+      ctx.fillStyle = 'rgba(13, 17, 23, 0.85)';
+      ctx.fillRect(lx, ly, labelW, labelH);
+      ctx.strokeStyle = allowed ? '#f85149' : '#888';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(lx, ly, labelW, labelH);
+      ctx.fillStyle = '#e6edf3';
+      ctx.fillText(label, lx + labelPad, ly + 12);
+
+      if (!allowed) {
+        ctx.fillStyle = '#f85149';
+        ctx.font = 'bold 12px sans-serif';
+        ctx.fillText('за пределами поля', lx, ly + labelH + 14);
+      }
+      ctx.restore();
+    }
+
+    // 2) Статус-плашка сверху холста
+    ctx.save();
+    const status = `⚠ Режим зон  •  радиус ${this.zoneRadius} см  •  ` +
+                   `ЛКМ — поставить, ПКМ — удалить, [+/-] (Shift+колесо) — радиус, ESC — выход`;
+    ctx.font = 'bold 12px sans-serif';
+    const w = ctx.measureText(status).width + 16;
+    const h = 22;
+    const x = (this._cssW - w) / 2;
+    const y = 8;
+    ctx.fillStyle = 'rgba(248, 81, 73, 0.18)';
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = '#f85149';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x, y, w, h);
+    ctx.fillStyle = '#f85149';
+    ctx.fillText(status, x + 8, y + 15);
+    ctx.restore();
   }
 
   _drawPath() {

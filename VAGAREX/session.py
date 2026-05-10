@@ -58,6 +58,10 @@ class RobotCmd:
     code:     str
     raw:      str
     playback: bool = False
+    # Если True — команда не записывается в self._program и в textarea.
+    # Используется для взаимного гашения «поставил → удалил» красную зону:
+    # обе команды пропадают из программы, как будто их и не было.
+    skip_record: bool = False
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -280,6 +284,41 @@ class UserSession:
             db.commit()
         finally:
             db.close()
+
+    def _cancel_matching_mark_danger(self, rx: float, ry: float) -> bool:
+        """Ищет в self._program последнюю команду mark_danger (КРАСНУЮ зону),
+        чьё кольцо содержит точку (rx, ry), и удаляет её из программы.
+
+        Используется при «взаимном гашении»: если пользователь поставил
+        красную зону, а потом её удалил (мышью в режиме зон или командой
+        «убрать зону»), обе команды убираются из программы — как будто
+        их и не было. Применимо только к зонам, поставленным в этой же
+        сессии и записанным в _program; внешние зоны (расставленные
+        генератором заданий и т.п.) не задеваются.
+
+        ⚠ ЖЁЛТЫЕ зоны (set_algorithm_zone) НЕ гасятся, даже если попадают
+        под точку удаления — они создаются алгоритмом по условию
+        (радиация/температура и т.п.), и их история ВАЖНА для понимания
+        работы алгоритма. Поэтому фильтр явно по `intent == "mark_danger"`,
+        а не «любая зональная команда».
+
+        Возвращает True если что-то удалили."""
+        for idx in range(len(self._program) - 1, -1, -1):
+            prev = self._program[idx]
+            if prev.intent != "mark_danger":
+                continue
+            prev_xy = nlu.extract_coordinates(prev.raw)
+            if prev_xy is None:
+                continue
+            prev_r = nlu.extract_radius(prev.raw)
+            if prev_r is None:
+                prev_r = float(self.cfg.danger_zone_radius)
+            px, py = prev_xy
+            if math.hypot(rx - px, ry - py) <= prev_r:
+                self._program.pop(idx)
+                self._save_program()
+                return True
+        return False
 
     # ── Применение новых настроек (при сохранении в settings) ──────────────────
 
@@ -2953,8 +2992,19 @@ odo = Odometry()    # глобальный экземпляр одометрии
             tx, ty = (xy if xy is not None else (s.x, s.y))
             n_removed = await self._run_remove_zone(tx, ty, db)
             if n_removed > 0:
-                msg = (f"Удалено зон: {n_removed} "
-                       f"в точке ({tx:.0f}, {ty:.0f}).")
+                # Взаимное гашение: если эту красную зону мы поставили в той
+                # же сессии (есть mark_danger в _program, чьё кольцо содержит
+                # точку удаления) — обе команды убираем из программы целиком,
+                # как будто их и не было.
+                cancelled = self._cancel_matching_mark_danger(tx, ty)
+                if cancelled:
+                    cmd.skip_record = True
+                    await self.push_program()  # обновим textarea: mark_danger исчез
+                    msg = (f"↺ Зона в ({tx:.0f}, {ty:.0f}) поставлена и удалена "
+                           f"в этой же сессии — команды взаимно погашены.")
+                else:
+                    msg = (f"Удалено зон: {n_removed} "
+                           f"в точке ({tx:.0f}, {ty:.0f}).")
             else:
                 msg, ok = (f"В точке ({tx:.0f}, {ty:.0f}) "
                            f"зон не найдено."), False
@@ -3030,9 +3080,13 @@ odo = Odometry()    # глобальный экземпляр одометрии
         self.world.add_path(s.x, s.y)
         await self.push_state()
         if msg:
+            # Если команда «погашена» (skip_record) — НЕ отправляем code,
+            # иначе клиент впишет её в textarea как обычно.
+            send_code = python_code if (ok and not cmd.skip_record) else None
+            send_desc = python_desc if (ok and not cmd.skip_record) else None
             await self.push_message(msg, "success" if ok else "warning",
-                                    code=python_code if ok else None,
-                                    description=python_desc if ok else None)
+                                    code=send_code,
+                                    description=send_desc)
 
     # ── Фоновый исполнитель очереди ───────────────────────────────────────────
 
@@ -3068,7 +3122,8 @@ odo = Odometry()    # глобальный экземпляр одометрии
                     # внезапного рестарта сервера. Зарядка переживает рестарты.
                     self._save_battery_pct()
 
-                if success and not cmd.playback and cmd.intent not in _NO_RECORD:
+                if (success and not cmd.playback and not cmd.skip_record
+                        and cmd.intent not in _NO_RECORD):
                     if cmd.intent != "reset":
                         self._program.append(cmd)
                         self._save_program()
