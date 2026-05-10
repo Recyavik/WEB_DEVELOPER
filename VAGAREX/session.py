@@ -59,7 +59,7 @@ class RobotCmd:
     raw:      str
     playback: bool = False
     # Если True — команда не записывается в self._program и в textarea.
-    # Используется для взаимного гашения «поставил → удалил» красную зону:
+    # Используется для взаимного гашения «поставил → удалил» опасную зону:
     # обе команды пропадают из программы, как будто их и не было.
     skip_record: bool = False
 
@@ -290,7 +290,7 @@ class UserSession:
         чьё кольцо содержит точку (rx, ry), и удаляет её из программы.
 
         Используется при «взаимном гашении»: если пользователь поставил
-        красную зону, а потом её удалил (мышью в режиме зон или командой
+        опасную зону, а потом её удалил (мышью в режиме зон или командой
         «убрать зону»), обе команды убираются из программы — как будто
         их и не было. Применимо только к зонам, поставленным в этой же
         сессии и записанным в _program; внешние зоны (расставленные
@@ -1562,7 +1562,7 @@ class UserSession:
 
     async def _run_home(self):
         """Возврат в стартовую точку — это тот же `goto` с координатами
-        из настроек (`START_X_CM`, `START_Y_CM`)."""
+        из настроек (`START_X`, `START_Y`)."""
         sx, sy = float(self.cfg.start_x_cm), float(self.cfg.start_y_cm)
         await self.push_message(f"🏠 Домой: точка ({sx:.0f}, {sy:.0f}).", "info")
         await self._run_goto(sx, sy)
@@ -1859,7 +1859,7 @@ class UserSession:
                                 target_y: Optional[float] = None,
                                 radius:   Optional[float] = None,
                                 db: Session = None):
-        """Поставить красную зону обстановки.
+        """Поставить опасную зону обстановки.
         Если координаты не заданы — берется текущая позиция робота
         (старое поведение: «опасно прямо здесь»).
         Если заданы — зона ставится в (X, Y) БЕЗ движения робота:
@@ -1914,16 +1914,64 @@ class UserSession:
     async def _run_remove_zone(self, target_x: Optional[float] = None,
                                target_y: Optional[float] = None,
                                db: Session = None) -> int:
-        """Удалить зону (любого типа), в которую попадает точка (X, Y).
-        Если координаты не заданы — берется текущая позиция робота.
-        Возвращает число удаленных зон."""
+        """ПРОГРАММНОЕ удаление зоны (красной или жёлтой), в которую
+        попадает точка (X, Y). Если координаты не заданы — берётся текущая
+        позиция робота.
+
+        Требование: робот ДОЛЖЕН находиться внутри удаляемой зоны.
+        Это runtime-сценарий из алгоритма (например, «зона внимания
+        больше не актуальна — робот в ней — снимаем»). Если робота в зоне нет —
+        отказ с сообщением в журнал.
+
+        Для UI-удаления опасных зон мышью используется отдельный путь
+        `_run_remove_danger_zone_at_point` (без проверки робота).
+
+        Возвращает число удалённых зон."""
         s = self.robot_state
         x = float(target_x) if target_x is not None else s.x
         y = float(target_y) if target_y is not None else s.y
-        removed = self.world.remove_zones_at(x, y)
-        if not removed:
+        # Проверка: робот сам находится внутри зоны, которую собираемся удалить.
+        # Если координаты совпадают с позицией робота (remove_zone_here_cmd) —
+        # проверка тривиально пройдёт, т.к. (x,y) и есть позиция робота.
+        zone_at_point = self.world.zone_at(x, y)
+        if zone_at_point is None:
             await self.push_message(
                 f"В точке ({x:.0f}, {y:.0f}) зон не найдено.", "warning")
+            return 0
+        robot_inside = (math.hypot(s.x - zone_at_point.x, s.y - zone_at_point.y)
+                        <= zone_at_point.radius)
+        if not robot_inside:
+            await self.push_message(
+                f"⚠ Программное удаление зоны требует чтобы робот был ВНУТРИ "
+                f"неё. Робот ({s.x:.0f}, {s.y:.0f}), зона в "
+                f"({zone_at_point.x:.0f}, {zone_at_point.y:.0f}) "
+                f"r={zone_at_point.radius:.0f}.", "warning")
+            return 0
+        removed = self.world.remove_zones_at(x, y)
+        if db:
+            ids = [z.db_id for z in removed if z.db_id is not None]
+            if ids:
+                (db.query(DangerZone)
+                   .filter(DangerZone.id.in_(ids))
+                   .update({"active": False}, synchronize_session=False))
+                db.commit()
+        await self.push_world()
+        return len(removed)
+
+    async def _run_remove_danger_zone_at_point(self,
+                                                target_x: float, target_y: float,
+                                                db: Session = None) -> int:
+        """UI-удаление ОПАСНОЙ зоны мышью (⛯ Режим зон + ПКМ).
+        Снимает только зоны типа `kind="danger"`, в которые попадает точка.
+        Положение робота не проверяется — это pre-flight чистка карты.
+        Зоны внимания (kind="algorithm") не задеваются — они контролируются
+        алгоритмом, а не пользователем."""
+        x, y = float(target_x), float(target_y)
+        removed = self.world.remove_zones_at(x, y, kind="danger")
+        if not removed:
+            await self.push_message(
+                f"В точке ({x:.0f}, {y:.0f}) опасных зон не найдено.",
+                "warning")
             return 0
         if db:
             ids = [z.db_id for z in removed if z.db_id is not None]
@@ -1938,19 +1986,20 @@ class UserSession:
     async def _run_set_algorithm_zone(self, target_x: float, target_y: float,
                                       radius: Optional[float] = None,
                                       db: Session = None):
-        """Робот доезжает до (X, Y) и помечает там желтую пунктирную зону —
-        это часть алгоритма (не зона обстановки). Радиус по умолчанию из cfg."""
+        """Робот доезжает до (X, Y) и помечает там зону внимания (жёлтая
+        пунктирная) — это часть алгоритма (не зона обстановки).
+        Радиус по умолчанию из cfg."""
         s = self.robot_state
         await self.push_message(
-            f"📍 Установить алгоритмическую зону в ({target_x:.0f}, {target_y:.0f}).",
+            f"📍 Установить зону внимания в ({target_x:.0f}, {target_y:.0f}).",
             "info")
         # 1) Доехать до точки
         await self._run_goto(float(target_x), float(target_y))
-        # 2) Поставить желтую пунктирную зону в текущей позиции робота
+        # 2) Поставить зону внимания в текущей позиции робота
         r = float(radius) if radius is not None else float(self.cfg.danger_zone_radius)
         zone = self.world.add_danger_zone(s.x, s.y,
                                           radius=r,
-                                          label="Зона алгоритма",
+                                          label="Зона внимания",
                                           kind="algorithm")
         if db:
             dz = DangerZone(user_id=self.user_id, label=zone.label,
@@ -2098,10 +2147,10 @@ class UserSession:
             r = nlu.extract_radius(raw)
             if r is not None:
                 code  = f"set_algorithm_zone({tx:.0f}, {ty:.0f}, {r:.0f})"
-                label = f"📍 Зона алгоритма ({tx:.0f}, {ty:.0f}) r={r:.0f}"
+                label = f"📍 Зона внимания ({tx:.0f}, {ty:.0f}) r={r:.0f}"
             else:
                 code  = f"set_algorithm_zone({tx:.0f}, {ty:.0f})"
-                label = f"📍 Зона алгоритма ({tx:.0f}, {ty:.0f})"
+                label = f"📍 Зона внимания ({tx:.0f}, {ty:.0f})"
         elif intent == "remove_zone":
             xy = nlu.extract_coordinates(raw)
             if xy is not None:
@@ -2111,6 +2160,16 @@ class UserSession:
             else:
                 code  = "remove_zone()"
                 label = "✕ Убрать зону под роботом"
+        elif intent == "remove_danger_zone":
+            # UI-команда из «⛯ Режим зон» (ПКМ): pre-flight-чистка карты
+            # мышью. В Python-код программы НЕ пишется (cmd.skip_record
+            # выставит _dispatch). Координаты обязательны.
+            xy = nlu.extract_coordinates(raw)
+            if xy is None:
+                return None
+            tx, ty = xy
+            code  = f"# UI: убрать опасную зону в ({tx:.0f}, {ty:.0f})"
+            label = f"✕ Убрать опасную зону в ({tx:.0f}, {ty:.0f})"
         elif intent == "mode_inspector":
             code, label = "mode(inspector)", "Режим инспектор"
         elif intent == "mode_cautious":
@@ -2184,7 +2243,7 @@ class UserSession:
         "Odometry": (
             "Класс одометрии — отслеживание (x, y, heading) робота",
             r'''class Odometry:
-    def __init__(self, x=START_X_CM, y=START_Y_CM, heading=START_HEADING_DEG):
+    def __init__(self, x=START_X, y=START_Y, heading=START_HEADING_DEG):
         self.x = float(x); self.y = float(y); self.heading = float(heading)
     def sync_heading(self):
         try: self.heading = float(robot.get_angle()['Z']) % 360.0
@@ -2286,7 +2345,7 @@ odo = Odometry()    # глобальный экземпляр одометрии
         "home_cmd": (
             "Возврат в стартовую точку",
             r'''def home_cmd(power_pct=DEFAULT_SPEED):
-    goto_cmd(START_X_CM, START_Y_CM, power_pct)
+    goto_cmd(START_X, START_Y, power_pct)
 '''),
         "follow_path_cmd": (
             "Pure-pursuit — следование за списком waypoint'ов",
@@ -2433,7 +2492,7 @@ odo = Odometry()    # глобальный экземпляр одометрии
     # отметить (pos['x'], pos['y']) на карте
 '''),
         "set_algorithm_zone_cmd": (
-            "Доехать в точку и пометить алгоритмическую зону",
+            "Доехать в точку и пометить зону внимания",
             r'''def set_algorithm_zone_cmd(target_x, target_y, radius):
     goto_cmd(target_x, target_y)
     pos = robot.get_gps()
@@ -2567,8 +2626,9 @@ odo = Odometry()    # глобальный экземпляр одометрии
             f"LIGHT_DEFAULT_COLOR   = {LIGHT_DEFAULT_COLOR}\n"
             "\n"
             "# Стартовая точка робота — используется как «домой» и для сброса одометрии.\n"
-            f"START_X_CM            = {c.start_x_cm:.1f}\n"
-            f"START_Y_CM            = {c.start_y_cm:.1f}\n"
+            "# Координаты — числа в системе мира (без единиц измерения).\n"
+            f"START_X               = {c.start_x_cm:.1f}\n"
+            f"START_Y               = {c.start_y_cm:.1f}\n"
             f"START_HEADING_DEG     = {c.start_heading_deg:.1f}\n"
         )
 
@@ -2777,7 +2837,7 @@ odo = Odometry()    # глобальный экземпляр одометрии
             else:
                 tx, ty = xy
                 radius_arg = f"{r:g}" if r is not None else f"{c.danger_zone_radius:g}"
-                code_lines += [f"set_algorithm_zone_cmd({tx:g}, {ty:g}, {radius_arg})  # доехать в ({tx:g}, {ty:g}) и пометить алгоритмическую зону"]
+                code_lines += [f"set_algorithm_zone_cmd({tx:g}, {ty:g}, {radius_arg})  # доехать в ({tx:g}, {ty:g}) и пометить зону внимания"]
         elif intent == "remove_zone":
             xy = nlu.extract_coordinates(raw)
             if xy is None:
@@ -2963,16 +3023,25 @@ odo = Odometry()    # глобальный экземпляр одометрии
             else:
                 msg, ok = "Курс не распознан.", False
         elif intent == "mark_danger":
-            xy = nlu.extract_coordinates(raw)
-            r  = nlu.extract_radius(raw)
-            if xy is not None:
-                tx, ty = xy
-                await self._run_mark_danger(tx, ty, r, db)
-                msg = (f"Зона опасности установлена в ({tx:.0f}, {ty:.0f})"
-                       + (f", радиус {r:.0f}." if r is not None else "."))
+            # Опасные зоны нельзя создавать ПРОГРАММНО (во время Run/replay).
+            # Они — часть pre-flight обстановки: ставятся мышью или
+            # генератором заданий ДО запуска программы. На запуске
+            # `mark_danger_cmd(...)` строки в коде — это документация
+            # initial setup; зоны уже в `world.danger_zones` из БД/мыши.
+            if cmd.playback:
+                msg = (f"⏵ mark_danger игнорируется при replay "
+                       f"(опасные зоны — pre-flight обстановка, не runtime).")
             else:
-                await self._run_mark_danger(None, None, r, db)
-                msg = f"Зона опасности в ({s.x:.0f}, {s.y:.0f})."
+                xy = nlu.extract_coordinates(raw)
+                r  = nlu.extract_radius(raw)
+                if xy is not None:
+                    tx, ty = xy
+                    await self._run_mark_danger(tx, ty, r, db)
+                    msg = (f"Зона опасности установлена в ({tx:.0f}, {ty:.0f})"
+                           + (f", радиус {r:.0f}." if r is not None else "."))
+                else:
+                    await self._run_mark_danger(None, None, r, db)
+                    msg = f"Зона опасности в ({s.x:.0f}, {s.y:.0f})."
         elif intent == "pause":
             secs = nlu.extract_pause_seconds(raw)
             await self._run_pause(secs)
@@ -2987,27 +3056,45 @@ odo = Odometry()    # глобальный экземпляр одометрии
                 await self._run_set_algorithm_zone(tx, ty, r, db)
                 msg = (f"Алгоритмическая зона установлена в ({tx:.0f}, {ty:.0f})"
                        + (f", радиус {r:.0f}." if r is not None else "."))
+        elif intent == "remove_danger_zone":
+            # UI-удаление ОПАСНОЙ зоны мышью (⛯ Режим зон + ПКМ).
+            # Не записывается в Python-код программы (это pre-flight чистка
+            # карты, а не runtime-команда алгоритма).
+            xy = nlu.extract_coordinates(raw)
+            if xy is None:
+                msg, ok = "remove_danger_zone: координаты не указаны.", False
+            else:
+                tx, ty = xy
+                n_removed = await self._run_remove_danger_zone_at_point(tx, ty, db)
+                if n_removed > 0:
+                    # Взаимное гашение mark_danger ↔ remove_danger_zone (та же
+                    # сессия): обе команды убираются из программы целиком.
+                    cancelled = self._cancel_matching_mark_danger(tx, ty)
+                    if cancelled:
+                        await self.push_program()
+                        msg = (f"↺ Опасная зона в ({tx:.0f}, {ty:.0f}) "
+                               f"поставлена и удалена в этой же сессии — "
+                               f"команды взаимно погашены.")
+                    else:
+                        msg = (f"Удалена опасная зона в ({tx:.0f}, {ty:.0f}).")
+                    # В любом случае remove_danger_zone не записывается в код:
+                    # это UI-команда, а не runtime-действие алгоритма.
+                    cmd.skip_record = True
+                else:
+                    msg, ok = (f"В точке ({tx:.0f}, {ty:.0f}) опасных зон "
+                               f"не найдено."), False
         elif intent == "remove_zone":
+            # ПРОГРАММНАЯ команда (из кода/голоса): требует робот внутри зоны.
             xy = nlu.extract_coordinates(raw)
             tx, ty = (xy if xy is not None else (s.x, s.y))
             n_removed = await self._run_remove_zone(tx, ty, db)
             if n_removed > 0:
-                # Взаимное гашение: если эту красную зону мы поставили в той
-                # же сессии (есть mark_danger в _program, чьё кольцо содержит
-                # точку удаления) — обе команды убираем из программы целиком,
-                # как будто их и не было.
-                cancelled = self._cancel_matching_mark_danger(tx, ty)
-                if cancelled:
-                    cmd.skip_record = True
-                    await self.push_program()  # обновим textarea: mark_danger исчез
-                    msg = (f"↺ Зона в ({tx:.0f}, {ty:.0f}) поставлена и удалена "
-                           f"в этой же сессии — команды взаимно погашены.")
-                else:
-                    msg = (f"Удалено зон: {n_removed} "
-                           f"в точке ({tx:.0f}, {ty:.0f}).")
+                msg = (f"Удалено зон: {n_removed} "
+                       f"в точке ({tx:.0f}, {ty:.0f}).")
             else:
-                msg, ok = (f"В точке ({tx:.0f}, {ty:.0f}) "
-                           f"зон не найдено."), False
+                # _run_remove_zone уже отправил конкретную причину
+                # (нет зон / робот не внутри) — здесь msg оставляем пустым.
+                msg, ok = "", False
         elif intent == "mode_inspector":
             s.mode = "normal"; s.cautious = False
             msg = "Режим инспектор."

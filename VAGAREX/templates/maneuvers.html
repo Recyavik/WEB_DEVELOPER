@@ -96,6 +96,13 @@
   .svg-grid  { stroke: #30363d; stroke-width: 0.5; fill: none; }
   .svg-obs   { fill: #f85149; opacity: 0.5; }
   .svg-zone  { fill: none; stroke: #f0883e; stroke-width: 1.5; stroke-dasharray: 4 3; }
+  /* Зоны как в реальном canvas: тонкий пунктир + 10% заливка цветом, отличаются ТОЛЬКО оттенком */
+  .svg-zone-danger    { fill: rgba(248, 81, 73, 0.10); stroke: rgba(248, 81, 73, 0.95);
+                        stroke-width: 1.2; stroke-dasharray: 4 3; }
+  .svg-zone-attention { fill: rgba(255, 215, 0, 0.10); stroke: rgba(255, 215, 0, 0.95);
+                        stroke-width: 1.2; stroke-dasharray: 4 3; }
+  .svg-zone-num-danger    { fill: #f85149; font: bold 16px sans-serif; }
+  .svg-zone-num-attention { fill: #ffd700; font: bold 16px sans-serif; }
   .svg-bot   { fill: #2ea043; stroke: #ffffff; stroke-width: 1; }
   .svg-text  { fill: #c9d1d9; font-family: monospace; font-size: 11px; }
   .svg-text-sm { fill: #8b949e; font-family: monospace; font-size: 9px; }
@@ -145,7 +152,7 @@
       <a href="#a-goto">goto_cmd / home_cmd</a> ·
       <a href="#a-pp">follow_path_cmd (Pure-pursuit)</a>
     <br><strong>6. Зоны и обстановка</strong> —
-      <a href="#a-zones">mark_danger / алгоритмическая зона / remove</a>
+      <a href="#a-zones">опасная зона / зона внимания / remove</a>
     <br><strong>7. Режим осторожности</strong> —
       <a href="#a-cautious">smart-direction K-turn + остановка перед препятствием</a>
   </div>
@@ -360,7 +367,7 @@ robot.set_rgb(0, (0, 0, 0), 1)     <span class="c"># погасить</span></pr
 
   <h4>Параметры конструктора</h4>
   <ul class="params-list">
-    <li><code>x</code>, <code>y</code> — стартовая позиция в см (по умолчанию <code>START_X_CM</code>, <code>START_Y_CM</code>).</li>
+    <li><code>x</code>, <code>y</code> — стартовая позиция (по умолчанию <code>START_X</code>, <code>START_Y</code>).</li>
     <li><code>heading</code> — стартовый курс в градусах (0..359, 0 = север).</li>
   </ul>
   <h4>Параметры <code>move_step(power_pct, duration_sec, steer_deg=0)</code></h4>
@@ -371,7 +378,7 @@ robot.set_rgb(0, (0, 0, 0), 1)     <span class="c"># погасить</span></pr
   </ul>
 
 <pre class="alg-code"><span class="k">class</span> Odometry:
-    <span class="k">def</span> __init__(self, x=START_X_CM, y=START_Y_CM, heading=START_HEADING_DEG):
+    <span class="k">def</span> __init__(self, x=START_X, y=START_Y, heading=START_HEADING_DEG):
         self.x = float(x)                       <span class="c"># текущая координата по оси X в см</span>
         self.y = float(y)                       <span class="c"># текущая координата по оси Y в см</span>
         self.heading = float(heading)           <span class="c"># курс: 0=север (+y), 90=восток (+x)</span>
@@ -1269,7 +1276,7 @@ bypass_cmd(+1, 30, 60, 0.7)  <span class="c"># помягче (30°), помед
 
 
 <span class="k">def</span> home_cmd():
-    goto_cmd(START_X_CM, START_Y_CM)                              <span class="c"># возврат в стартовую точку (домой)</span></pre>
+    goto_cmd(START_X, START_Y)                                    <span class="c"># возврат в стартовую точку (домой)</span></pre>
 
   <h4 class="example-title">Пример вызова</h4>
 <pre class="alg-code">goto_cmd(100, 0)         <span class="c"># перейти в точку (100, 0)</span>
@@ -1310,7 +1317,7 @@ home_cmd()               <span class="c"># вернуться в стартов�
         bearing = atan2(tx − x, ty − y) ; &nbsp;&nbsp; steer = clip(0.7 × (bearing − heading))
       </div>
       <p>Используется в режиме осторожности после построения пути A*
-      с обходом красных зон.</p>
+      с обходом опасных зон.</p>
     </div>
   </div>
 
@@ -1378,41 +1385,85 @@ follow_path_cmd(path, 60, 25)          <span class="c"># помедленнее 
 <section class="card alg-card">
   <h2 class="card__title">6. Зоны обстановки</h2>
 
-  <h3 id="a-zones">6.1. Красные (опасные) и алгоритмические зоны</h3>
+  <h3 id="a-zones">6.1. Опасные зоны и зоны внимания</h3>
 
   <div class="alg-grid">
     <figure class="alg-svg">
       <svg viewBox="0 0 280 180">
+        <!-- Оси -->
         <line x1="20" y1="160" x2="260" y2="160" class="svg-grid"/>
         <line x1="20" y1="160" x2="20"  y2="20"  class="svg-grid"/>
-        <circle cx="120" cy="80" r="35" class="svg-obs"/>
-        <text x="105" y="84" class="svg-text">опасно</text>
-        <circle cx="220" cy="100" r="25" class="svg-zone"/>
-        <text x="190" y="105" class="svg-text-sm">алгоритм.</text>
-        <circle cx="40" cy="140" r="6" class="svg-bot"/>
+
+        <!-- Опасная зона (kind=danger). В canvas рисуется так же:
+             тонкий пунктир (4 3) + 10% красная заливка + цифра-номер в центре. -->
+        <circle cx="120" cy="85" r="35" class="svg-zone-danger"/>
+        <text x="120" y="92" text-anchor="middle" class="svg-zone-num-danger">1</text>
+        <text x="120" y="135" text-anchor="middle" class="svg-text-sm" fill="#f85149">
+          Опасная зона
+        </text>
+
+        <!-- Зона внимания (kind=algorithm). Те же стили, отличается только цвет. -->
+        <circle cx="225" cy="95" r="22" class="svg-zone-attention"/>
+        <text x="225" y="100" text-anchor="middle" class="svg-zone-num-attention">1</text>
+        <text x="225" y="130" text-anchor="middle" class="svg-text-sm" fill="#ffd700">
+          Зона внимания
+        </text>
+
+        <!-- Робот -->
+        <circle cx="45" cy="140" r="7" class="svg-bot"/>
       </svg>
-      <figcaption>Красные = обстановка, желтые пунктирные = алгоритм</figcaption>
+      <figcaption>Обе зоны имеют одинаковый стиль — тонкий пунктир (4 3) + 10% заливка + номер. Отличаются ТОЛЬКО цветом: красный = опасная зона (обстановка), жёлтый = зона внимания (алгоритм).</figcaption>
     </figure>
     <div>
       <h4>Различие</h4>
       <ul>
-        <li><strong>Красная зона</strong> — реальное препятствие на местности
-            (опасная для робота). Сохраняется как часть карты обстановки,
-            влияет на планировщик A* и режим осторожности.</li>
-        <li><strong>Алгоритмическая (желтая)</strong> — внутренний контейнер
-            алгоритма (исключение из планирования, временный буфер).
-            Не часть реальной карты, удаляется по окончанию миссии.</li>
+        <li><strong>Опасная зона — «обстановка»</strong> (kind=danger).
+            Известное заранее препятствие. Расставляется ДО запуска
+            программы (мышью в режиме «⛯ Режим зон» или генератором задания).
+            Попадает в код программы как первые команды
+            <code>mark_danger_cmd(...)</code>, до основного алгоритма.
+            Влияет на планировщик A* и режим «осторожно».</li>
+        <li><strong>Зона внимания — «алгоритм»</strong> (kind=algorithm).
+            Создаётся ВО ВРЕМЯ движения по условию (планируется: повышенная
+            радиация, температура и т.п.) — алгоритм помечает зоны для
+            дальнейшего исследования. Ставится ТОЛЬКО когда робот находится
+            в этой координате (через <code>set_algorithm_zone_cmd</code> —
+            робот доезжает в точку). Мышью НЕ ставятся.</li>
+      </ul>
+
+      <h4 style="margin-top:0.7rem">Удаление зон</h4>
+      <p>Есть <strong>два разных пути</strong> с разной семантикой:</p>
+      <ul>
+        <li><strong>UI: «⛯ Режим зон» + ПКМ</strong> — удаляет ТОЛЬКО опасные
+            зоны под курсором. Зоны внимания мышью не задеваются
+            (они не пользовательские). Положение робота не проверяется —
+            это pre-flight чистка карты. <strong>Не записывается в Python-код</strong>
+            программы.</li>
+        <li><strong>Программно</strong>: <code>remove_zone_cmd(x, y)</code> или
+            <code>remove_zone_here_cmd()</code> — может убрать любой тип
+            (опасную или зону внимания), но <strong>ТРЕБУЕТ чтобы робот
+            находился внутри зоны</strong>. Это runtime-сценарий из алгоритма (например,
+            «зона внимания больше не актуальна, робот в ней — снимаем»). Если
+            робота в зоне нет — отказ с предупреждением.</li>
+        <li><strong>Взаимное гашение опасных зон.</strong> Если в одной
+            сессии пользователь поставил опасную зону мышью и тут же её
+            удалил (ПКМ внутри её круга) — обе команды
+            (<code>mark_danger_cmd</code> на постановку и mouse-action
+            на удаление) исчезают из программы, как будто их не было.
+            Упрощает чистку при подготовке карты мышью.
+            <strong>Зоны внимания так не гасятся</strong> — их история ставится
+            алгоритмом и важна для понимания работы программы.</li>
       </ul>
     </div>
   </div>
 
   <h4>Параметры</h4>
   <ul class="params-list">
-    <li><code>x</code>, <code>y</code> — координаты центра зоны в см.</li>
+    <li><code>x</code>, <code>y</code> — координаты центра зоны.</li>
     <li><code>radius</code> — радиус зоны в см.</li>
   </ul>
 
-<pre class="alg-code"><span class="c"># 1. Отметить красную зону по координатам — без движения робота.</span>
+<pre class="alg-code"><span class="c"># 1. Отметить опасную зону по координатам — без движения робота.</span>
 <span class="k">def</span> mark_danger_cmd(x, y, radius):
     pass                                  <span class="c"># на физическом роботе: отправить в карту обстановки</span>
 
@@ -1432,9 +1483,9 @@ follow_path_cmd(path, 60, 25)          <span class="c"># помедленнее 
     pass                                  <span class="c"># карта.remove_zone_at(x, y)</span></pre>
 
   <h4 class="example-title">Пример вызова</h4>
-<pre class="alg-code">mark_danger_cmd(100, 50, 30)         <span class="c"># красная зона радиусом 30 см в точке (100, 50)</span>
-mark_danger_here_cmd()               <span class="c"># отметить опасность под текущей позицией робота</span>
-set_algorithm_zone_cmd(200, 200, 40) <span class="c"># доехать в (200, 200) и пометить зону 40 см</span>
+<pre class="alg-code">mark_danger_cmd(100, 50, 30)         <span class="c"># опасная зона радиусом 30 см в точке (100, 50)</span>
+mark_danger_here_cmd()               <span class="c"># отметить опасную зону под текущей позицией робота</span>
+set_algorithm_zone_cmd(200, 200, 40) <span class="c"># доехать в (200, 200) и пометить зону внимания 40 см</span>
 remove_zone_cmd(100, 50)             <span class="c"># снять зону, накрывающую (100, 50)</span></pre>
 </section>
 
@@ -1467,7 +1518,7 @@ remove_zone_cmd(100, 50)             <span class="c"># снять зону, на
       в одном «естественном» направлении (по часовой). В режиме осторожности:</p>
       <ol>
         <li>Симулируем все три дуги K-turn в исходном направлении.
-            Если ни одна точка дуги не пересекает красную зону —
+            Если ни одна точка дуги не пересекает опасную зону —
             выполняем как обычно.</li>
         <li>Если пересечение есть — повторяем симуляцию для
             <em>зеркального</em> направления.</li>
@@ -1520,10 +1571,10 @@ remove_zone_cmd(100, 50)             <span class="c"># снять зону, на
     <span class="k">return</span> False                                                      <span class="c"># оба направления блокированы — отказ</span></pre>
 
   <h4 class="example-title">Пример вызова</h4>
-<pre class="alg-code">zones = [(100, 50, 30), (180, 80, 25)]   <span class="c"># красные зоны на карте</span>
+<pre class="alg-code">zones = [(100, 50, 30), (180, 80, 25)]   <span class="c"># опасные зоны на карте</span>
 ok = kturn_smart_cmd(180, zones)         <span class="c"># попробовать развернуться на 180°</span>
 <span class="k">if</span> <span class="k">not</span> ok:
-    goto_cmd(START_X_CM, START_Y_CM)     <span class="c"># не получилось — едем в безопасную точку</span></pre>
+    goto_cmd(START_X, START_Y)           <span class="c"># не получилось — едем в безопасную точку</span></pre>
 
 
   <h3>7.2. Остановка перед препятствием</h3>
@@ -1533,7 +1584,7 @@ ok = kturn_smart_cmd(180, zones)         <span class="c"># попробоват�
   Алгоритм такой же, как в <a href="#a-towall">forward_to_wall_cmd</a>,
   только при срабатывании дальномера вместо выхода — приостанавливаем
   команду и предлагаем в журнале изменить ее на
-  <code>goto_cmd(x, y)</code> с обходом A* по карте красных зон.</p>
+  <code>goto_cmd(x, y)</code> с обходом A* по карте опасных зон.</p>
 
   <h4>Параметры</h4>
   <ul class="params-list">
@@ -1551,7 +1602,7 @@ ok = kturn_smart_cmd(180, zones)         <span class="c"># попробоват�
         d = robot.get_laser()                                             <span class="c"># расстояние до препятствия в мм</span>
         <span class="k">if</span> d <span class="k">is</span> <span class="k">not</span> None <span class="k">and</span> d <= stop_margin_mm:                    <span class="c"># слишком близко — препятствие!</span>
             robot.stop()                                                  <span class="c"># экстренная остановка</span>
-            <span class="c"># Зафиксировать препятствие как красную зону на 30 см впереди робота:</span>
+            <span class="c"># Зафиксировать препятствие как опасную зону на 30 см впереди робота:</span>
             mark_danger_cmd(odo.x + 30 * math.sin(math.radians(odo.heading)),  <span class="c"># X препятствия (по курсу)</span>
                             odo.y + 30 * math.cos(math.radians(odo.heading)),  <span class="c"># Y препятствия (по курсу)</span>
                             radius=20)                                    <span class="c"># радиус опасной зоны 20 см</span>
@@ -1565,7 +1616,7 @@ ok = kturn_smart_cmd(180, zones)         <span class="c"># попробоват�
   <h4 class="example-title">Пример вызова</h4>
 <pre class="alg-code">result = safe_forward(200)             <span class="c"># попробовать проехать 2 м с проверкой препятствий</span>
 <span class="k">if</span> result == <span class="s">"blocked"</span>:           <span class="c"># дальномер сработал — путь заблокирован</span>
-    goto_cmd(target_x, target_y)        <span class="c"># обход через goto_cmd + A* (по карте красных зон)</span></pre>
+    goto_cmd(target_x, target_y)        <span class="c"># обход через goto_cmd + A* (по карте опасных зон)</span></pre>
 </section>
 
 </div>

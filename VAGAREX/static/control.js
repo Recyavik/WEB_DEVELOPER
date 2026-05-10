@@ -940,7 +940,8 @@
       if (btnZoneMode) btnZoneMode.classList.toggle('is-active', on);
       if (on) {
         logMsg(`⛯ Режим зон ВКЛ. Радиус ${canvas.zoneRadius} см. ` +
-               `ЛКМ ставит, ПКМ удаляет, [+/-] меняет радиус, ESC выход.`, 'info');
+               `ЛКМ ставит опасную зону, ПКМ удаляет опасную (зоны внимания не трогаются), ` +
+               `[+/-] меняет радиус, ESC выход.`, 'info');
       } else {
         logMsg('⛯ Режим зон выключен.', 'info');
       }
@@ -954,7 +955,10 @@
         sendCmd(`Вега опасная зона ${wx.toFixed(0)} ${wy.toFixed(0)} ${r}`);
       };
       canvas.onZoneRemove = (wx, wy) => {
-        sendCmd(`Вега убрать зону ${wx.toFixed(0)} ${wy.toFixed(0)}`);
+        // ⛯ Режим зон + ПКМ → удаляет ТОЛЬКО опасные зоны обстановки.
+        // Зоны внимания мышью не задеваются — они контролируются
+        // алгоритмом, а не пользователем.
+        sendCmd(`Вега убрать опасную зону ${wx.toFixed(0)} ${wy.toFixed(0)}`);
       };
       canvas.onZoneRadiusChange = (r) => {
         logMsg(`⛯ Радиус зоны: ${r} см.`, 'info');

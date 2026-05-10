@@ -155,8 +155,8 @@
           <div class="quick-extra">
             <button class="btn btn--xs" data-cmd="Вега домой" title="Возврат в стартовую точку и стартовый курс">🏠 Домой</button>
             <button class="btn btn--xs" id="btn-goto" title="В произвольную точку (X Y) — поворот к цели и прямая дуга">📍 В точку…</button>
-            <button class="btn btn--xs" id="btn-set-zone" title="Установить алгоритмическую желтую зону в (X Y): робот доедет туда и пометит зону">📍 Установить зону…</button>
-            <button class="btn btn--xs" id="btn-remove-zone" title="Удалить зону (красную или желтую), в которую попадает точка. Пусто = под роботом.">✕ Убрать зону…</button>
+            <button class="btn btn--xs" id="btn-set-zone" title="Установить зону внимания в (X Y): робот доедет туда и пометит зону">📍 Установить зону…</button>
+            <button class="btn btn--xs" id="btn-remove-zone" title="Удалить зону (опасную или внимания), в которую попадает точка. Пусто = под роботом.">✕ Убрать зону…</button>
             <button class="btn btn--xs" data-cmd="Вега где робот" title="Текущие координаты и курс">❓ Где робот</button>
             <button class="btn btn--xs" data-cmd="Вега статус робота" title="Полный статус: позиция, курс, скорость, руль, режим, дальномер, заряд, зоны, поле">📊 Статус</button>
           </div>
@@ -219,7 +219,7 @@
       <!-- Режим / Действия (перенесено из боковой панели) -->
       <button id="btn-mode-inspector" class="btn btn--sm btn--info" data-cmd="Вега инспектор" title="Обычный режим инспектора">Инспектор</button>
       <button id="btn-mode-cautious"  class="btn btn--sm btn--warn" data-cmd="Вега осторожно" title="Режим осторожности">⚠ Осторожно</button>
-      <button id="btn-zone-mode"      class="btn btn--sm btn--danger" title="Режим установки зон мышью: ЛКМ ставит, ПКМ удаляет, +/- меняет радиус, ESC или повторное нажатие — выход">⛯ Режим зон</button>
+      <button id="btn-zone-mode"      class="btn btn--sm btn--danger" title="Режим установки опасных зон обстановки мышью: ЛКМ ставит, ПКМ удаляет (только опасные!), +/- меняет радиус, ESC или повторное нажатие — выход. Зоны внимания мышью не задеваются.">⛯ Режим зон</button>
       <button class="btn btn--sm btn--success" data-cmd="Вега зарядить" title="Полностью зарядить батарею робота">🔋 Зарядить</button>
       <button class="btn btn--sm btn--danger" data-cmd="Вега новое поле" title="Полный сброс: робот в стартовую точку, путь и зоны очищаются">↺ Поле</button>
     </div>

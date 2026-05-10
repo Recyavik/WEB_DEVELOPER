@@ -89,7 +89,7 @@ class TestHelperRegistry(unittest.TestCase):
             "DEFAULT_SPEED=40; DEFAULT_TURN_ANGLE=35\n"
             "SPEED_CM_PER_S_AT_100=80.0; WHEEL_CIRC_CM=28.3\n"
             "HEADING_DEG_PER_ROT=25.0; ROBOT_LENGTH_CM=20.0\n"
-            "START_X_CM=0; START_Y_CM=100; START_HEADING_DEG=0\n"
+            "START_X=0; START_Y=100; START_HEADING_DEG=0\n"
             "class _R: pass\nrobot=_R()\n"
         )
         import ast
@@ -525,8 +525,8 @@ class TestProgramTextRoundTrip(unittest.TestCase):
 
 
 class TestZoneCancellation(unittest.TestCase):
-    """Взаимное гашение mark_danger ↔ remove_zone — только для красных зон.
-    Жёлтые алгоритмические зоны (set_algorithm_zone) НЕ гасятся."""
+    """Взаимное гашение mark_danger ↔ remove_zone — только для опасных зон.
+    Зоны внимания (set_algorithm_zone) НЕ гасятся."""
 
     def setUp(self):
         self.s = _SessionStub(_make_cfg())
@@ -534,7 +534,7 @@ class TestZoneCancellation(unittest.TestCase):
         # _save_program ходит в БД, в тестах не нужно — заменяем заглушкой.
         self.s._save_program = lambda: None
 
-    def test_red_zone_inside_radius_cancels(self):
+    def test_danger_zone_inside_radius_cancels(self):
         """mark_danger(100,100,r=20) → remove_zone(105,98) внутри кольца → гасится."""
         self.s._program = [
             _cmd("mark_danger", raw="Вега опасная зона 100 100 20",
@@ -543,9 +543,9 @@ class TestZoneCancellation(unittest.TestCase):
         cancelled = self.s._cancel_matching_mark_danger(105.0, 98.0)
         self.assertTrue(cancelled, "точка внутри 20см от центра — должна гаситься")
         self.assertEqual(len(self.s._program), 0,
-                         "красная зона должна исчезнуть из программы")
+                         "опасная зона должна исчезнуть из программы")
 
-    def test_red_zone_outside_radius_keeps(self):
+    def test_danger_zone_outside_radius_keeps(self):
         """mark_danger(100,100,r=10) → remove_zone(150,150) за кольцом → не гасится."""
         self.s._program = [
             _cmd("mark_danger", raw="Вега опасная зона 100 100 10",
@@ -555,11 +555,11 @@ class TestZoneCancellation(unittest.TestCase):
         self.assertFalse(cancelled, "точка вне кольца — не должна гасить")
         self.assertEqual(len(self.s._program), 1)
 
-    def test_yellow_zone_NEVER_cancelled(self):
-        """⚠ Регрессия: set_algorithm_zone (жёлтая) НЕ должна гаситься,
+    def test_attention_zone_NEVER_cancelled(self):
+        """⚠ Регрессия: set_algorithm_zone (зона внимания) НЕ должна гаситься,
         даже если remove_zone попадает в её кольцо.
 
-        Жёлтые зоны ставятся алгоритмом по условию (радиация/температура),
+        Зоны внимания ставятся алгоритмом по условию (радиация/температура),
         и их история важна для понимания работы программы."""
         self.s._program = [
             _cmd("set_algorithm_zone",
@@ -568,13 +568,51 @@ class TestZoneCancellation(unittest.TestCase):
         ]
         cancelled = self.s._cancel_matching_mark_danger(100.0, 100.0)
         self.assertFalse(cancelled,
-                         "жёлтая зона никогда не гасится взаимным удалением")
+                         "зона внимания никогда не гасится взаимным удалением")
         self.assertEqual(len(self.s._program), 1,
                          "set_algorithm_zone должна остаться в программе")
 
-    def test_red_among_yellow_only_red_cancelled(self):
-        """Если в одной точке висят обе зоны, погасится только красная,
-        жёлтая останется в логе программы."""
+    def test_remove_danger_zone_voice_phrase_recognized(self):
+        """⛯ Режим зон + ПКМ шлёт «Вега убрать опасную зону X Y» — должна
+        распознаваться как НОВЫЙ intent remove_danger_zone (не remove_zone)."""
+        from nlu import predict
+        intent, conf = predict("Вега убрать опасную зону 100 50")
+        self.assertEqual(intent, "remove_danger_zone",
+                         "ПКМ-фраза должна давать UI-интент, а не общий remove_zone")
+
+    def test_remove_danger_zone_distinct_from_remove_zone(self):
+        from nlu import predict
+        cases = [
+            ("Вега убери опасную зону 0 0",     "remove_danger_zone"),
+            ("Вега удали опасную зону",         "remove_danger_zone"),
+            ("Вега убрать опасную зону 50 50",  "remove_danger_zone"),
+            ("Вега убрать зону",                "remove_zone"),
+            ("Вега удали зону 100 100",         "remove_zone"),
+        ]
+        for phrase, expected in cases:
+            with self.subTest(phrase=phrase):
+                intent, _ = predict(phrase)
+                self.assertEqual(intent, expected,
+                                 f"{phrase!r} → ожидался {expected}, получен {intent}")
+
+    def test_dispatcher_blocks_mark_danger_on_playback(self):
+        """⛔ Регрессия: опасные зоны нельзя создавать программно.
+        При cmd.playback=True (replay через ▶ Запуск) — no-op."""
+        # Читаем код _dispatch и проверяем что в ветке mark_danger
+        # есть обработка cmd.playback.
+        import inspect
+        from session import UserSession
+        src = inspect.getsource(UserSession._dispatch)
+        # Должна быть проверка на playback в ветке mark_danger
+        self.assertIn("if cmd.playback:", src)
+        # И конкретно — игнорирование mark_danger при replay
+        self.assertRegex(src,
+                         r'mark_danger.*игнорируется',
+                         "_dispatch должен игнорировать mark_danger при replay")
+
+    def test_danger_among_attention_only_danger_cancelled(self):
+        """Если в одной точке висят обе зоны, погасится только опасная,
+        зона внимания останется в логе программы."""
         self.s._program = [
             _cmd("set_algorithm_zone", raw="Вега установи зону 50 50 радиус 30",
                  code="set_algorithm_zone(50,50,30)"),
@@ -585,7 +623,7 @@ class TestZoneCancellation(unittest.TestCase):
         self.assertTrue(cancelled)
         self.assertEqual(len(self.s._program), 1)
         self.assertEqual(self.s._program[0].intent, "set_algorithm_zone",
-                         "жёлтая должна остаться, красная — пропасть")
+                         "зона внимания должна остаться, опасная — пропасть")
 
 
 # ────────────────────────────────────────────────────────────────────────────

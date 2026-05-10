@@ -193,7 +193,7 @@ class DangerZone(Base):
     x          = Column(Float)
     y          = Column(Float)
     radius     = Column(Float, default=50.0)
-    # 'danger' = красная зона обстановки, 'algorithm' = желтая пунктирная зона алгоритма
+    # 'danger' = опасная зона обстановки, 'algorithm' = желтая пунктирная зона алгоритма
     kind       = Column(String(20), default="danger", nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     active     = Column(Boolean, default=True)

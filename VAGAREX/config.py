@@ -37,10 +37,12 @@ WALL_THICKNESS_CM = float(os.getenv("WALL_THICKNESS_CM", "5.0"))
 ROBOT_LENGTH_CM = float(os.getenv("ROBOT_LENGTH_CM", "20.0"))
 ROBOT_WIDTH_CM  = float(os.getenv("ROBOT_WIDTH_CM",  "12.0"))
 
-# Стартовая точка робота (см, градусы). Используется при очистке поля
-# и подставляется в сгенерированный Python-код как константа.
-START_X_CM       = float(os.getenv("START_X_CM",       "0.0"))
-START_Y_CM       = float(os.getenv("START_Y_CM",       "0.0"))
+# Стартовая точка робота (просто координаты в системе мира + курс в градусах).
+# Используется при очистке поля и подставляется в сгенерированный Python-код
+# как константа. Имена env-переменных без `_CM` суффикса; для обратной
+# совместимости со старыми .env поддерживается и `START_X_CM` / `START_Y_CM`.
+START_X           = float(os.getenv("START_X",  os.getenv("START_X_CM",  "0.0")))
+START_Y           = float(os.getenv("START_Y",  os.getenv("START_Y_CM",  "0.0")))
 START_HEADING_DEG = float(os.getenv("START_HEADING_DEG", "0.0"))
 
 # ── Движение ─────────────────────────────────────────────────────────────────

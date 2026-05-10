@@ -298,7 +298,7 @@
         <tr>
           <td><code>home_cmd(power_pct=DEFAULT_SPEED)</code></td>
           <td>Возврат в стартовую точку. Эквивалент
-              <code>goto_cmd(START_X_CM, START_Y_CM)</code>.</td>
+              <code>goto_cmd(START_X, START_Y)</code>.</td>
         </tr>
         <tr>
           <td><code>drive_to_point_closed_loop(target_x, target_y, power_pct, tolerance_cm, step_sec=0.1, kp=0.7)</code></td>
@@ -332,7 +332,7 @@
         <tr>
           <td><code>set_algorithm_zone_cmd(target_x, target_y, radius)</code></td>
           <td>Доехать в точку (через <code>goto_cmd</code>) и пометить там
-              жёлтую алгоритмическую зону (часть алгоритма, не обстановки).</td>
+              зону внимания (жёлтая пунктирная — часть алгоритма, не обстановки).</td>
         </tr>
         <tr>
           <td><code>remove_zone_cmd(x, y)</code></td>
