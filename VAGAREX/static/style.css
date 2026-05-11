@@ -1249,27 +1249,35 @@ body { padding-bottom: 22px; }
 }
 
 /* ── Превью миссии ────────────────────────────────────────────────── */
+/* Компактнее, чтобы выбор уровня + превью + действия влезали в один
+   экран. Свернутый level-selector освобождает вертикаль. */
+.preview-card { padding: 0.7rem 0.9rem; }
 .preview-grid {
-  display: grid; grid-template-columns: minmax(280px, 1fr) 1fr;
-  gap: 1rem; margin-top: 0.5rem;
+  display: grid; grid-template-columns: minmax(220px, 280px) 1fr;
+  gap: 0.8rem; margin-top: 0.4rem;
 }
 @media (max-width: 760px) {
   .preview-grid { grid-template-columns: 1fr; }
 }
 .preview-svg-wrap {
   background: #0d1117; border: 1px solid var(--border);
-  border-radius: 6px; padding: 0.4rem;
+  border-radius: 6px; padding: 0.3rem;
   display: flex; align-items: center; justify-content: center;
-  aspect-ratio: 1; min-height: 280px;
+  aspect-ratio: 1; max-width: 280px;
 }
 .preview-svg { width: 100%; height: 100%; }
-.preview-text h3 { margin: 0 0 0.6rem; font-size: 1.05rem; color: var(--text); }
+.preview-text {
+  display: flex; flex-direction: column; gap: 0.4rem;
+  min-height: 0;
+}
+.preview-text h3 { margin: 0; font-size: 1rem; color: var(--text); }
 .preview-desc {
-  margin: 0; padding: 0.6rem 0.8rem;
+  margin: 0; padding: 0.55rem 0.75rem;
   background: var(--bg-panel); border: 1px solid var(--border);
   border-radius: 5px;
-  font-family: inherit; font-size: 0.85rem; color: var(--text);
-  white-space: pre-wrap; line-height: 1.55;
+  font-family: inherit; font-size: 0.82rem; color: var(--text);
+  white-space: pre-wrap; line-height: 1.5;
+  flex: 1; overflow-y: auto; min-height: 0;
 }
 
 /* ── Сетка карточек миссий (Опубликованные / Мои) ─────────────────── */

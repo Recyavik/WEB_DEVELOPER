@@ -30,7 +30,7 @@
   {# ═══════════════════════════════════════════════════════════════════ #}
   <section class="tab-panel tab-panel--active" data-panel="generate">
 
-    <div class="card">
+    <div class="card" id="level-selector-card">
       <h2 class="card__title">Выберите уровень сложности</h2>
       <div class="level-grid">
         {% set levels = [
@@ -61,13 +61,14 @@
       </div>
     </div>
 
-    <div id="preview-container" class="card" style="display:none">
+    <div id="preview-container" class="card preview-card" style="display:none">
       <div class="card__title-row">
         <h2 class="card__title">Превью миссии <span id="preview-id"></span></h2>
         <div class="program-actions">
           <button id="btn-preview-start"   class="btn btn--primary btn--sm">▶ Пройти</button>
           <button id="btn-preview-publish" class="btn btn--sm">📤 Опубликовать</button>
           <button id="btn-preview-delete"  class="btn btn--sm">🗑 Удалить</button>
+          <button id="btn-preview-close"   class="btn btn--sm" title="Закрыть и вернуться к выбору уровня">✕ Закрыть</button>
         </div>
       </div>
       <div class="preview-grid">
@@ -175,9 +176,23 @@
   });
 
   // ── Generate mission (AJAX) ──────────────────────────────────────────
-  const btnGen = document.getElementById('btn-generate');
+  const btnGen     = document.getElementById('btn-generate');
   const previewBox = document.getElementById('preview-container');
+  const selector   = document.getElementById('level-selector-card');
   let _previewMissionId = null;
+
+  function showPreview(data) {
+    _previewMissionId = data.id;
+    renderPreview(data);
+    if (selector) selector.style.display = 'none';   // свернуть выбор уровня
+    previewBox.style.display = '';
+    previewBox.scrollIntoView({behavior: 'smooth', block: 'start'});
+  }
+  function closePreview() {
+    previewBox.style.display = 'none';
+    if (selector) selector.style.display = '';
+    _previewMissionId = null;
+  }
 
   btnGen?.addEventListener('click', async () => {
     const level = +document.querySelector('input[name=gen-level]:checked').value;
@@ -188,16 +203,15 @@
       const r = await fetch('/missions/generate', {method: 'POST', body: fd});
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const data = await r.json();
-      _previewMissionId = data.id;
-      renderPreview(data);
-      previewBox.style.display = '';
-      previewBox.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+      showPreview(data);
     } catch (e) {
       alert('Ошибка генерации: ' + e.message);
     } finally {
       btnGen.disabled = false; btnGen.textContent = '✨ Сгенерировать миссию';
     }
   });
+
+  document.getElementById('btn-preview-close')?.addEventListener('click', closePreview);
 
   function renderPreview(m) {
     document.getElementById('preview-id').textContent = '#' + m.id;
@@ -312,10 +326,7 @@
       if (!confirm('Удалить миссию?')) return;
       const r = await fetch('/missions/' + _previewMissionId,
                             {method:'DELETE'});
-      if (r.ok) {
-        previewBox.style.display = 'none';
-        _previewMissionId = null;
-      }
+      if (r.ok) closePreview();
     });
 
   // ── Mine tab: publish/delete buttons ─────────────────────────────────
