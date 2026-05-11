@@ -103,19 +103,36 @@ def _inside_field(x: float, y: float, g: WorldGeom) -> bool:
 # не хватает места впереди для forward 100см).
 
 def _candidate_forward(state: dict, g: WorldGeom, rng: random.Random):
-    dist = rng.choice([50, 80, 100, 120, 150])
-    new = _step_forward(state, dist)
-    if not _inside_field(new["x"], new["y"], g):
-        return None
-    return new, f"Вега вперед {dist} см", f"forward_cmd({dist})"
+    """Forward-дистанция — пропорционально размеру поля. Задаём
+    солидный шаг 35-85% от свободного радиуса (половина поля минус
+    запас от стен), чтобы маршрут расходился, а не толпился у старта.
+    Если шаг не влезает (упёрся в стену) — пробуем уменьшить
+    несколько раз, прежде чем сдаться."""
+    half_min = min(g.world_w_cm, g.world_h_cm) / 2.0
+    base = max(80.0, half_min - _wall_clearance_cm(g))
+    for shrink in (1.0, 0.7, 0.5, 0.35):
+        dist = round(rng.uniform(0.35, 0.85) * base * shrink / 10) * 10
+        if dist < 30:
+            continue
+        new = _step_forward(state, dist)
+        if _inside_field(new["x"], new["y"], g):
+            return new, f"Вега вперед {int(dist)} см", f"forward_cmd({int(dist)})"
+    return None
 
 
 def _candidate_back(state: dict, g: WorldGeom, rng: random.Random):
-    dist = rng.choice([40, 60, 80])
-    new = _step_back(state, dist)
-    if not _inside_field(new["x"], new["y"], g):
-        return None
-    return new, f"Вега назад {dist} см", f"back_cmd({dist})"
+    """Back-дистанция короче forward, чтобы не делать «зеркальный шаг»
+    отменяющий предыдущий forward."""
+    half_min = min(g.world_w_cm, g.world_h_cm) / 2.0
+    base = max(60.0, half_min - _wall_clearance_cm(g))
+    for shrink in (1.0, 0.6, 0.4):
+        dist = round(rng.uniform(0.2, 0.45) * base * shrink / 10) * 10
+        if dist < 20:
+            continue
+        new = _step_back(state, dist)
+        if _inside_field(new["x"], new["y"], g):
+            return new, f"Вега назад {int(dist)} см", f"back_cmd({int(dist)})"
+    return None
 
 
 def _candidate_face_cardinal(state: dict, g: WorldGeom, rng: random.Random):

@@ -215,55 +215,81 @@
       for (const k in attrs) el.setAttribute(k, attrs[k]);
       return el;
     };
-    // Сетка 50см
+    // viewBox -300 -300 600 600 → видимая область ±300 см.
+    // Сетка 50см (тонкая).
     for (let v = -300; v <= 300; v += 50) {
       svg.appendChild(mk('line', {x1:v, y1:-300, x2:v, y2:300,
-        stroke:'#1f2530', 'stroke-width':0.5}));
+        stroke:'#1f2530', 'stroke-width':0.4}));
       svg.appendChild(mk('line', {x1:-300, y1:v, x2:300, y2:v,
-        stroke:'#1f2530', 'stroke-width':0.5}));
+        stroke:'#1f2530', 'stroke-width':0.4}));
     }
-    // Оси
+    // Контур игрового поля (для дефолтного 500×500). Тонкая белёсая рамка.
+    svg.appendChild(mk('rect', {x:-250, y:-250, width:500, height:500,
+      fill:'none', stroke:'#3a4250', 'stroke-width':1}));
+    // Оси (чуть ярче сетки)
     svg.appendChild(mk('line', {x1:0, y1:-300, x2:0, y2:300,
-      stroke:'#30363d', 'stroke-width':1}));
+      stroke:'#30363d', 'stroke-width':0.8}));
     svg.appendChild(mk('line', {x1:-300, y1:0, x2:300, y2:0,
-      stroke:'#30363d', 'stroke-width':1}));
+      stroke:'#30363d', 'stroke-width':0.8}));
+    // Подписи шкалы по осям — каждые 100 см.
+    for (let v = -200; v <= 200; v += 100) {
+      if (v === 0) continue;
+      // X-ось (горизонталь)
+      const tx = mk('text', {x:v, y:11, fill:'#6e7681',
+        'font-size':'9', 'font-family':'monospace', 'text-anchor':'middle'});
+      tx.textContent = v;
+      svg.appendChild(tx);
+      // Y-ось (вертикаль; SVG y инвертирован)
+      const ty = mk('text', {x:5, y:-v + 3, fill:'#6e7681',
+        'font-size':'9', 'font-family':'monospace'});
+      ty.textContent = v;
+      svg.appendChild(ty);
+    }
+    // Метка «X» / «Y» у концов осей
+    const lblX = mk('text', {x:285, y:-4, fill:'#58a6ff',
+      'font-size':'11', 'font-family':'monospace', 'text-anchor':'end'});
+    lblX.textContent = 'X';
+    svg.appendChild(lblX);
+    const lblY = mk('text', {x:4, y:-280, fill:'#58a6ff',
+      'font-size':'11', 'font-family':'monospace'});
+    lblY.textContent = 'Y';
+    svg.appendChild(lblY);
     // Опасные зоны (красные)
     (m.danger_zones || []).forEach(([x, y, r]) => {
       svg.appendChild(mk('circle', {cx:x, cy:-y, r:r,
         fill:'rgba(248,81,73,0.10)', stroke:'#f85149',
-        'stroke-width':1, 'stroke-dasharray':'4 3'}));
+        'stroke-width':0.8, 'stroke-dasharray':'3 2'}));
     });
     // Зоны внимания из actions_required (серые dashed без заливки)
     (m.actions_required || []).filter(a => a.type === 'place_attention')
       .forEach(a => {
         svg.appendChild(mk('circle', {cx:a.x, cy:-a.y, r:a.r || 15,
           fill:'none', stroke:'#8b949e',
-          'stroke-width':1, 'stroke-dasharray':'4 3'}));
+          'stroke-width':0.8, 'stroke-dasharray':'3 2'}));
       });
-    // Траектория: серый dashed между waypoints
+    // Траектория: тонкий серый пунктир.
     const wp = m.waypoints || [];
     if (wp.length > 0) {
-      // Стартовая точка робота (0,0) — добавляем как невидимое начало
       const path = [[0, 0], ...wp];
       for (let i = 0; i < path.length - 1; i++) {
         const [x1, y1] = path[i], [x2, y2] = path[i+1];
         svg.appendChild(mk('line', {x1:x1, y1:-y1, x2:x2, y2:-y2,
-          stroke:'rgba(150,150,150,0.6)', 'stroke-width':2,
-          'stroke-dasharray':'6 4'}));
+          stroke:'rgba(150,150,150,0.65)', 'stroke-width':1,
+          'stroke-dasharray':'3 2'}));
       }
-      // Маркеры точек
+      // Маркеры точек — кружочки с номерами.
       wp.forEach(([x, y], i) => {
-        svg.appendChild(mk('circle', {cx:x, cy:-y, r:6,
-          fill:'#1c2330', stroke:'#8b949e', 'stroke-width':1.5}));
-        const t = mk('text', {x:x+10, y:-y+4, fill:'#8b949e',
-          'font-size':'12', 'font-family':'monospace'});
+        svg.appendChild(mk('circle', {cx:x, cy:-y, r:5,
+          fill:'#1c2330', stroke:'#8b949e', 'stroke-width':1.2}));
+        const t = mk('text', {x:x+8, y:-y+4, fill:'#c9d1d9',
+          'font-size':'10', 'font-family':'monospace', 'font-weight':'600'});
         t.textContent = (i+1) + '';
         svg.appendChild(t);
       });
     }
-    // Стартовая позиция (зелёный кружок)
+    // Стартовая позиция (зелёный кружок) — поверх всего.
     svg.appendChild(mk('circle', {cx:0, cy:0, r:5,
-      fill:'#2ea043', stroke:'#fff', 'stroke-width':1}));
+      fill:'#2ea043', stroke:'#fff', 'stroke-width':1.2}));
   }
 
   // ── Preview action buttons ───────────────────────────────────────────
