@@ -549,59 +549,91 @@ async def tasks_page(request: Request, db: Session = Depends(get_db),
     })
 
 
-@app.post("/missions/generate")
-async def missions_generate(level: int = Form(...),
-                            db: Session = Depends(get_db),
-                            current_user: User = Depends(require_user)):
-    """Сгенерировать новую миссию для текущего пользователя.
-    Возвращает JSON с id новой миссии и её данными для preview."""
-    from mission_generator import generate_mission, WorldGeom
-    if level not in (1, 2, 3, 4, 5):
-        return JSONResponse({"error": "level must be 1..5"}, status_code=400)
-    # Берём геометрию из настроек пользователя (если есть) или дефолт.
+def _build_user_geom(db: Session, current_user: User):
+    """Геометрия мира для генератора — из user-settings либо дефолт."""
+    from mission_generator import WorldGeom
     settings = (db.query(UserSettings)
                   .filter(UserSettings.user_id == current_user.id).first())
     if settings:
-        geom = WorldGeom(
+        return WorldGeom(
             world_w_cm=float(settings.world_w_cm),
             world_h_cm=float(settings.world_h_cm),
             wall_thick_cm=float(settings.wall_thickness_cm),
             robot_w_cm=float(settings.robot_width_cm),
             robot_l_cm=float(settings.robot_length_cm),
-            safety_margin_cm=float(settings.wall_thickness_cm),  # «запас безопасности»
+            safety_margin_cm=float(settings.wall_thickness_cm),
             start_x=float(settings.start_x_cm),
             start_y=float(settings.start_y_cm),
             start_heading=float(settings.start_heading_deg),
         )
-    else:
-        geom = WorldGeom()
+    return WorldGeom()
+
+
+@app.post("/missions/generate")
+async def missions_generate(level: int = Form(...),
+                            db: Session = Depends(get_db),
+                            current_user: User = Depends(require_user)):
+    """Сгенерировать миссию (preview), БЕЗ сохранения в БД.
+    Сохранение делается отдельным запросом /missions/save — пользователь
+    сам решает, нравится ему результат или генерировать ещё. Это
+    предотвращает накопление мусорных миссий в «Мои миссии»."""
+    from mission_generator import generate_mission
+    if level not in (1, 2, 3, 4, 5):
+        return JSONResponse({"error": "level must be 1..5"}, status_code=400)
+    geom = _build_user_geom(db, current_user)
     data = generate_mission(level=level, geom=geom)
+    return JSONResponse({
+        "id":               None,                 # ещё не сохранено
+        "title":            data["title"],
+        "description":      data["description"],
+        "level":            data["level"],
+        "waypoints":        json.loads(data["waypoints"]),
+        "danger_zones":     json.loads(data["danger_zones"]),
+        "actions_required": json.loads(data["actions_required"]),
+        # raw-данные для последующего save (ходят в /missions/save обратно)
+        "_save_payload": {
+            "title":            data["title"],
+            "description":      data["description"],
+            "level":            data["level"],
+            "waypoints":        data["waypoints"],
+            "danger_zones":     data["danger_zones"],
+            "actions_required": data["actions_required"],
+            "reference_voice":  data["reference_voice"],
+            "reference_code":   data["reference_code"],
+            "safety_margin_cm": data["safety_margin_cm"],
+        },
+    })
+
+
+@app.post("/missions/save")
+async def missions_save(request: Request,
+                        db: Session = Depends(get_db),
+                        current_user: User = Depends(require_user)):
+    """Сохранить ранее сгенерированную миссию в БД. На вход — JSON
+    с полями миссии (как _save_payload из /missions/generate)."""
+    payload = await request.json()
+    required = {"title", "description", "level", "waypoints",
+                "danger_zones", "actions_required",
+                "reference_voice", "reference_code", "safety_margin_cm"}
+    missing = required - set(payload.keys())
+    if missing:
+        return JSONResponse({"error": f"missing fields: {sorted(missing)}"},
+                            status_code=400)
     m = Mission(
         owner_id=current_user.id,
-        title=data["title"],
-        description=data["description"],
-        level=data["level"],
-        waypoints=data["waypoints"],
-        danger_zones=data["danger_zones"],
-        actions_required=data["actions_required"],
-        reference_voice=data["reference_voice"],
-        reference_code=data["reference_code"],
-        safety_margin_cm=data["safety_margin_cm"],
+        title=payload["title"],
+        description=payload["description"],
+        level=int(payload["level"]),
+        waypoints=payload["waypoints"],
+        danger_zones=payload["danger_zones"],
+        actions_required=payload["actions_required"],
+        reference_voice=payload["reference_voice"],
+        reference_code=payload["reference_code"],
+        safety_margin_cm=float(payload["safety_margin_cm"]),
         published=False,
     )
-    db.add(m)
-    db.commit()
-    db.refresh(m)
-    return JSONResponse({
-        "id":               m.id,
-        "title":            m.title,
-        "description":      m.description,
-        "level":            m.level,
-        "waypoints":        json.loads(m.waypoints),
-        "danger_zones":     json.loads(m.danger_zones),
-        "actions_required": json.loads(m.actions_required),
-        "published":        m.published,
-    })
+    db.add(m); db.commit(); db.refresh(m)
+    return JSONResponse({"id": m.id, "ok": True})
 
 
 @app.post("/missions/{mission_id}/publish")

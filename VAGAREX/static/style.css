@@ -819,6 +819,10 @@ body { padding-bottom: 22px; }
 .page-header { margin-bottom: 1.5rem; }
 .page-header h1 { font-size: 1.6rem; font-weight: 700; }
 .subtitle { color: var(--text-dim); font-size: 0.9rem; margin-top: 0.25rem; }
+/* Компактная версия — для страниц с большим контентом ниже. */
+.page-header--compact { margin-bottom: 0.6rem; }
+.page-header--compact h1 { font-size: 1.25rem; margin: 0; }
+.page-header--compact .subtitle { font-size: 0.8rem; margin-top: 0.1rem; }
 
 /* Заголовок-строка: подзаголовок слева, действия справа */
 .page-header--row {
@@ -1198,18 +1202,18 @@ body { padding-bottom: 22px; }
 .tab-panel { display: none; }
 .tab-panel--active { display: block; }
 
-/* ── Сетка карточек уровней ───────────────────────────────────────── */
+/* ── Сетка карточек уровней (компактная) ──────────────────────────── */
 .level-grid {
-  display: grid; gap: 0.7rem;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  margin-top: 0.8rem;
+  display: grid; gap: 0.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  margin-top: 0.5rem;
 }
 .level-card {
   display: block; cursor: pointer;
   background: var(--bg-panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 0.8rem 0.9rem;
+  border-radius: 6px;
+  padding: 0.5rem 0.65rem;
   transition: border-color 0.15s, background 0.15s;
 }
 .level-card input[type=radio] { display: none; }
@@ -1219,33 +1223,40 @@ body { padding-bottom: 22px; }
   background: rgba(88,166,255,0.06);
 }
 .level-card__head {
-  display: flex; align-items: center; gap: 0.6rem;
-  margin-bottom: 0.4rem;
+  display: flex; align-items: center; gap: 0.45rem;
+  margin-bottom: 0.25rem;
 }
 .level-card__num {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 30px; height: 30px;
+  width: 24px; height: 24px;
   border: 1px solid transparent; border-radius: 50%;
-  font-weight: 700; font-size: 0.95rem; color: #fff;
+  font-weight: 700; font-size: 0.8rem; color: #fff;
   flex-shrink: 0;
 }
-/* Цвет круга — по уровню сложности (теже цвета что у .mission-card__level) */
 .level-card__num--1 { background: #2ea043; }
 .level-card__num--2 { background: #58a6ff; }
 .level-card__num--3 { background: #d4a017; }
 .level-card__num--4 { background: #d28438; }
 .level-card__num--5 { background: #d2392f; }
 .level-card--selected .level-card__num {
-  box-shadow: 0 0 0 2px var(--bg-card), 0 0 0 4px var(--accent);
+  box-shadow: 0 0 0 2px var(--bg-card), 0 0 0 3px var(--accent);
 }
-.level-card__name { font-size: 0.92rem; font-weight: 600; color: var(--text); }
-.level-card__desc { font-size: 0.78rem; color: var(--text-dim);
-                    line-height: 1.4; margin: 0; }
+.level-card__name { font-size: 0.85rem; font-weight: 600; color: var(--text); }
+.level-card__desc { font-size: 0.72rem; color: var(--text-dim);
+                    line-height: 1.35; margin: 0; }
 
 .generate-actions {
-  margin-top: 1rem; padding-top: 0.8rem;
+  margin-top: 0.6rem; padding-top: 0.5rem;
   border-top: 1px solid var(--border);
   display: flex; align-items: center;
+}
+
+/* Бейдж id миссии в превью */
+.preview-id-chip {
+  font-family: monospace; font-size: 0.75rem;
+  color: var(--text-dim); padding: 1px 6px;
+  background: var(--bg-panel); border-radius: 4px;
+  margin-left: 0.4rem;
 }
 
 /* ── Превью миссии ────────────────────────────────────────────────── */

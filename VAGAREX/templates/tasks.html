@@ -3,11 +3,10 @@
 {% block title %}VEGAREX — Миссии{% endblock %}
 
 {% block content %}
-<div class="page-header">
+<div class="page-header page-header--compact">
   <h1>🎯 Миссии</h1>
   <p class="subtitle">
-    Сгенерируйте миссию для робота или пройдите опубликованную другими.
-    За прохождение начисляются ⭐ звёзды (зависят от точности маршрута).
+    Сгенерируйте миссию или пройдите опубликованную другими — за прохождение начисляются ⭐ звёзды.
   </p>
 </div>
 
@@ -63,12 +62,22 @@
 
     <div id="preview-container" class="card preview-card" style="display:none">
       <div class="card__title-row">
-        <h2 class="card__title">Превью миссии <span id="preview-id"></span></h2>
+        <h2 class="card__title">
+          Превью миссии <span id="preview-id" class="preview-id-chip"></span>
+        </h2>
         <div class="program-actions">
-          <button id="btn-preview-start"   class="btn btn--primary btn--sm">▶ Пройти</button>
-          <button id="btn-preview-publish" class="btn btn--sm">📤 Опубликовать</button>
-          <button id="btn-preview-delete"  class="btn btn--sm">🗑 Удалить</button>
-          <button id="btn-preview-close"   class="btn btn--sm" title="Закрыть и вернуться к выбору уровня">✕ Закрыть</button>
+          {# Неудачная сгенерированная миссия — пока не сохранена в БД. #}
+          <span data-when="unsaved" style="display:inline-flex; gap:0.4rem">
+            <button id="btn-preview-save"      class="btn btn--primary btn--sm">💾 Сохранить</button>
+            <button id="btn-preview-regenerate" class="btn btn--sm">🔄 Сгенерировать ещё</button>
+          </span>
+          {# После сохранения — появляются действия с миссией. #}
+          <span data-when="saved" style="display:none; gap:0.4rem">
+            <button id="btn-preview-start"   class="btn btn--primary btn--sm">▶ Пройти</button>
+            <button id="btn-preview-publish" class="btn btn--sm">📤 Опубликовать</button>
+            <button id="btn-preview-delete"  class="btn btn--sm">🗑 Удалить</button>
+          </span>
+          <button id="btn-preview-close"   class="btn btn--sm" title="Закрыть превью">✕</button>
         </div>
       </div>
       <div class="preview-grid">
@@ -176,49 +185,88 @@
   });
 
   // ── Generate mission (AJAX) ──────────────────────────────────────────
+  // Workflow:
+  //   1) /missions/generate → preview БЕЗ сохранения в БД (id=null,
+  //      _save_payload содержит сырые поля)
+  //   2) пользователь смотрит, может «🔄 Сгенерировать ещё» или
+  //      «💾 Сохранить»
+  //   3) /missions/save → сохраняет, возвращает id
+  //   4) после сохранения преview переключается в режим действий
+  //      (Пройти/Опубликовать/Удалить)
   const btnGen     = document.getElementById('btn-generate');
   const previewBox = document.getElementById('preview-container');
   const selector   = document.getElementById('level-selector-card');
   let _previewMissionId = null;
+  let _savePayload      = null;
+  let _previewLevel     = null;
 
-  function showPreview(data) {
-    _previewMissionId = data.id;
-    renderPreview(data);
-    if (selector) selector.style.display = 'none';   // свернуть выбор уровня
+  function setPreviewState(saved) {
+    previewBox.querySelectorAll('[data-when=unsaved]').forEach(
+      e => e.style.display = saved ? 'none' : 'inline-flex');
+    previewBox.querySelectorAll('[data-when=saved]').forEach(
+      e => e.style.display = saved ? 'inline-flex' : 'none');
+    document.getElementById('preview-id').textContent =
+      saved ? '#' + _previewMissionId : '(не сохранено)';
+  }
+  function showPreview(data, level) {
+    _previewMissionId = data.id;             // null до сохранения
+    _savePayload      = data._save_payload;
+    _previewLevel     = level;
+    document.getElementById('preview-title').textContent = data.title;
+    document.getElementById('preview-description').textContent = data.description;
+    drawPreviewSvg(data);
+    setPreviewState(false);                  // unsaved
+    if (selector) selector.style.display = 'none';
     previewBox.style.display = '';
     previewBox.scrollIntoView({behavior: 'smooth', block: 'start'});
   }
   function closePreview() {
     previewBox.style.display = 'none';
     if (selector) selector.style.display = '';
-    _previewMissionId = null;
+    _previewMissionId = null; _savePayload = null;
   }
 
-  btnGen?.addEventListener('click', async () => {
-    const level = +document.querySelector('input[name=gen-level]:checked').value;
+  async function generate(level) {
     btnGen.disabled = true; btnGen.textContent = '⏳ Генерация…';
     try {
       const fd = new FormData();
       fd.append('level', level);
-      const r = await fetch('/missions/generate', {method: 'POST', body: fd});
+      const r = await fetch('/missions/generate', {method:'POST', body:fd});
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const data = await r.json();
-      showPreview(data);
+      showPreview(data, level);
     } catch (e) {
       alert('Ошибка генерации: ' + e.message);
     } finally {
       btnGen.disabled = false; btnGen.textContent = '✨ Сгенерировать миссию';
     }
+  }
+
+  btnGen?.addEventListener('click', () => {
+    const level = +document.querySelector('input[name=gen-level]:checked').value;
+    generate(level);
   });
 
-  document.getElementById('btn-preview-close')?.addEventListener('click', closePreview);
+  // 🔄 Сгенерировать ещё — повторный вызов с тем же уровнем.
+  document.getElementById('btn-preview-regenerate')?.addEventListener('click',
+    () => { if (_previewLevel) generate(_previewLevel); });
 
-  function renderPreview(m) {
-    document.getElementById('preview-id').textContent = '#' + m.id;
-    document.getElementById('preview-title').textContent = m.title;
-    document.getElementById('preview-description').textContent = m.description;
-    drawPreviewSvg(m);
-  }
+  // 💾 Сохранить — отправляет _save_payload в /missions/save.
+  document.getElementById('btn-preview-save')?.addEventListener('click',
+    async () => {
+      if (!_savePayload) return;
+      const r = await fetch('/missions/save', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(_savePayload),
+      });
+      if (!r.ok) { alert('Ошибка сохранения: HTTP ' + r.status); return; }
+      const data = await r.json();
+      _previewMissionId = data.id;
+      setPreviewState(true);                  // переключаем кнопки
+    });
+
+  document.getElementById('btn-preview-close')?.addEventListener('click', closePreview);
 
   function drawPreviewSvg(m) {
     const svg = document.getElementById('preview-svg');
