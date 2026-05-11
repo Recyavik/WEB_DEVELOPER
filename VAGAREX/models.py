@@ -225,6 +225,11 @@ class Mission(Base):
     waypoints        = Column(Text, nullable=False)
     danger_zones     = Column(Text, nullable=False, default="[]")
     actions_required = Column(Text, nullable=False, default="[]")
+    # Полная траектория для визуализации (плотная цепочка точек, по
+    # которой проходит дашед-линия превью). Для кастомных миссий —
+    # сэмпл path_history. Для сгенерированных — обычно совпадает с
+    # waypoints (линии между ними). [] = используем waypoints.
+    path             = Column(Text, nullable=False, default="[]")
 
     # Эталонное решение (видно админу как «подсказка»).
     reference_voice = Column(Text, nullable=True)        # JSON: список голосовых фраз

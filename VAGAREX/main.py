@@ -125,6 +125,9 @@ def _ensure_schema_migrations():
             "cautious_follow_algo":    "VARCHAR(20) NOT NULL DEFAULT 'pure_pursuit'",
             "cautious_slow_curves":    "BOOLEAN NOT NULL DEFAULT TRUE",
         },
+        "missions": {
+            "path": "TEXT NOT NULL DEFAULT '[]'",
+        },
     }
     for table, columns in additions.items():
         if table not in existing_tables:
@@ -589,6 +592,7 @@ async def missions_generate(level: int = Form(...),
         "description":      data["description"],
         "level":            data["level"],
         "waypoints":        json.loads(data["waypoints"]),
+        "path":             json.loads(data.get("path", "[]")),
         "danger_zones":     json.loads(data["danger_zones"]),
         "actions_required": json.loads(data["actions_required"]),
         # raw-данные для последующего save (ходят в /missions/save обратно)
@@ -597,6 +601,7 @@ async def missions_generate(level: int = Form(...),
             "description":      data["description"],
             "level":            data["level"],
             "waypoints":        data["waypoints"],
+            "path":             data.get("path", "[]"),
             "danger_zones":     data["danger_zones"],
             "actions_required": data["actions_required"],
             "reference_voice":  data["reference_voice"],
@@ -651,6 +656,7 @@ async def missions_save(request: Request,
             description=payload["description"],
             level=int(payload["level"]),
             waypoints=payload["waypoints"],
+            path=payload.get("path", "[]"),
             danger_zones=payload["danger_zones"],
             actions_required=payload["actions_required"],
             reference_voice=payload["reference_voice"],
@@ -686,6 +692,7 @@ async def missions_get(mission_id: int,
         "description":      m.description,
         "level":            m.level,
         "waypoints":        json.loads(m.waypoints),
+        "path":             json.loads(m.path or "[]"),
         "danger_zones":     json.loads(m.danger_zones),
         "actions_required": json.loads(m.actions_required),
         "published":        m.published,
@@ -788,6 +795,23 @@ async def missions_save_custom(request: Request,
                 "r": round(z.radius, 1),
             })
 
+    # Полная траектория для визуализации — сэмпл path_history с шагом
+    # 5см. Это даёт плавную линию для отрисовки в превью миссии,
+    # включая криволинейные маршруты (круг, спираль, восьмёрка).
+    raw_path = list(sess.world.path_history or [])
+    path: list[list[float]] = []
+    if raw_path:
+        path.append([round(raw_path[0][0], 1), round(raw_path[0][1], 1)])
+        last = raw_path[0]
+        for x, y in raw_path[1:]:
+            if _math.hypot(x - last[0], y - last[1]) >= 5.0:
+                path.append([round(x, 1), round(y, 1)])
+                last = (x, y)
+        # Финальная точка
+        fx, fy = raw_path[-1]
+        if not path or _math.hypot(fx - path[-1][0], fy - path[-1][1]) > 0.1:
+            path.append([round(fx, 1), round(fy, 1)])
+
     reference_voice = [c.raw for c in sess._program if c.raw]
     reference_code  = sess._program_text() or ""
     safety_margin_cm = float(sess.cfg.wall_thickness_cm)
@@ -822,6 +846,7 @@ async def missions_save_custom(request: Request,
             description=description,
             level=0,                        # 0 = «кастомная», не 1-5
             waypoints=json.dumps(waypoints),
+            path=json.dumps(path),
             danger_zones=json.dumps(danger_zones),
             actions_required=json.dumps(actions_required),
             reference_voice=json.dumps(reference_voice),

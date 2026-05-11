@@ -102,12 +102,24 @@ def _inside_field(x: float, y: float, g: WorldGeom) -> bool:
 # None означает «команду нельзя использовать в этом состоянии» (например,
 # не хватает места впереди для forward 100см).
 
+def _interpolate_straight(a: dict, b: dict, step_cm: float = 5.0) -> list[list[float]]:
+    """Список точек вдоль прямой [a..b] с шагом step_cm.
+    Включает обе крайние точки. Если a≈b — возвращает только [a]."""
+    dx = b["x"] - a["x"]; dy = b["y"] - a["y"]
+    dist = math.hypot(dx, dy)
+    if dist < 0.5:
+        return [[round(a["x"], 1), round(a["y"], 1)]]
+    n = max(1, int(dist / step_cm))
+    pts = []
+    for i in range(n + 1):
+        t = i / n
+        pts.append([round(a["x"] + dx * t, 1), round(a["y"] + dy * t, 1)])
+    return pts
+
+
 def _candidate_forward(state: dict, g: WorldGeom, rng: random.Random):
-    """Forward-дистанция — пропорционально размеру поля. Задаём
-    солидный шаг 35-85% от свободного радиуса (половина поля минус
-    запас от стен), чтобы маршрут расходился, а не толпился у старта.
-    Если шаг не влезает (упёрся в стену) — пробуем уменьшить
-    несколько раз, прежде чем сдаться."""
+    """Forward-дистанция — пропорционально размеру поля. Возвращает
+    также path_segment (сэмпл траектории) для визуализации."""
     half_min = min(g.world_w_cm, g.world_h_cm) / 2.0
     base = max(80.0, half_min - _wall_clearance_cm(g))
     for shrink in (1.0, 0.7, 0.5, 0.35):
@@ -116,13 +128,14 @@ def _candidate_forward(state: dict, g: WorldGeom, rng: random.Random):
             continue
         new = _step_forward(state, dist)
         if _inside_field(new["x"], new["y"], g):
-            return new, f"Вега вперед {int(dist)} см", f"forward_cmd({int(dist)})"
+            path_seg = _interpolate_straight(state, new)
+            return (new, f"Вега вперед {int(dist)} см",
+                    f"forward_cmd({int(dist)})", path_seg)
     return None
 
 
 def _candidate_back(state: dict, g: WorldGeom, rng: random.Random):
-    """Back-дистанция короче forward, чтобы не делать «зеркальный шаг»
-    отменяющий предыдущий forward."""
+    """Back-дистанция короче forward — не «зеркалит» предыдущий forward."""
     half_min = min(g.world_w_cm, g.world_h_cm) / 2.0
     base = max(60.0, half_min - _wall_clearance_cm(g))
     for shrink in (1.0, 0.6, 0.4):
@@ -131,16 +144,15 @@ def _candidate_back(state: dict, g: WorldGeom, rng: random.Random):
             continue
         new = _step_back(state, dist)
         if _inside_field(new["x"], new["y"], g):
-            return new, f"Вега назад {int(dist)} см", f"back_cmd({int(dist)})"
+            path_seg = _interpolate_straight(state, new)
+            return (new, f"Вега назад {int(dist)} см",
+                    f"back_cmd({int(dist)})", path_seg)
     return None
 
 
 def _candidate_face_cardinal(state: dict, g: WorldGeom, rng: random.Random):
-    """Стороны света — поворот на месте. Позиция не меняется, новой
-    точки не возникает, поэтому это «вспомогательная» команда: её
-    результат — изменение курса, чтобы следующий forward пошёл туда.
-    В trajectory её НЕ включаем как waypoint, но в reference_voice/code —
-    да, чтобы решение было воспроизводимым."""
+    """Поворот на месте к стороне света. Позиция не меняется —
+    path_segment = только одна точка (текущая)."""
     cardinals = [
         (0,   "север",        "face_n_cmd()"),
         (45,  "северо-восток","face_ne_cmd()"),
@@ -153,17 +165,18 @@ def _candidate_face_cardinal(state: dict, g: WorldGeom, rng: random.Random):
     ]
     deg, ru, code = rng.choice(cardinals)
     new = _step_face(state, deg)
-    return new, f"Вега {ru}", code
+    path_seg = [[round(state["x"], 1), round(state["y"], 1)]]
+    return new, f"Вега {ru}", code, path_seg
 
 
 def _candidate_face_to(state: dict, g: WorldGeom, rng: random.Random):
     """Произвольный угол face_cmd(N). Тоже не двигает позицию."""
     deg = rng.randint(0, 359)
-    # Избегаем кардинальных углов, чтобы не дублировать face_X
     while deg % 45 == 0:
         deg = rng.randint(0, 359)
     new = _step_face(state, deg)
-    return new, f"Вега поверни на {deg}", f"face_cmd({deg})"
+    path_seg = [[round(state["x"], 1), round(state["y"], 1)]]
+    return new, f"Вега поверни на {deg}", f"face_cmd({deg})", path_seg
 
 
 # ── Генератор уровня 1 ─────────────────────────────────────────────────────
@@ -174,12 +187,28 @@ def _generate_level_1(geom: WorldGeom, rng: random.Random) -> dict:
     Алгоритм: чередуем «развернись (face)» и «forward» — это даёт
     предсказуемую траекторию из прямых сегментов с поворотами на месте,
     каждый forward даёт новую waypoint.
+
+    Каждая команда возвращает path_segment — список точек вдоль её
+    траектории. Сегменты конкатенируются в полный путь миссии для
+    отрисовки. Для будущих криволинейных команд (circle, spiral) их
+    path_segment будет сэмплировать дугу, и линия в превью отразит
+    реальную форму маршрута.
     """
     n_waypoints   = rng.randint(2, 3)
     state         = {"x": geom.start_x, "y": geom.start_y, "heading": geom.start_heading}
     waypoints     = []
     voice_steps   = []
     code_steps    = []
+    full_path     = [[round(state["x"], 1), round(state["y"], 1)]]
+
+    def _extend_path(seg):
+        """Добавить сегмент в полный путь, избегая дубля стыковочной точки."""
+        if not seg: return
+        if (full_path and len(seg) > 0
+                and full_path[-1] == seg[0]):
+            full_path.extend(seg[1:])
+        else:
+            full_path.extend(seg)
 
     movement_candidates = [_candidate_forward, _candidate_back]
     turn_candidates     = [_candidate_face_cardinal, _candidate_face_to]
@@ -188,34 +217,35 @@ def _generate_level_1(geom: WorldGeom, rng: random.Random) -> dict:
     safety_iter = 0
     while waypoints_created < n_waypoints and safety_iter < 50:
         safety_iter += 1
-        # Сначала — поворот (новый курс)
         turn_fn = rng.choice(turn_candidates)
         result = turn_fn(state, geom, rng)
         if result is None:
             continue
-        state, voice, code = result
+        state, voice, code, path_seg = result
         voice_steps.append(voice)
         code_steps.append(code)
+        _extend_path(path_seg)
 
-        # Потом — движение в новом курсе. Пробуем несколько раз пока
-        # не получится попадание внутрь поля.
         moved = False
         for _ in range(8):
             mv_fn = rng.choice(movement_candidates)
             result = mv_fn(state, geom, rng)
             if result is None:
                 continue
-            state, voice, code = result
+            state, voice, code, path_seg = result
             voice_steps.append(voice)
             code_steps.append(code)
+            _extend_path(path_seg)
             waypoints.append([round(state["x"], 1), round(state["y"], 1)])
             waypoints_created += 1
             moved = True
             break
         if not moved:
-            # Курс ведёт в стену — попробуем другой поворот
             continue
 
+    # full_path содержит реальную траекторию по сегментам команд.
+    # Для прямых движений — это просто старт-конец, для будущих
+    # криволинейных команд (circle, spiral) — будут промежуточные точки.
     return {
         "level":            1,
         # title оставляем пустым — пользователь введёт сам, иначе сервер
@@ -224,6 +254,7 @@ def _generate_level_1(geom: WorldGeom, rng: random.Random) -> dict:
         "description":      _format_description(level=1, waypoints=waypoints,
                                                 actions=[]),
         "waypoints":        json.dumps(waypoints),
+        "path":             json.dumps(full_path),
         "danger_zones":     json.dumps([]),
         "actions_required": json.dumps([]),
         "reference_voice":  json.dumps(voice_steps),
