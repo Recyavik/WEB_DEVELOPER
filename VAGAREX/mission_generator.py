@@ -296,8 +296,10 @@ def _generate_level_1(geom: WorldGeom, rng: random.Random) -> dict:
         # title оставляем пустым — пользователь введёт сам, иначе сервер
         # подставит «Миссия #N» (где N — присвоенный id).
         "title":            "",
-        "description":      _format_description(level=1, waypoints=waypoints,
-                                                actions=[]),
+        "description":      _format_description(
+                                level=1, waypoints=waypoints, actions=[],
+                                start_x=geom.start_x, start_y=geom.start_y,
+                                danger_zones=[]),
         "waypoints":        json.dumps(waypoints),
         "path":             json.dumps(full_path),
         "danger_zones":     json.dumps([]),
@@ -311,24 +313,24 @@ def _generate_level_1(geom: WorldGeom, rng: random.Random) -> dict:
 # ── Текст описания миссии ──────────────────────────────────────────────────
 
 def _format_description(level: int, waypoints: list[list[float]],
-                        actions: list[dict]) -> str:
+                        actions: list[dict],
+                        start_x: float = 0.0, start_y: float = 0.0,
+                        danger_zones: list = None) -> str:
     """Универсальное описание миссии БЕЗ подсказок какими командами
-    выполнять. Структурно, кратко."""
-    level_names = {
-        1: "Ознакомительный",
-        2: "Начальный",
-        3: "Базовый",
-        4: "Углублённый",
-        5: "Продвинутый",
-    }
+    выполнять. Структурно, кратко. Формат — единый с кастомными:
+       🟢 Начало маршрута (X, Y)
+       📍 Контрольные точки маршрута (N шт.): coords
+       📌 Установите зоны внимания: coords  (если есть)
+       ⚠ Опасные зоны на карте (N шт.): coords  (если есть)
+       ⭐ За правильно выполненное задание и прохождение траектории...
+    """
     parts = []
-    parts.append(f"Уровень: {level_names.get(level, level)}.")
+    parts.append(f"🟢 Начало маршрута ({int(start_x)}, {int(start_y)})")
     if waypoints:
-        wp_str = ", ".join(
-            f"({int(x)}, {int(y)})" for x, y in waypoints
-        )
-        parts.append(f"📍 Посетите контрольные точки: {wp_str}.")
-    place_actions  = [a for a in actions if a.get("type") == "place_attention"]
+        wp_str = ", ".join(f"({int(x)}, {int(y)})" for x, y in waypoints)
+        parts.append(
+            f"📍 Контрольные точки маршрута ({len(waypoints)} шт.): {wp_str}.")
+    place_actions = [a for a in actions if a.get("type") == "place_attention"]
     remove_actions = [a for a in actions
                       if a.get("type") in ("remove_danger", "remove_attention")]
     if place_actions:
@@ -341,7 +343,14 @@ def _format_description(level: int, waypoints: list[list[float]],
             parts.append(f"❌ Удалите все опасные зоны ({d_count} шт).")
         if a_count:
             parts.append(f"❌ Удалите зоны внимания ({a_count} шт).")
-    parts.append("⭐ За правильно выполненное задание вы получите звёзды.")
+    if danger_zones:
+        zs = ", ".join(f"({int(z[0])}, {int(z[1])})" for z in danger_zones)
+        parts.append(
+            f"⚠ Опасные зоны на карте ({len(danger_zones)} шт.): {zs}. "
+            f"Не задевайте.")
+    parts.append(
+        "⭐ За правильно выполненное задание и прохождение траектории "
+        "вы получите звёзды.")
     return "\n".join(parts)
 
 

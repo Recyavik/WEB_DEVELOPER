@@ -57,17 +57,23 @@ class TestLevel1Shape(unittest.TestCase):
 
     def test_level_1_title_empty_and_description_meaningful(self):
         """Title оставляем пустым — пользователь введёт сам, fallback
-        «Миссия #N» делается в /missions/save."""
+        «Миссия #N» делается в /missions/save. Описание в формате:
+        🟢 Начало → 📍 Контрольные точки → ⭐."""
         m = generate_mission(level=1, seed=7)
         self.assertEqual(m["title"], "",
                          "генератор не должен задавать title — это делает "
                          "пользователь или сервер при сохранении")
-        # Описание содержит координаты точек и название уровня
-        self.assertIn("уровень", m["description"].lower())
-        self.assertIn("(", m["description"])
+        desc = m["description"]
+        # Стартовая точка
+        self.assertIn("Начало маршрута", desc)
+        # Контрольные точки с координатами
+        self.assertIn("Контрольные точки", desc)
+        self.assertIn("(", desc)
+        # Звёзды
+        self.assertIn("звёзды", desc.lower())
         # И НЕ содержит подсказок «forward_cmd» / «face_cmd»
-        self.assertNotIn("forward_cmd", m["description"])
-        self.assertNotIn("face_cmd",    m["description"])
+        self.assertNotIn("forward_cmd", desc)
+        self.assertNotIn("face_cmd",    desc)
 
     def test_reference_voice_and_code_are_lists_strings(self):
         m = generate_mission(level=1, seed=1)
