@@ -8,6 +8,7 @@ main.py — FastAPI приложение VEGAREX (мульти-пользова�
   3. WebSocket /ws привязывается к UserSession этого пользователя
   4. Настройки робота, размер поля, программа — у каждого свои (DB)
 """
+import json
 import logging
 import re
 import secrets
@@ -532,14 +533,105 @@ async def maneuvers_docs(request: Request,
 @app.get("/tasks", response_class=HTMLResponse)
 async def tasks_page(request: Request, db: Session = Depends(get_db),
                      current_user: User = Depends(require_user)):
-    """Хаб миссий. На текущем этапе показывает все миссии в БД, далее
-    разделим на табы «Сгенерировать / Опубликованные / Мои»."""
-    missions = (db.query(Mission)
-                  .order_by(Mission.created_at.desc()).all())
+    """Хаб миссий: 3 таба — «Сгенерировать», «Опубликованные», «Мои».
+    Запросы к БД — раздельно для своих и чужих опубликованных."""
+    my_missions = (db.query(Mission)
+                     .filter(Mission.owner_id == current_user.id)
+                     .order_by(Mission.created_at.desc()).all())
+    published = (db.query(Mission)
+                   .filter(Mission.published == True,
+                           Mission.owner_id != current_user.id)
+                   .order_by(Mission.created_at.desc()).all())
     return templates.TemplateResponse(request, "tasks.html", {
-        "missions":     missions,
+        "my_missions":  my_missions,
+        "published":    published,
         "current_user": current_user,
     })
+
+
+@app.post("/missions/generate")
+async def missions_generate(level: int = Form(...),
+                            db: Session = Depends(get_db),
+                            current_user: User = Depends(require_user)):
+    """Сгенерировать новую миссию для текущего пользователя.
+    Возвращает JSON с id новой миссии и её данными для preview."""
+    from mission_generator import generate_mission, WorldGeom
+    if level not in (1, 2, 3, 4, 5):
+        return JSONResponse({"error": "level must be 1..5"}, status_code=400)
+    # Берём геометрию из настроек пользователя (если есть) или дефолт.
+    settings = (db.query(UserSettings)
+                  .filter(UserSettings.user_id == current_user.id).first())
+    if settings:
+        geom = WorldGeom(
+            world_w_cm=float(settings.world_w),
+            world_h_cm=float(settings.world_h),
+            wall_thick_cm=float(settings.wall_thickness),
+            robot_w_cm=float(settings.robot_width),
+            robot_l_cm=float(settings.robot_length),
+            safety_margin_cm=float(settings.wall_thickness),  # как «запас безопасности»
+            start_x=float(settings.start_x),
+            start_y=float(settings.start_y),
+            start_heading=float(settings.start_heading),
+        )
+    else:
+        geom = WorldGeom()
+    data = generate_mission(level=level, geom=geom)
+    m = Mission(
+        owner_id=current_user.id,
+        title=data["title"],
+        description=data["description"],
+        level=data["level"],
+        waypoints=data["waypoints"],
+        danger_zones=data["danger_zones"],
+        actions_required=data["actions_required"],
+        reference_voice=data["reference_voice"],
+        reference_code=data["reference_code"],
+        safety_margin_cm=data["safety_margin_cm"],
+        published=False,
+    )
+    db.add(m)
+    db.commit()
+    db.refresh(m)
+    return JSONResponse({
+        "id":               m.id,
+        "title":            m.title,
+        "description":      m.description,
+        "level":            m.level,
+        "waypoints":        json.loads(m.waypoints),
+        "danger_zones":     json.loads(m.danger_zones),
+        "actions_required": json.loads(m.actions_required),
+        "published":        m.published,
+    })
+
+
+@app.post("/missions/{mission_id}/publish")
+async def missions_publish_toggle(mission_id: int,
+                                  db: Session = Depends(get_db),
+                                  current_user: User = Depends(require_user)):
+    """Переключить флаг published у своей миссии."""
+    m = db.query(Mission).filter(Mission.id == mission_id).first()
+    if m is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    if m.owner_id != current_user.id:
+        return JSONResponse({"error": "not owner"}, status_code=403)
+    m.published = not m.published
+    db.commit()
+    return JSONResponse({"id": m.id, "published": m.published})
+
+
+@app.delete("/missions/{mission_id}")
+async def missions_delete(mission_id: int,
+                          db: Session = Depends(get_db),
+                          current_user: User = Depends(require_user)):
+    """Удалить свою миссию (вместе с прогонами по cascade)."""
+    m = db.query(Mission).filter(Mission.id == mission_id).first()
+    if m is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    if m.owner_id != current_user.id:
+        return JSONResponse({"error": "not owner"}, status_code=403)
+    db.delete(m)
+    db.commit()
+    return JSONResponse({"ok": True})
 
 
 @app.get("/missions", response_class=HTMLResponse)

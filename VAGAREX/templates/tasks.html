@@ -7,23 +7,306 @@
   <h1>🎯 Миссии</h1>
   <p class="subtitle">
     Сгенерируйте миссию для робота или пройдите опубликованную другими.
-    За прохождение начисляются звёзды.
+    За прохождение начисляются ⭐ звёзды (зависят от точности маршрута).
   </p>
 </div>
 
-<div class="training-layout">
-  <section class="card">
-    <p class="empty-hint">
-      Генератор миссий в разработке. Скоро здесь появятся вкладки
-      «Сгенерировать», «Опубликованные» и «Мои миссии».
-    </p>
-    {% if missions %}
-    <ul class="muted-list" style="margin-top:1rem">
-      {% for m in missions %}
-      <li>#{{ m.id }} · уровень {{ m.level }} · {{ m.title }}</li>
+<div class="missions-page">
+
+  <nav class="tabs" role="tablist">
+    <button class="tabs__btn tabs__btn--active" data-tab="generate" role="tab">
+      ✨ Сгенерировать
+    </button>
+    <button class="tabs__btn" data-tab="published" role="tab">
+      📚 Опубликованные <span class="tabs__count">{{ published|length }}</span>
+    </button>
+    <button class="tabs__btn" data-tab="mine" role="tab">
+      👤 Мои миссии <span class="tabs__count">{{ my_missions|length }}</span>
+    </button>
+  </nav>
+
+  {# ═══════════════════════════════════════════════════════════════════ #}
+  {# TAB: СГЕНЕРИРОВАТЬ #}
+  {# ═══════════════════════════════════════════════════════════════════ #}
+  <section class="tab-panel tab-panel--active" data-panel="generate">
+
+    <div class="card">
+      <h2 class="card__title">Выберите уровень сложности</h2>
+      <div class="level-grid">
+        {% set levels = [
+          (1, '🟢 Ознакомительный', '2-3 точки, без опасных зон. Свободное поле, только стены.'),
+          (2, '🔵 Начальный',       '4-5 точек, 1-2 опасные зоны.'),
+          (3, '🟡 Базовый',          '6-7 точек, 2 опасные зоны (10см) + 3 зоны внимания.'),
+          (4, '🟠 Углублённый',      '8-9 точек, 3-4 опасные (10-20см) + 3-4 зоны внимания + удаление всех опасных.'),
+          (5, '🔴 Продвинутый',     '10 точек, 5 опасных (10-20см) + 4 зоны внимания + удаление всех опасных.'),
+        ] %}
+        {% for n, name, desc in levels %}
+        <label class="level-card {% if n == 1 %}level-card--selected{% endif %}">
+          <input type="radio" name="gen-level" value="{{ n }}" {% if n == 1 %}checked{% endif %}>
+          <div class="level-card__head">
+            <span class="level-card__num">{{ n }}</span>
+            <span class="level-card__name">{{ name }}</span>
+          </div>
+          <p class="level-card__desc">{{ desc }}</p>
+        </label>
+        {% endfor %}
+      </div>
+      <div class="generate-actions">
+        <button id="btn-generate" class="btn btn--primary">
+          ✨ Сгенерировать миссию
+        </button>
+        <span class="hint" style="margin-left:0.7rem; color:var(--text-dim); font-size:0.8rem;">
+          Уровни 2-5 пока в разработке (возвращают level-1).
+        </span>
+      </div>
+    </div>
+
+    <div id="preview-container" class="card" style="display:none">
+      <div class="card__title-row">
+        <h2 class="card__title">Превью миссии <span id="preview-id"></span></h2>
+        <div class="program-actions">
+          <button id="btn-preview-start"   class="btn btn--primary btn--sm">▶ Пройти</button>
+          <button id="btn-preview-publish" class="btn btn--sm">📤 Опубликовать</button>
+          <button id="btn-preview-delete"  class="btn btn--sm">🗑 Удалить</button>
+        </div>
+      </div>
+      <div class="preview-grid">
+        <div class="preview-svg-wrap">
+          <svg id="preview-svg" viewBox="-300 -300 600 600" class="preview-svg"></svg>
+        </div>
+        <div class="preview-text">
+          <h3 id="preview-title"></h3>
+          <pre id="preview-description" class="preview-desc"></pre>
+        </div>
+      </div>
+    </div>
+
+  </section>
+
+  {# ═══════════════════════════════════════════════════════════════════ #}
+  {# TAB: ОПУБЛИКОВАННЫЕ #}
+  {# ═══════════════════════════════════════════════════════════════════ #}
+  <section class="tab-panel" data-panel="published">
+    {% if published %}
+    <div class="missions-grid">
+      {% for m in published %}
+      <article class="mission-card">
+        <header class="mission-card__head">
+          <span class="mission-card__level mission-card__level--{{ m.level }}">{{ m.level }}</span>
+          <h3 class="mission-card__title">{{ m.title }}</h3>
+        </header>
+        <p class="mission-card__owner">👤 {{ m.owner.username }}</p>
+        <p class="mission-card__desc">{{ (m.description or '')[:150] }}{% if m.description and m.description|length > 150 %}…{% endif %}</p>
+        <div class="mission-card__actions">
+          <a href="/?mission={{ m.id }}" class="btn btn--primary btn--sm">▶ Пройти</a>
+        </div>
+      </article>
       {% endfor %}
-    </ul>
+    </div>
+    {% else %}
+    <div class="card">
+      <p class="empty-hint">
+        Пока нет опубликованных миссий от других пользователей.
+        Будьте первым — сгенерируйте и опубликуйте свою!
+      </p>
+    </div>
     {% endif %}
   </section>
+
+  {# ═══════════════════════════════════════════════════════════════════ #}
+  {# TAB: МОИ МИССИИ #}
+  {# ═══════════════════════════════════════════════════════════════════ #}
+  <section class="tab-panel" data-panel="mine">
+    {% if my_missions %}
+    <div class="missions-grid">
+      {% for m in my_missions %}
+      <article class="mission-card" data-mission-id="{{ m.id }}">
+        <header class="mission-card__head">
+          <span class="mission-card__level mission-card__level--{{ m.level }}">{{ m.level }}</span>
+          <h3 class="mission-card__title">{{ m.title }}</h3>
+          {% if m.published %}
+          <span class="badge badge--online" title="Опубликована">📤</span>
+          {% endif %}
+        </header>
+        <p class="mission-card__desc">{{ (m.description or '')[:150] }}{% if m.description and m.description|length > 150 %}…{% endif %}</p>
+        <div class="mission-card__actions">
+          <a href="/?mission={{ m.id }}" class="btn btn--primary btn--sm">▶ Пройти</a>
+          <button class="btn btn--sm js-publish-toggle" data-id="{{ m.id }}">
+            {% if m.published %}🚫 Снять{% else %}📤 Опубликовать{% endif %}
+          </button>
+          <button class="btn btn--sm js-delete-mission" data-id="{{ m.id }}">🗑 Удалить</button>
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="card">
+      <p class="empty-hint">
+        Вы пока не создали ни одной миссии. Перейдите на вкладку
+        «Сгенерировать», выберите уровень и нажмите «Сгенерировать».
+      </p>
+    </div>
+    {% endif %}
+  </section>
+
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // ── Tab switching ────────────────────────────────────────────────────
+  document.querySelectorAll('.tabs__btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tab = btn.dataset.tab;
+      document.querySelectorAll('.tabs__btn').forEach(b =>
+        b.classList.toggle('tabs__btn--active', b === btn));
+      document.querySelectorAll('.tab-panel').forEach(p =>
+        p.classList.toggle('tab-panel--active', p.dataset.panel === tab));
+    });
+  });
+
+  // ── Level card selection (radio group) ───────────────────────────────
+  document.querySelectorAll('.level-card input[type=radio]').forEach(r => {
+    r.addEventListener('change', () => {
+      document.querySelectorAll('.level-card').forEach(c =>
+        c.classList.toggle('level-card--selected',
+          c.querySelector('input[type=radio]').checked));
+    });
+  });
+
+  // ── Generate mission (AJAX) ──────────────────────────────────────────
+  const btnGen = document.getElementById('btn-generate');
+  const previewBox = document.getElementById('preview-container');
+  let _previewMissionId = null;
+
+  btnGen?.addEventListener('click', async () => {
+    const level = +document.querySelector('input[name=gen-level]:checked').value;
+    btnGen.disabled = true; btnGen.textContent = '⏳ Генерация…';
+    try {
+      const fd = new FormData();
+      fd.append('level', level);
+      const r = await fetch('/missions/generate', {method: 'POST', body: fd});
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const data = await r.json();
+      _previewMissionId = data.id;
+      renderPreview(data);
+      previewBox.style.display = '';
+      previewBox.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+    } catch (e) {
+      alert('Ошибка генерации: ' + e.message);
+    } finally {
+      btnGen.disabled = false; btnGen.textContent = '✨ Сгенерировать миссию';
+    }
+  });
+
+  function renderPreview(m) {
+    document.getElementById('preview-id').textContent = '#' + m.id;
+    document.getElementById('preview-title').textContent = m.title;
+    document.getElementById('preview-description').textContent = m.description;
+    drawPreviewSvg(m);
+  }
+
+  function drawPreviewSvg(m) {
+    const svg = document.getElementById('preview-svg');
+    svg.innerHTML = '';
+    const NS = 'http://www.w3.org/2000/svg';
+    const mk = (tag, attrs) => {
+      const el = document.createElementNS(NS, tag);
+      for (const k in attrs) el.setAttribute(k, attrs[k]);
+      return el;
+    };
+    // Сетка 50см
+    for (let v = -300; v <= 300; v += 50) {
+      svg.appendChild(mk('line', {x1:v, y1:-300, x2:v, y2:300,
+        stroke:'#1f2530', 'stroke-width':0.5}));
+      svg.appendChild(mk('line', {x1:-300, y1:v, x2:300, y2:v,
+        stroke:'#1f2530', 'stroke-width':0.5}));
+    }
+    // Оси
+    svg.appendChild(mk('line', {x1:0, y1:-300, x2:0, y2:300,
+      stroke:'#30363d', 'stroke-width':1}));
+    svg.appendChild(mk('line', {x1:-300, y1:0, x2:300, y2:0,
+      stroke:'#30363d', 'stroke-width':1}));
+    // Опасные зоны (красные)
+    (m.danger_zones || []).forEach(([x, y, r]) => {
+      svg.appendChild(mk('circle', {cx:x, cy:-y, r:r,
+        fill:'rgba(248,81,73,0.10)', stroke:'#f85149',
+        'stroke-width':1, 'stroke-dasharray':'4 3'}));
+    });
+    // Зоны внимания из actions_required (серые dashed без заливки)
+    (m.actions_required || []).filter(a => a.type === 'place_attention')
+      .forEach(a => {
+        svg.appendChild(mk('circle', {cx:a.x, cy:-a.y, r:a.r || 15,
+          fill:'none', stroke:'#8b949e',
+          'stroke-width':1, 'stroke-dasharray':'4 3'}));
+      });
+    // Траектория: серый dashed между waypoints
+    const wp = m.waypoints || [];
+    if (wp.length > 0) {
+      // Стартовая точка робота (0,0) — добавляем как невидимое начало
+      const path = [[0, 0], ...wp];
+      for (let i = 0; i < path.length - 1; i++) {
+        const [x1, y1] = path[i], [x2, y2] = path[i+1];
+        svg.appendChild(mk('line', {x1:x1, y1:-y1, x2:x2, y2:-y2,
+          stroke:'rgba(150,150,150,0.6)', 'stroke-width':2,
+          'stroke-dasharray':'6 4'}));
+      }
+      // Маркеры точек
+      wp.forEach(([x, y], i) => {
+        svg.appendChild(mk('circle', {cx:x, cy:-y, r:6,
+          fill:'#1c2330', stroke:'#8b949e', 'stroke-width':1.5}));
+        const t = mk('text', {x:x+10, y:-y+4, fill:'#8b949e',
+          'font-size':'12', 'font-family':'monospace'});
+        t.textContent = (i+1) + '';
+        svg.appendChild(t);
+      });
+    }
+    // Стартовая позиция (зелёный кружок)
+    svg.appendChild(mk('circle', {cx:0, cy:0, r:5,
+      fill:'#2ea043', stroke:'#fff', 'stroke-width':1}));
+  }
+
+  // ── Preview action buttons ───────────────────────────────────────────
+  document.getElementById('btn-preview-start')?.addEventListener('click', () => {
+    if (_previewMissionId) window.location.href = '/?mission=' + _previewMissionId;
+  });
+  document.getElementById('btn-preview-publish')?.addEventListener('click',
+    async () => {
+      if (!_previewMissionId) return;
+      const r = await fetch('/missions/' + _previewMissionId + '/publish',
+                            {method:'POST'});
+      const d = await r.json();
+      if (d.published !== undefined) {
+        alert(d.published ? 'Опубликовано!' : 'Снято с публикации.');
+      }
+    });
+  document.getElementById('btn-preview-delete')?.addEventListener('click',
+    async () => {
+      if (!_previewMissionId) return;
+      if (!confirm('Удалить миссию?')) return;
+      const r = await fetch('/missions/' + _previewMissionId,
+                            {method:'DELETE'});
+      if (r.ok) {
+        previewBox.style.display = 'none';
+        _previewMissionId = null;
+      }
+    });
+
+  // ── Mine tab: publish/delete buttons ─────────────────────────────────
+  document.querySelectorAll('.js-publish-toggle').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.id;
+      const r = await fetch('/missions/' + id + '/publish', {method:'POST'});
+      if (r.ok) location.reload();
+    });
+  });
+  document.querySelectorAll('.js-delete-mission').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.id;
+      if (!confirm('Удалить миссию?')) return;
+      const r = await fetch('/missions/' + id, {method:'DELETE'});
+      if (r.ok) location.reload();
+    });
+  });
+</script>
 {% endblock %}
