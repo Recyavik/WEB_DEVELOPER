@@ -816,23 +816,24 @@ async def missions_save_custom(request: Request,
     reference_code  = sess._program_text() or ""
     safety_margin_cm = float(sess.cfg.wall_thickness_cm)
 
-    # Описание = сводка + список команд (для кастомной миссии — это
-    # ОК показывать, потому что её содержание определяется исполнением
-    # пользователя, а не «угадай как пройти»).
+    # Описание = только ЦЕЛИ миссии: координаты контрольных точек, зоны.
+    # БЕЗ списка команд: путь должен подсказывать SVG-траектория, а
+    # пользователь сам выбирает манёвры (вперёд/повернуть/в точку и т.п.)
+    # для прохождения. Список команд (reference_voice/code) сохраняется
+    # на сервере как «эталонное решение» и доступен только админу.
     desc_parts = ["Уровень: Кастомная (свободный режим)."]
     if waypoints:
-        desc_parts.append(f"📍 Контрольные точки маршрута: {len(waypoints)} шт.")
+        wp_str = ", ".join(f"({int(x)}, {int(y)})" for x, y in waypoints[1:])
+        if wp_str:
+            desc_parts.append(
+                f"📍 Посетите контрольные точки (после старта): {wp_str}.")
+        else:
+            desc_parts.append("📍 Маршрут заканчивается в стартовой точке.")
     if actions_required:
         zs = ", ".join(f"({a['x']:.0f}, {a['y']:.0f})" for a in actions_required)
         desc_parts.append(f"📌 Установите зоны внимания: {zs}.")
     if danger_zones:
         desc_parts.append(f"⚠ Опасных зон на карте: {len(danger_zones)} шт.")
-    if reference_voice:
-        desc_parts.append("")
-        desc_parts.append("📜 Список команд (как выполнялись):")
-        for i, phrase in enumerate(reference_voice, 1):
-            desc_parts.append(f"  {i}. {phrase}")
-    desc_parts.append("")
     desc_parts.append("⭐ За правильно выполненное задание вы получите звёзды.")
     description = "\n".join(desc_parts)
 
