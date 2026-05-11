@@ -751,8 +751,29 @@ async def missions_save_custom(request: Request,
         return JSONResponse({"error": "no active session"}, status_code=400)
 
     # Снимок состояния симулятора.
+    import math as _math
     s = sess.robot_state
-    final_wp = [round(s.x, 1), round(s.y, 1)]
+
+    # Сэмплируем path_history: один waypoint на каждые ~40см движения.
+    # Так получаем «опорные точки» вдоль реальной траектории, а не одну
+    # финальную позицию. Финальная точка добавляется отдельно, чтобы
+    # гарантировать её наличие.
+    raw_path = list(sess.world.path_history or [])
+    SAMPLE_DIST_CM = 40.0
+    waypoints: list[list[float]] = []
+    if raw_path:
+        last_x, last_y = raw_path[0]
+        # Стартовую точку (как правило 0,0) не включаем — это позиция робота
+        # ДО движения, не цель.
+        for x, y in raw_path[1:]:
+            if _math.hypot(x - last_x, y - last_y) >= SAMPLE_DIST_CM:
+                waypoints.append([round(x, 1), round(y, 1)])
+                last_x, last_y = x, y
+        # Гарантируем финальную точку
+        fx, fy = raw_path[-1]
+        if not waypoints or _math.hypot(fx - waypoints[-1][0], fy - waypoints[-1][1]) > 5.0:
+            waypoints.append([round(fx, 1), round(fy, 1)])
+
     danger_zones = []
     actions_required = []
     for z in sess.world.danger_zones:
@@ -765,15 +786,27 @@ async def missions_save_custom(request: Request,
                 "x": round(z.x, 1), "y": round(z.y, 1),
                 "r": round(z.radius, 1),
             })
-    waypoints = [final_wp] if (s.x != 0 or s.y != 0) else []
+
     reference_voice = [c.raw for c in sess._program if c.raw]
     reference_code  = sess._program_text() or ""
     safety_margin_cm = float(sess.cfg.wall_thickness_cm)
 
-    # Описание для пользователя — без подсказок какими командами.
+    # Описание — отражает что именно сохранено.
+    path_len_cm = 0.0
+    if len(raw_path) >= 2:
+        path_len_cm = sum(
+            _math.hypot(raw_path[i+1][0]-raw_path[i][0],
+                        raw_path[i+1][1]-raw_path[i][1])
+            for i in range(len(raw_path)-1)
+        )
     desc_parts = ["Уровень: Кастомная (свободный режим)."]
     if waypoints:
-        desc_parts.append(f"📍 Финальная точка: ({final_wp[0]:.0f}, {final_wp[1]:.0f}).")
+        desc_parts.append(
+            f"📍 Контрольных точек: {len(waypoints)} (вдоль траектории "
+            f"≈{path_len_cm:.0f} см). Посетите все по порядку или в "
+            f"любом порядке.")
+    else:
+        desc_parts.append("📍 Маршрут пуст — робот не двигался.")
     if actions_required:
         zs = ", ".join(f"({a['x']:.0f}, {a['y']:.0f})" for a in actions_required)
         desc_parts.append(f"📌 Установите зоны внимания: {zs}.")
