@@ -84,7 +84,9 @@
           <svg id="preview-svg" viewBox="-300 -300 600 600" class="preview-svg"></svg>
         </div>
         <div class="preview-text">
-          <h3 id="preview-title"></h3>
+          <input id="preview-title-input" class="preview-title-input"
+                 maxlength="200"
+                 placeholder="Название миссии (если пусто — будет «Миссия #N»)">
           <pre id="preview-description" class="preview-desc"></pre>
         </div>
       </div>
@@ -97,8 +99,11 @@
   {# ═══════════════════════════════════════════════════════════════════ #}
   <section class="tab-panel" data-panel="catalog">
     {% if missions %}
+    {# Подсчёт миссий по уровням для бейджей-счётчиков. #}
+    {% set lvl_counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0} %}
+    {% for m in missions %}{% if lvl_counts.update({m.level: lvl_counts[m.level] + 1}) %}{% endif %}{% endfor %}
     <div class="catalog-toolbar">
-      <div class="filter-chips" role="tablist" aria-label="Фильтр миссий">
+      <div class="filter-chips" role="tablist" aria-label="Фильтр по владельцу">
         <button class="chip chip--active" data-filter="all" role="tab">
           Все <span class="chip__count">{{ missions|length }}</span>
         </button>
@@ -114,6 +119,17 @@
                placeholder="🔍 Поиск по ID или названию…"
                autocomplete="off">
       </div>
+    </div>
+    <div class="filter-chips filter-chips--level" role="tablist"
+         aria-label="Фильтр по уровню сложности">
+      <button class="chip chip--active" data-level="all">Все уровни</button>
+      {% for n in [1, 2, 3, 4, 5] %}
+      <button class="chip chip--lvl chip--lvl-{{ n }}" data-level="{{ n }}"
+              title="Уровень {{ n }}">
+        <span class="chip__lvlnum">{{ n }}</span>
+        <span class="chip__count">{{ lvl_counts[n] }}</span>
+      </button>
+      {% endfor %}
     </div>
     <div class="missions-grid" id="catalog-grid">
       {% for m in missions %}
@@ -141,10 +157,19 @@
           <div class="mission-card__actions">
             <a href="/?mission={{ m.id }}" class="btn btn--primary btn--sm">▶ Пройти</a>
             {% if is_mine %}
-            <button class="btn btn--sm js-publish-toggle" data-id="{{ m.id }}">
-              {% if m.published %}🚫 Снять с публикации{% else %}📤 Опубликовать{% endif %}
-            </button>
-            <button class="btn btn--sm js-delete-mission" data-id="{{ m.id }}">🗑 Удалить</button>
+              {# Свои миссии: публиковать/снимать + удалять. #}
+              <button class="btn btn--sm js-publish-toggle" data-id="{{ m.id }}">
+                {% if m.published %}🚫 Снять с публикации{% else %}📤 Опубликовать{% endif %}
+              </button>
+              <button class="btn btn--sm js-delete-mission" data-id="{{ m.id }}">🗑 Удалить</button>
+            {% elif current_user.is_admin %}
+              {# Админ-модерация чужих опубликованных миссий. #}
+              {% if m.published %}
+              <button class="btn btn--sm js-publish-toggle" data-id="{{ m.id }}"
+                      title="Админ: снять чужую миссию с публикации">🛡 Снять с публикации</button>
+              {% endif %}
+              <button class="btn btn--sm js-delete-mission" data-id="{{ m.id }}"
+                      title="Админ: удалить чужую миссию">🛡 Удалить</button>
             {% endif %}
           </div>
         </article>
@@ -231,7 +256,12 @@
     _previewMissionId = data.id;             // null до сохранения
     _savePayload      = data._save_payload;
     _previewLevel     = level;
-    document.getElementById('preview-title').textContent = data.title;
+    const titleInput = document.getElementById('preview-title-input');
+    if (titleInput) {
+      // Предзаполнение генератор-default'ом; пользователь может стереть.
+      titleInput.value = data.title || '';
+      titleInput.readOnly = false;
+    }
     document.getElementById('preview-description').textContent = data.description;
     drawPreviewSvg(data);
     setPreviewState(false);                  // unsaved
@@ -274,18 +304,30 @@
   document.getElementById('btn-preview-save')?.addEventListener('click',
     async () => {
       if (!_savePayload) return;
+      // Текущее значение поля «Название» (может быть отредактировано
+      // или очищено пользователем). Пустое → сервер подставит «Миссия #N».
+      const titleInput = document.getElementById('preview-title-input');
+      const payload = Object.assign({}, _savePayload, {
+        title: (titleInput?.value || '').trim(),
+      });
       const r = await fetch('/missions/save', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(_savePayload),
+        body: JSON.stringify(payload),
       });
       if (!r.ok) { alert('Ошибка сохранения: HTTP ' + r.status); return; }
       const data = await r.json();
       _previewMissionId = data.id;
+      // Покажем фактическое имя в input (на случай fallback «Миссия #N»)
+      // и зафиксируем — после сохранения название не редактируется здесь.
+      if (titleInput) {
+        titleInput.value = data.title || '';
+        titleInput.readOnly = true;
+      }
       setPreviewState(true);                  // переключаем кнопки
       _catalogStale = true;
       bumpCatalogCount(+1);
-      flash(`✓ Сохранено как #${data.id}. Доступна в Каталоге.`);
+      flash(`✓ Сохранено как #${data.id} «${data.title}». Доступна в Каталоге.`);
     });
 
   // ── Маленький toast-флэш ─────────────────────────────────────────────
@@ -445,37 +487,51 @@
     });
   });
 
-  // ── Catalog: фильтр (Все / Мои / Общие) + поиск (ID / название) ─────
-  const catalogChips = document.querySelectorAll('.filter-chips .chip');
+  // ── Catalog: фильтры (owner / level) + поиск ────────────────────────
+  // Два независимых ряда chips: первый — Все/Мои/Общие (data-filter),
+  // второй — уровни 1-5 + Все уровни (data-level). Карточка видима
+  // если соответствует ОБОИМ фильтрам И поисковой строке.
+  const ownerChips   = document.querySelectorAll('.filter-chips:not(.filter-chips--level) .chip');
+  const levelChips   = document.querySelectorAll('.filter-chips--level .chip');
   const catalogInput = document.getElementById('catalog-search-input');
   const catalogCards = document.querySelectorAll('.js-mission-card');
   const catalogHint  = document.getElementById('catalog-empty-hint');
-  let _filter = 'all';
+  let _ownerFilter = 'all';
+  let _levelFilter = 'all';
 
   function applyCatalogFilter() {
     const q = (catalogInput?.value || '').trim().toLowerCase();
     let visible = 0;
     catalogCards.forEach(card => {
       const isMine = card.dataset.mine === '1';
+      const lvl    = card.dataset.level;
       const ownerOk =
-        _filter === 'all'    ||
-        _filter === 'mine'   && isMine ||
-        _filter === 'others' && !isMine;
+        _ownerFilter === 'all'    ||
+        _ownerFilter === 'mine'   && isMine ||
+        _ownerFilter === 'others' && !isMine;
+      const levelOk = _levelFilter === 'all' || _levelFilter === lvl;
       const searchOk = !q ||
         card.dataset.title.includes(q) ||
         ('#' + card.dataset.id) === q ||
         card.dataset.id === q;
-      const show = ownerOk && searchOk;
+      const show = ownerOk && levelOk && searchOk;
       card.style.display = show ? '' : 'none';
       if (show) visible++;
     });
     if (catalogHint) catalogHint.style.display = visible ? 'none' : '';
   }
 
-  catalogChips.forEach(chip => {
+  ownerChips.forEach(chip => {
     chip.addEventListener('click', () => {
-      catalogChips.forEach(c => c.classList.toggle('chip--active', c === chip));
-      _filter = chip.dataset.filter;
+      ownerChips.forEach(c => c.classList.toggle('chip--active', c === chip));
+      _ownerFilter = chip.dataset.filter;
+      applyCatalogFilter();
+    });
+  });
+  levelChips.forEach(chip => {
+    chip.addEventListener('click', () => {
+      levelChips.forEach(c => c.classList.toggle('chip--active', c === chip));
+      _levelFilter = chip.dataset.level;
       applyCatalogFilter();
     });
   });

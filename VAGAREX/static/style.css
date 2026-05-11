@@ -1315,6 +1315,24 @@ body { padding-bottom: 22px; }
   min-height: 0; min-width: 0;
 }
 .preview-text h3 { margin: 0; font-size: 1.05rem; color: var(--text); }
+/* Редактируемое название миссии в превью. Стилизовано как заголовок,
+   но позволяет вводить текст. После сохранения становится readonly. */
+.preview-title-input {
+  font-size: 1.15rem; font-weight: 700; color: var(--text);
+  background: transparent;
+  border: 1px dashed var(--border); border-radius: 5px;
+  padding: 0.4rem 0.6rem;
+  font-family: inherit; width: 100%;
+}
+.preview-title-input:focus {
+  outline: none; border-color: var(--accent); border-style: solid;
+  background: var(--bg-panel);
+}
+.preview-title-input:read-only {
+  border-color: transparent; padding-left: 0;
+  background: transparent; cursor: default;
+}
+.preview-title-input::placeholder { color: var(--text-dim); font-weight: 500; }
 .preview-desc {
   margin: 0; padding: 0.7rem 0.9rem;
   background: var(--bg-panel); border: 1px solid var(--border);
@@ -1413,3 +1431,17 @@ body { padding-bottom: 22px; }
   width: 100%; padding: 0.4rem 0.7rem;
   font-size: 0.85rem;
 }
+
+/* Второй ряд chips — фильтр по уровню сложности. */
+.filter-chips--level { margin-bottom: 0.8rem; }
+.chip--lvl { padding-left: 0.45rem; }
+.chip--lvl .chip__lvlnum {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px;
+  border-radius: 50%; font-weight: 700; font-size: 0.7rem; color: #fff;
+}
+.chip--lvl-1 .chip__lvlnum { background: #2ea043; }
+.chip--lvl-2 .chip__lvlnum { background: #58a6ff; }
+.chip--lvl-3 .chip__lvlnum { background: #d4a017; }
+.chip--lvl-4 .chip__lvlnum { background: #d28438; }
+.chip--lvl-5 .chip__lvlnum { background: #d2392f; }

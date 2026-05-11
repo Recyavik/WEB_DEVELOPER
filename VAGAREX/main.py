@@ -638,12 +638,16 @@ async def missions_save(request: Request,
 
     # До 3 попыток на случай гонки с другим юзером, который параллельно
     # сохраняет миссию и забрал «наш» минимальный свободный id.
+    raw_title = (payload.get("title") or "").strip()
     for attempt in range(3):
         new_id = _smallest_unused_mission_id(db)
+        # Если имя не задано — fallback на «Миссия #N» (где N — выбранный
+        # минимальный свободный id). Это известно ДО commit.
+        title = raw_title if raw_title else f"Миссия #{new_id}"
         m = Mission(
             id=new_id,
             owner_id=current_user.id,
-            title=payload["title"],
+            title=title,
             description=payload["description"],
             level=int(payload["level"]),
             waypoints=payload["waypoints"],
@@ -656,7 +660,7 @@ async def missions_save(request: Request,
         )
         try:
             db.add(m); db.commit(); db.refresh(m)
-            return JSONResponse({"id": m.id, "ok": True})
+            return JSONResponse({"id": m.id, "ok": True, "title": m.title})
         except IntegrityError:
             db.rollback()
             continue
@@ -667,12 +671,19 @@ async def missions_save(request: Request,
 async def missions_publish_toggle(mission_id: int,
                                   db: Session = Depends(get_db),
                                   current_user: User = Depends(require_user)):
-    """Переключить флаг published у своей миссии."""
+    """Переключить флаг published.
+    - Владелец может публиковать/снимать только свои миссии.
+    - Админ может СНИМАТЬ с публикации любые миссии (модерация),
+      но не публиковать чужие (это право автора)."""
     m = db.query(Mission).filter(Mission.id == mission_id).first()
     if m is None:
         return JSONResponse({"error": "not found"}, status_code=404)
-    if m.owner_id != current_user.id:
-        return JSONResponse({"error": "not owner"}, status_code=403)
+    is_owner = (m.owner_id == current_user.id)
+    is_admin = bool(getattr(current_user, "is_admin", False))
+    if not is_owner:
+        # Не-владелец может только снимать чужую с публикации (и только админ)
+        if not (is_admin and m.published):
+            return JSONResponse({"error": "forbidden"}, status_code=403)
     m.published = not m.published
     db.commit()
     return JSONResponse({"id": m.id, "published": m.published})
@@ -682,12 +693,16 @@ async def missions_publish_toggle(mission_id: int,
 async def missions_delete(mission_id: int,
                           db: Session = Depends(get_db),
                           current_user: User = Depends(require_user)):
-    """Удалить свою миссию (вместе с прогонами по cascade)."""
+    """Удалить миссию (вместе с прогонами по cascade).
+    - Владелец может удалить свою.
+    - Админ может удалить любую (для модерации мусорных миссий)."""
     m = db.query(Mission).filter(Mission.id == mission_id).first()
     if m is None:
         return JSONResponse({"error": "not found"}, status_code=404)
-    if m.owner_id != current_user.id:
-        return JSONResponse({"error": "not owner"}, status_code=403)
+    is_owner = (m.owner_id == current_user.id)
+    is_admin = bool(getattr(current_user, "is_admin", False))
+    if not (is_owner or is_admin):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
     db.delete(m)
     db.commit()
     return JSONResponse({"ok": True})
