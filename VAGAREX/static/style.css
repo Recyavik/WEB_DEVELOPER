@@ -1440,11 +1440,20 @@ body { padding-bottom: 22px; }
   background: var(--bg-panel); cursor: pointer;
   font-size: 0.8rem; color: var(--text-dim);
   user-select: none;
+  position: relative;                     /* анкор для absolute input */
   transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
 .pub-switch:hover { background: rgba(255,255,255,0.04); }
+/* «Visually hidden but accessible» — стандартный паттерн.
+   НЕ используем pointer-events:none, иначе label-click-toggle ломается. */
 .pub-switch input[type=checkbox] {
-  position: absolute; opacity: 0; pointer-events: none;
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 .pub-switch__slider {
   position: relative;
