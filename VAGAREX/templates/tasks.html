@@ -92,7 +92,7 @@
       <div class="preview-text">
         <input id="preview-title-input" class="preview-title-input"
                maxlength="200"
-               placeholder="Название миссии (если пусто — будет «Миссия #N»)">
+               placeholder="✏ Введите название миссии (или оставьте пустым — будет «Миссия #N»)">
         <pre id="preview-description" class="preview-desc"></pre>
       </div>
     </div>
@@ -246,10 +246,18 @@
   //      (Пройти/Опубликовать/Удалить)
   const btnGen     = document.getElementById('btn-generate');
   const previewBox = document.getElementById('preview-container');
-  const selector   = document.getElementById('level-selector-card');
   let _previewMissionId = null;
   let _savePayload      = null;
   let _previewLevel     = null;
+
+  // При показе превью скрываем содержимое ВСЕХ табов (каталог, level-
+  // селектор), чтобы превью занимало весь экран без наложения.
+  function hideTabContent() {
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.add('tab-panel--hidden'));
+  }
+  function showTabContent() {
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('tab-panel--hidden'));
+  }
 
   function setPreviewState(saved) {
     previewBox.querySelectorAll('[data-when=unsaved]').forEach(
@@ -275,13 +283,13 @@
     // Сбросить возможные display:none от предыдущего просмотра из каталога.
     document.getElementById('btn-preview-publish').style.display = '';
     document.getElementById('btn-preview-delete').style.display  = '';
-    if (selector) selector.style.display = 'none';
+    hideTabContent();
     previewBox.style.display = '';
     previewBox.scrollIntoView({behavior: 'smooth', block: 'start'});
   }
   function closePreview() {
     previewBox.style.display = 'none';
-    if (selector) selector.style.display = '';
+    showTabContent();
     _previewMissionId = null; _savePayload = null;
   }
 

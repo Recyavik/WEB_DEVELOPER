@@ -734,6 +734,80 @@ async def missions_delete(mission_id: int,
     return JSONResponse({"ok": True})
 
 
+@app.post("/missions/save_custom")
+async def missions_save_custom(request: Request,
+                               db: Session = Depends(get_db),
+                               current_user: User = Depends(require_user)):
+    """Сохранить текущее состояние свободного режима как «кастомную»
+    миссию (level=0). Снимок: финальная позиция робота как waypoint,
+    текущие опасные зоны (kind="danger") как pre-placed, текущие зоны
+    внимания (kind="algorithm") как обязательные действия, программа
+    из редактора как reference_code, голосовые фразы как reference_voice."""
+    from sqlalchemy.exc import IntegrityError
+    payload = await request.json()
+    title = (payload.get("title") or "").strip()
+    sess = get_session(current_user.id)
+    if sess is None:
+        return JSONResponse({"error": "no active session"}, status_code=400)
+
+    # Снимок состояния симулятора.
+    s = sess.robot_state
+    final_wp = [round(s.x, 1), round(s.y, 1)]
+    danger_zones = []
+    actions_required = []
+    for z in sess.world.danger_zones:
+        zk = getattr(z, "kind", "danger")
+        if zk == "danger":
+            danger_zones.append([round(z.x, 1), round(z.y, 1), round(z.radius, 1)])
+        elif zk == "algorithm":
+            actions_required.append({
+                "type": "place_attention",
+                "x": round(z.x, 1), "y": round(z.y, 1),
+                "r": round(z.radius, 1),
+            })
+    waypoints = [final_wp] if (s.x != 0 or s.y != 0) else []
+    reference_voice = [c.raw for c in sess._program if c.raw]
+    reference_code  = sess._program_text() or ""
+    safety_margin_cm = float(sess.cfg.wall_thickness_cm)
+
+    # Описание для пользователя — без подсказок какими командами.
+    desc_parts = ["Уровень: Кастомная (свободный режим)."]
+    if waypoints:
+        desc_parts.append(f"📍 Финальная точка: ({final_wp[0]:.0f}, {final_wp[1]:.0f}).")
+    if actions_required:
+        zs = ", ".join(f"({a['x']:.0f}, {a['y']:.0f})" for a in actions_required)
+        desc_parts.append(f"📌 Установите зоны внимания: {zs}.")
+    if danger_zones:
+        desc_parts.append(f"⚠ Опасных зон на карте: {len(danger_zones)}.")
+    desc_parts.append("⭐ За правильно выполненное задание вы получите звёзды.")
+    description = "\n".join(desc_parts)
+
+    for attempt in range(3):
+        new_id = _smallest_unused_mission_id(db)
+        actual_title = title if title else f"Кастомная #{new_id}"
+        m = Mission(
+            id=new_id,
+            owner_id=current_user.id,
+            title=actual_title,
+            description=description,
+            level=0,                        # 0 = «кастомная», не 1-5
+            waypoints=json.dumps(waypoints),
+            danger_zones=json.dumps(danger_zones),
+            actions_required=json.dumps(actions_required),
+            reference_voice=json.dumps(reference_voice),
+            reference_code=reference_code,
+            safety_margin_cm=safety_margin_cm,
+            published=False,
+        )
+        try:
+            db.add(m); db.commit(); db.refresh(m)
+            return JSONResponse({"id": m.id, "ok": True, "title": m.title})
+        except IntegrityError:
+            db.rollback()
+            continue
+    return JSONResponse({"error": "id collision after retries"}, status_code=500)
+
+
 @app.post("/missions/{mission_id}/start")
 async def missions_start(mission_id: int,
                          db: Session = Depends(get_db),

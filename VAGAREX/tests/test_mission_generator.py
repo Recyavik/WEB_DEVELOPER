@@ -55,10 +55,15 @@ class TestLevel1Shape(unittest.TestCase):
                     "reference_voice", "reference_code", "safety_margin_cm"):
             self.assertIn(key, m, f"отсутствует поле {key!r}")
 
-    def test_level_1_title_and_description(self):
+    def test_level_1_title_empty_and_description_meaningful(self):
+        """Title оставляем пустым — пользователь введёт сам, fallback
+        «Миссия #N» делается в /missions/save."""
         m = generate_mission(level=1, seed=7)
-        self.assertIn("уровень", m["title"].lower())
-        # Описание содержит координаты точек
+        self.assertEqual(m["title"], "",
+                         "генератор не должен задавать title — это делает "
+                         "пользователь или сервер при сохранении")
+        # Описание содержит координаты точек и название уровня
+        self.assertIn("уровень", m["description"].lower())
         self.assertIn("(", m["description"])
         # И НЕ содержит подсказок «forward_cmd» / «face_cmd»
         self.assertNotIn("forward_cmd", m["description"])

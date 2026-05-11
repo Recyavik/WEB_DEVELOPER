@@ -218,7 +218,9 @@ def _generate_level_1(geom: WorldGeom, rng: random.Random) -> dict:
 
     return {
         "level":            1,
-        "title":            "Миссия — ознакомительный уровень",
+        # title оставляем пустым — пользователь введёт сам, иначе сервер
+        # подставит «Миссия #N» (где N — присвоенный id).
+        "title":            "",
         "description":      _format_description(level=1, waypoints=waypoints,
                                                 actions=[]),
         "waypoints":        json.dumps(waypoints),

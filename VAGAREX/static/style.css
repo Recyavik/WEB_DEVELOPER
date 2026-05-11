@@ -1201,6 +1201,9 @@ body { padding-bottom: 22px; }
 
 .tab-panel { display: none; }
 .tab-panel--active { display: block; }
+/* Принудительное скрытие активного таба, когда показывается превью.
+   Использует !important чтобы перебить .tab-panel--active. */
+.tab-panel--hidden { display: none !important; }
 
 /* ── Сетка карточек уровней (компактная) ──────────────────────────── */
 .level-grid {
