@@ -12,8 +12,10 @@
 
 <div class="missions-page">
 
-  {% set my_count   = missions|selectattr('owner_id', 'equalto', current_user.id)|list|length %}
-  {% set pub_others = missions|rejectattr('owner_id', 'equalto', current_user.id)|list|length %}
+  {% set my_count    = missions|selectattr('owner_id', 'equalto', current_user.id)|list|length %}
+  {# «Общие» = все опубликованные (включая свои), потому что
+     опубликованная миссия становится общедоступной. #}
+  {% set pub_count   = missions|selectattr('published')|list|length %}
   <nav class="tabs" role="tablist">
     <button class="tabs__btn tabs__btn--active" data-tab="generate" role="tab">
       ✨ Сгенерировать
@@ -59,40 +61,42 @@
       </div>
     </div>
 
-    <div id="preview-container" class="card preview-card" style="display:none">
-      <div class="card__title-row">
-        <h2 class="card__title">
-          Превью миссии <span id="preview-id" class="preview-id-chip"></span>
-        </h2>
-        <div class="program-actions">
-          {# Неудачная сгенерированная миссия — пока не сохранена в БД. #}
-          <span data-when="unsaved" style="display:inline-flex; gap:0.4rem">
-            <button id="btn-preview-save"      class="btn btn--primary btn--sm">💾 Сохранить</button>
-            <button id="btn-preview-regenerate" class="btn btn--sm">🔄 Сгенерировать ещё</button>
-          </span>
-          {# После сохранения — появляются действия с миссией. #}
-          <span data-when="saved" style="display:none; gap:0.4rem">
-            <button id="btn-preview-start"   class="btn btn--primary btn--sm">▶ Пройти</button>
-            <button id="btn-preview-publish" class="btn btn--sm">📤 Опубликовать</button>
-            <button id="btn-preview-delete"  class="btn btn--sm">🗑 Удалить</button>
-          </span>
-          <button id="btn-preview-close"   class="btn btn--sm" title="Закрыть превью">✕</button>
-        </div>
-      </div>
-      <div class="preview-grid">
-        <div class="preview-svg-wrap">
-          <svg id="preview-svg" viewBox="-300 -300 600 600" class="preview-svg"></svg>
-        </div>
-        <div class="preview-text">
-          <input id="preview-title-input" class="preview-title-input"
-                 maxlength="200"
-                 placeholder="Название миссии (если пусто — будет «Миссия #N»)">
-          <pre id="preview-description" class="preview-desc"></pre>
-        </div>
+  </section>
+
+  {# Превью миссии — общее для табов «Сгенерировать» и «Каталог».
+     При активации показывается ПОВЕРХ соответствующего таба, скрывая
+     основной контент таба до закрытия. Состояние «unsaved» — после
+     генерации. «saved» — после save или открытия из каталога. #}
+  <div id="preview-container" class="card preview-card" style="display:none">
+    <div class="card__title-row">
+      <h2 class="card__title">
+        Превью миссии <span id="preview-id" class="preview-id-chip"></span>
+      </h2>
+      <div class="program-actions">
+        <span data-when="unsaved" style="display:inline-flex; gap:0.4rem">
+          <button id="btn-preview-save"      class="btn btn--primary btn--sm">💾 Сохранить</button>
+          <button id="btn-preview-regenerate" class="btn btn--sm">🔄 Сгенерировать ещё</button>
+        </span>
+        <span data-when="saved" style="display:none; gap:0.4rem">
+          <button id="btn-preview-start"   class="btn btn--primary btn--sm">▶ Пройти</button>
+          <button id="btn-preview-publish" class="btn btn--sm">📤 Опубликовать</button>
+          <button id="btn-preview-delete"  class="btn btn--sm">🗑 Удалить</button>
+        </span>
+        <button id="btn-preview-close"   class="btn btn--sm" title="Закрыть превью">✕</button>
       </div>
     </div>
-
-  </section>
+    <div class="preview-grid">
+      <div class="preview-svg-wrap">
+        <svg id="preview-svg" viewBox="-300 -300 600 600" class="preview-svg"></svg>
+      </div>
+      <div class="preview-text">
+        <input id="preview-title-input" class="preview-title-input"
+               maxlength="200"
+               placeholder="Название миссии (если пусто — будет «Миссия #N»)">
+        <pre id="preview-description" class="preview-desc"></pre>
+      </div>
+    </div>
+  </div>
 
   {# ═══════════════════════════════════════════════════════════════════ #}
   {# TAB: КАТАЛОГ — мои + опубликованные другими, с фильтром и поиском #}
@@ -110,8 +114,8 @@
         <button class="chip" data-filter="mine" role="tab">
           👤 Мои <span class="chip__count">{{ my_count }}</span>
         </button>
-        <button class="chip" data-filter="others" role="tab">
-          🌐 Общие <span class="chip__count">{{ pub_others }}</span>
+        <button class="chip" data-filter="published" role="tab">
+          🌐 Общие <span class="chip__count">{{ pub_count }}</span>
         </button>
       </div>
       <div class="catalog-search">
@@ -137,6 +141,7 @@
         <article class="mission-card js-mission-card"
                  data-id="{{ m.id }}"
                  data-mine="{{ '1' if is_mine else '0' }}"
+                 data-published="{{ '1' if m.published else '0' }}"
                  data-title="{{ m.title|lower }}"
                  data-level="{{ m.level }}">
           <header class="mission-card__head">
@@ -156,6 +161,8 @@
           <p class="mission-card__desc">{{ (m.description or '')[:150] }}{% if m.description and m.description|length > 150 %}…{% endif %}</p>
           <div class="mission-card__actions">
             <a href="/?mission={{ m.id }}" class="btn btn--primary btn--sm">▶ Пройти</a>
+            <button class="btn btn--sm js-view-mission" data-id="{{ m.id }}"
+                    title="Открыть карту и описание миссии">👁 Просмотр</button>
             {% if is_mine %}
               {# Свои миссии: публиковать/снимать + удалять. #}
               <button class="btn btn--sm js-publish-toggle" data-id="{{ m.id }}">
@@ -265,6 +272,9 @@
     document.getElementById('preview-description').textContent = data.description;
     drawPreviewSvg(data);
     setPreviewState(false);                  // unsaved
+    // Сбросить возможные display:none от предыдущего просмотра из каталога.
+    document.getElementById('btn-preview-publish').style.display = '';
+    document.getElementById('btn-preview-delete').style.display  = '';
     if (selector) selector.style.display = 'none';
     previewBox.style.display = '';
     previewBox.scrollIntoView({behavior: 'smooth', block: 'start'});
@@ -327,23 +337,25 @@
       setPreviewState(true);                  // переключаем кнопки
       _catalogStale = true;
       bumpCatalogCount(+1);
-      flash(`✓ Сохранено как #${data.id} «${data.title}». Доступна в Каталоге.`);
+      flash(`✓ Сохранено как #${data.id} «${data.title}». Доступна в Каталоге.`, 'ok');
     });
 
-  // ── Маленький toast-флэш ─────────────────────────────────────────────
+  // ── Уведомления — в статусную строку подвала (.appbar) ───────────────
+  // Не перекрывает контент, держится 4 сек и сбрасывается на дефолт.
   function flash(text, level='info') {
-    let el = document.getElementById('toast-flash');
-    if (!el) {
-      el = document.createElement('div');
-      el.id = 'toast-flash';
-      el.className = 'toast-flash';
-      document.body.appendChild(el);
-    }
-    el.textContent = text;
-    el.classList.toggle('toast-flash--err', level === 'err');
-    el.classList.add('toast-flash--show');
+    const bar = document.getElementById('status-bar');
+    if (!bar) return;
+    bar.textContent = text;
+    // Сопоставление с уже существующими CSS-классами .appbar__status--*
+    const cls = (level === 'err') ? 'appbar__status--error'
+              : (level === 'ok')  ? 'appbar__status--success'
+              :                     'appbar__status--info';
+    bar.className = 'appbar__status ' + cls;
     clearTimeout(flash._t);
-    flash._t = setTimeout(() => el.classList.remove('toast-flash--show'), 2500);
+    flash._t = setTimeout(() => {
+      bar.textContent = bar.dataset.default || 'Готов к работе';
+      bar.className = 'appbar__status';
+    }, 4000);
   }
   function bumpCatalogCount(delta) {
     const cnt = document.querySelector('.tabs__btn[data-tab=catalog] .tabs__count');
@@ -455,7 +467,8 @@
       _catalogStale = true;
       flash(d.published
         ? `✓ Миссия #${_previewMissionId} опубликована — видна другим.`
-        : `↺ Миссия #${_previewMissionId} снята с публикации.`);
+        : `↺ Миссия #${_previewMissionId} снята с публикации.`,
+        d.published ? 'ok' : 'info');
     });
   document.getElementById('btn-preview-delete')?.addEventListener('click',
     async () => {
@@ -471,6 +484,34 @@
         flash(`🗑 Миссия #${id} удалена.`);
       }
     });
+
+  // ── Catalog: «👁 Просмотр» — открыть preview миссии ─────────────────
+  document.querySelectorAll('.js-view-mission').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.id;
+      const r = await fetch('/missions/' + id);
+      if (!r.ok) { flash('Не удалось загрузить миссию: HTTP ' + r.status, 'err'); return; }
+      const data = await r.json();
+      _previewMissionId = data.id;
+      _savePayload      = null;             // эта миссия уже сохранена
+      _previewLevel     = data.level;
+      const titleInput = document.getElementById('preview-title-input');
+      if (titleInput) {
+        titleInput.value = data.title || '';
+        titleInput.readOnly = true;
+      }
+      document.getElementById('preview-description').textContent = data.description;
+      drawPreviewSvg(data);
+      setPreviewState(true);                // saved-режим
+      // Если миссия НЕ моя — скрыть владельческие действия (publish/delete).
+      // Кнопка «▶ Пройти» доступна всем (для опубликованных миссий).
+      document.getElementById('btn-preview-publish').style.display = data.is_mine ? '' : 'none';
+      document.getElementById('btn-preview-delete').style.display  = data.is_mine ? '' : 'none';
+      if (selector) selector.style.display = 'none';
+      previewBox.style.display = '';
+      previewBox.scrollIntoView({behavior: 'smooth', block: 'start'});
+    });
+  });
 
   // ── Catalog: publish/delete buttons (для своих карточек) ────────────
   document.querySelectorAll('.js-publish-toggle').forEach(btn => {
@@ -505,12 +546,13 @@
     const q = (catalogInput?.value || '').trim().toLowerCase();
     let visible = 0;
     catalogCards.forEach(card => {
-      const isMine = card.dataset.mine === '1';
+      const isMine      = card.dataset.mine === '1';
+      const isPublished = card.dataset.published === '1';
       const lvl    = card.dataset.level;
       const ownerOk =
-        _ownerFilter === 'all'    ||
-        _ownerFilter === 'mine'   && isMine ||
-        _ownerFilter === 'others' && !isMine;
+        _ownerFilter === 'all'       ||
+        _ownerFilter === 'mine'      && isMine ||
+        _ownerFilter === 'published' && isPublished;
       const levelOk = _levelFilter === 'all' || _levelFilter === lvl;
       const searchOk = !q ||
         card.dataset.title.includes(q) ||

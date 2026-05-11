@@ -1259,25 +1259,8 @@ body { padding-bottom: 22px; }
   margin-left: 0.4rem;
 }
 
-/* ── Тост-флэш (вверху по центру, исчезает через 2.5с) ──────────────── */
-.toast-flash {
-  position: fixed; top: 4.5rem; left: 50%;
-  transform: translateX(-50%) translateY(-12px);
-  background: var(--surface); color: var(--text);
-  border: 1px solid var(--accent);
-  border-radius: 6px; padding: 0.55rem 1rem;
-  font-size: 0.88rem; font-weight: 500;
-  box-shadow: 0 6px 18px rgba(0,0,0,0.45);
-  opacity: 0; pointer-events: none;
-  transition: opacity 0.18s, transform 0.18s;
-  z-index: 1000;
-}
-.toast-flash--show {
-  opacity: 1; transform: translateX(-50%) translateY(0);
-}
-.toast-flash--err {
-  border-color: var(--danger); color: var(--danger);
-}
+/* (Раньше здесь был .toast-flash — заменён на использование
+   статус-строки подвала #status-bar через flash() в tasks.html.) */
 
 /* ── Превью миссии (на весь доступный экран) ──────────────────────── */
 /* Карточка превью растягивается до низа viewport. Уменьшение level-

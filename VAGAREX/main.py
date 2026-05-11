@@ -667,6 +667,32 @@ async def missions_save(request: Request,
     return JSONResponse({"error": "id collision after retries"}, status_code=500)
 
 
+@app.get("/missions/{mission_id}")
+async def missions_get(mission_id: int,
+                       db: Session = Depends(get_db),
+                       current_user: User = Depends(require_user)):
+    """Полные данные миссии для preview из каталога. Доступ —
+    владелец, админ ИЛИ опубликована."""
+    m = db.query(Mission).filter(Mission.id == mission_id).first()
+    if m is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    is_owner = (m.owner_id == current_user.id)
+    is_admin = bool(getattr(current_user, "is_admin", False))
+    if not (is_owner or is_admin or m.published):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    return JSONResponse({
+        "id":               m.id,
+        "title":            m.title,
+        "description":      m.description,
+        "level":            m.level,
+        "waypoints":        json.loads(m.waypoints),
+        "danger_zones":     json.loads(m.danger_zones),
+        "actions_required": json.loads(m.actions_required),
+        "published":        m.published,
+        "is_mine":          is_owner,
+    })
+
+
 @app.post("/missions/{mission_id}/publish")
 async def missions_publish_toggle(mission_id: int,
                                   db: Session = Depends(get_db),
