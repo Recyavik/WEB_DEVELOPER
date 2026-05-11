@@ -563,15 +563,15 @@ async def missions_generate(level: int = Form(...),
                   .filter(UserSettings.user_id == current_user.id).first())
     if settings:
         geom = WorldGeom(
-            world_w_cm=float(settings.world_w),
-            world_h_cm=float(settings.world_h),
-            wall_thick_cm=float(settings.wall_thickness),
-            robot_w_cm=float(settings.robot_width),
-            robot_l_cm=float(settings.robot_length),
-            safety_margin_cm=float(settings.wall_thickness),  # как «запас безопасности»
-            start_x=float(settings.start_x),
-            start_y=float(settings.start_y),
-            start_heading=float(settings.start_heading),
+            world_w_cm=float(settings.world_w_cm),
+            world_h_cm=float(settings.world_h_cm),
+            wall_thick_cm=float(settings.wall_thickness_cm),
+            robot_w_cm=float(settings.robot_width_cm),
+            robot_l_cm=float(settings.robot_length_cm),
+            safety_margin_cm=float(settings.wall_thickness_cm),  # «запас безопасности»
+            start_x=float(settings.start_x_cm),
+            start_y=float(settings.start_y_cm),
+            start_heading=float(settings.start_heading_deg),
         )
     else:
         geom = WorldGeom()
