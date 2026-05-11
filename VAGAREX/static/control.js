@@ -950,6 +950,35 @@
       sendCmd('Вега убрать зону');
     });
 
+    // «💾 Сохранить миссию» — снимок текущего состояния свободного режима
+    // (позиция, зоны, программа) → кастомная миссия в Каталоге.
+    document.getElementById('btn-save-mission')?.addEventListener('click',
+      async () => {
+        const raw = window.prompt(
+          'Название кастомной миссии:\n' +
+          '(оставьте пустым — будет «Кастомная #N»)',
+          ''
+        );
+        if (raw === null) return;        // нажал Отмена — не сохраняем
+        const title = raw.trim();
+        try {
+          const r = await fetch('/missions/save_custom', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({title}),
+          });
+          if (!r.ok) {
+            logMsg(`Ошибка сохранения миссии: HTTP ${r.status}`, 'error');
+            return;
+          }
+          const data = await r.json();
+          logMsg(`✓ Миссия #${data.id} «${data.title}» сохранена в Каталог.`,
+                 'success');
+        } catch (e) {
+          logMsg(`Ошибка сохранения миссии: ${e.message}`, 'error');
+        }
+      });
+
     // ── ⛯ Режим установки опасных зон мышью ───────────────────────────
     // Toggle-кнопка: ЛКМ ставит, Ctrl+ЛКМ удаляет, +/- меняет радиус,
     // ESC/ПКМ выход. Видимое состояние — класс .is-active на кнопке.

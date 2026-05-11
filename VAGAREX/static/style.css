@@ -1365,6 +1365,7 @@ body { padding-bottom: 22px; }
   border-radius: 50%; font-size: 0.78rem; font-weight: 700;
   color: #fff;
 }
+.mission-card__level--0 { background: #8b5cf6; }   /* фиолетовый = Кастомная */
 .mission-card__level--1 { background: #2ea043; }   /* зелёный */
 .mission-card__level--2 { background: #58a6ff; }   /* синий */
 .mission-card__level--3 { background: #d4a017; }   /* жёлтый */
@@ -1426,6 +1427,7 @@ body { padding-bottom: 22px; }
   width: 18px; height: 18px;
   border-radius: 50%; font-weight: 700; font-size: 0.7rem; color: #fff;
 }
+.chip--lvl-0 .chip__lvlnum { background: #8b5cf6; font-size: 0.65rem; }
 .chip--lvl-1 .chip__lvlnum { background: #2ea043; }
 .chip--lvl-2 .chip__lvlnum { background: #58a6ff; }
 .chip--lvl-3 .chip__lvlnum { background: #d4a017; }

@@ -103,9 +103,9 @@
   {# ═══════════════════════════════════════════════════════════════════ #}
   <section class="tab-panel" data-panel="catalog">
     {% if missions %}
-    {# Подсчёт миссий по уровням для бейджей-счётчиков. #}
-    {% set lvl_counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0} %}
-    {% for m in missions %}{% if lvl_counts.update({m.level: lvl_counts[m.level] + 1}) %}{% endif %}{% endfor %}
+    {# Подсчёт миссий по уровням для бейджей-счётчиков (включая 0 = Кастомные). #}
+    {% set lvl_counts = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0} %}
+    {% for m in missions %}{% if lvl_counts.update({m.level: lvl_counts.get(m.level, 0) + 1}) %}{% endif %}{% endfor %}
     <div class="catalog-toolbar">
       <div class="filter-chips" role="tablist" aria-label="Фильтр по владельцу">
         <button class="chip chip--active" data-filter="all" role="tab">
@@ -127,6 +127,11 @@
     <div class="filter-chips filter-chips--level" role="tablist"
          aria-label="Фильтр по уровню сложности">
       <button class="chip chip--active" data-level="all">Все уровни</button>
+      <button class="chip chip--lvl chip--lvl-0" data-level="0"
+              title="Кастомные миссии (свободный режим)">
+        <span class="chip__lvlnum">К</span>
+        <span class="chip__count">{{ lvl_counts[0] }}</span>
+      </button>
       {% for n in [1, 2, 3, 4, 5] %}
       <button class="chip chip--lvl chip--lvl-{{ n }}" data-level="{{ n }}"
               title="Уровень {{ n }}">
@@ -146,7 +151,7 @@
                  data-level="{{ m.level }}">
           <header class="mission-card__head">
             <span class="mission-card__level mission-card__level--{{ m.level }}"
-                  title="Уровень сложности">{{ m.level }}</span>
+                  title="{% if m.level == 0 %}Кастомная миссия (свободный режим){% else %}Уровень сложности {{ m.level }}{% endif %}">{% if m.level == 0 %}К{% else %}{{ m.level }}{% endif %}</span>
             <h3 class="mission-card__title">{{ m.title }}</h3>
             <span class="mission-card__id">#{{ m.id }}</span>
           </header>
