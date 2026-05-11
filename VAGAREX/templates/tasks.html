@@ -52,7 +52,7 @@
         {% endfor %}
       </div>
       <div class="generate-actions">
-        <button id="btn-generate" class="btn btn--primary">
+        <button id="btn-generate" class="btn btn--success">
           ✨ Сгенерировать миссию
         </button>
         <span class="hint" style="margin-left:0.7rem; color:var(--text-dim); font-size:0.8rem;">
@@ -74,11 +74,11 @@
       </h2>
       <div class="program-actions">
         <span data-when="unsaved" style="display:inline-flex; gap:0.4rem">
-          <button id="btn-preview-save"      class="btn btn--primary btn--sm">💾 Сохранить</button>
+          <button id="btn-preview-save"      class="btn btn--success btn--sm">💾 Сохранить</button>
           <button id="btn-preview-regenerate" class="btn btn--sm">🔄 Сгенерировать ещё</button>
         </span>
         <span data-when="saved" style="display:none; gap:0.4rem">
-          <button id="btn-preview-start"   class="btn btn--primary btn--sm">▶ Пройти</button>
+          <button id="btn-preview-start"   class="btn btn--info btn--sm">▶ Пройти</button>
           <button id="btn-preview-publish" class="btn btn--sm">📤 Опубликовать</button>
           <button id="btn-preview-delete"  class="btn btn--sm">🗑 Удалить</button>
         </span>
@@ -163,9 +163,15 @@
             {% endif %}
           </p>
           <p class="mission-card__desc">{{ (m.description or '')[:150] }}{% if m.description and m.description|length > 150 %}…{% endif %}</p>
+          {% set my_best = best_stars.get(m.id) %}
+          {% if my_best is not none %}
+          <p class="mission-card__score" title="Лучший результат пользователя по этой миссии">
+            Набрано: <strong>{{ my_best }}⭐</strong>
+          </p>
+          {% endif %}
           <div class="mission-card__actions">
-            <a href="/?mission={{ m.id }}" class="btn btn--primary btn--sm">▶ Пройти</a>
-            <button class="btn btn--sm js-view-mission" data-id="{{ m.id }}"
+            <a href="/?mission={{ m.id }}" class="btn btn--info btn--sm">▶ Пройти</a>
+            <button class="btn btn--info btn--sm js-view-mission" data-id="{{ m.id }}"
                     title="Открыть карту и описание миссии">👁 Просмотр</button>
             {% if is_mine %}
               {# Свои миссии: переключатель публикации + удалить. #}
@@ -222,6 +228,9 @@
         location.reload();
         return;
       }
+      // Открытый превью закрываем — таб должен показать своё содержимое.
+      const pv = document.getElementById('preview-container');
+      if (pv && pv.style.display !== 'none') closePreview();
       document.querySelectorAll('.tabs__btn').forEach(b =>
         b.classList.toggle('tabs__btn--active', b === btn));
       document.querySelectorAll('.tab-panel').forEach(p =>
@@ -480,9 +489,12 @@
     // Траектория: серый пунктир ПО ПЛОТНОЙ цепочке path (если задана),
     // иначе fallback на ломаную через waypoints. path лучше передаёт
     // криволинейные маршруты (круг, спираль) у кастомных миссий.
+    // Стартовая позиция — первая точка path (генератор и кастомные миссии
+    // всегда кладут её туда). Если path нет — fallback (0, 0).
     const wp        = m.waypoints || [];
+    const startXY   = (m.path && m.path.length > 0) ? m.path[0] : [0, 0];
     const pathLine  = (m.path && m.path.length > 1) ? m.path
-                                                    : [[0, 0], ...wp];
+                                                    : [startXY, ...wp];
     if (pathLine.length > 1) {
       // Используем <polyline> — одна непрерывная линия вместо N сегментов.
       const pts = pathLine.map(([x, y]) => `${x},${-y}`).join(' ');
@@ -503,7 +515,8 @@
       svg.appendChild(t);
     });
     // Стартовая позиция (зелёный кружок) — поверх всего.
-    svg.appendChild(mk('circle', {cx:0, cy:0, r:5,
+    // Берём из path[0] чтобы учесть пользовательскую настройку start_x/y.
+    svg.appendChild(mk('circle', {cx:startXY[0], cy:-startXY[1], r:5,
       fill:'#2ea043', stroke:'#fff', 'stroke-width':1.2}));
   }
 

@@ -647,6 +647,40 @@ body { padding-bottom: 22px; }
 .log-entry--error   { border-color: var(--danger); }
 .log-time { color: var(--text-dim); margin-right: 0.3rem; }
 
+/* Карточка задания: вставляется в журнал по клику «📋 Задание».
+   Содержит либо описание активной миссии (+ кнопку завершить досрочно),
+   либо подсказку «миссия не загружена» с инструкцией где её найти. */
+.log-task-card {
+  padding: 0.7rem 0.9rem;
+  margin: 0.5rem 0;
+  background: rgba(88,166,255,0.07);
+  border: 1px solid rgba(88,166,255,0.35);
+  border-left-width: 3px;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--text);
+}
+.log-task-card__title {
+  font-weight: 600; margin-bottom: 0.35rem;
+}
+.log-task-card__body {
+  margin: 0; padding: 0;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 0.82rem;
+  white-space: pre-wrap;
+  background: transparent;
+  border: 0;
+}
+.log-task-card__body a       { color: var(--accent); text-decoration: none; }
+.log-task-card__body a:hover { text-decoration: underline; }
+.log-task-card__body strong  { color: var(--text); }
+.log-task-card__actions {
+  margin-top: 0.5rem;
+  display: flex; gap: 0.4rem;
+}
+
 /* ── Card title row (title + button) ────────────────────────────────────────── */
 .card__title-row {
   display: flex;
@@ -1353,6 +1387,16 @@ body { padding-bottom: 22px; }
   margin: 0; font-size: 0.82rem; color: var(--text-dim);
   line-height: 1.45; flex: 1;
 }
+/* «Набрано: N⭐» — лучший результат пользователя по миссии. Показывается
+   только при наличии завершённых прохождений. */
+.mission-card__score {
+  margin: 0; font-size: 0.82rem; color: var(--text-dim);
+  padding: 0.25rem 0.5rem;
+  background: rgba(245,184,40,0.08);
+  border: 1px solid rgba(245,184,40,0.25);
+  border-radius: 4px;
+}
+.mission-card__score strong { color: var(--warning); font-weight: 600; }
 .mission-card__actions {
   display: flex; gap: 0.4rem; flex-wrap: wrap;
   padding-top: 0.4rem; border-top: 1px solid var(--border);
@@ -1428,6 +1472,101 @@ body { padding-bottom: 22px; }
   border-radius: 50%; font-weight: 700; font-size: 0.7rem; color: #fff;
 }
 .chip--lvl-0 .chip__lvlnum { background: #8b5cf6; font-size: 0.65rem; }
+
+/* ── Sticky-кнопка активной миссии в правой панели (журнал) ─────────── */
+.mission-show-btn {
+  display: flex; align-items: center; gap: 0.4rem;
+  margin: 0 0 0.5rem 0;
+  padding: 0.55rem 0.8rem;
+  background: rgba(88,166,255,0.10);
+  border: 1px solid rgba(88,166,255,0.35);
+  color: var(--text);
+  font-size: 0.85rem;
+  width: 100%;
+  text-align: left;
+  flex-wrap: wrap;
+}
+.mission-show-btn:hover { background: rgba(88,166,255,0.16); }
+.mission-show-btn strong { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.mission-show-btn__chip {
+  font-size: 0.7rem; padding: 2px 7px;
+  background: var(--bg-panel); border-radius: 10px;
+  color: var(--text-dim); font-weight: 600;
+  white-space: nowrap;
+}
+.mission-show-btn__chip--warn { color: var(--danger); }
+
+/* ── Иконка миссии-результата в модалке ─────────────────────────────── */
+.mission-result-icon { font-size: 1.4rem; }
+.mission-result-body { font-size: 0.95rem; line-height: 1.6; }
+
+/* ── Таймер активной миссии в шапке журнала ────────────────────────── */
+.mission-timer {
+  font-family: ui-monospace, "JetBrains Mono", Consolas, monospace;
+  font-size: 0.78rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  background: #14202f;
+  color: var(--accent);
+  border: 1px solid #1e2c40;
+  white-space: nowrap;
+}
+
+/* ── Action-кнопки: цвет = активный режим робота ────────────────────────
+   .btn--mode-action и .btn--voice окрашиваются в палитру активной
+   кнопки текущего режима, чтобы запуск/слушание всегда показывали,
+   в каком режиме сейчас работает робот:
+     • инспектор (по умолчанию) → насыщенный синий (как .btn--info.is-active)
+     • осторожно (body.mode-cautious) → насыщенный жёлтый (как .btn--warn.is-active)
+*/
+.btn--mode-action {
+  background:   #1f4068 !important;
+  color:        #fff !important;
+  border-color: var(--accent) !important;
+}
+.btn--mode-action:hover {
+  background:   #2a5180 !important;
+  border-color: var(--accent) !important;
+}
+
+body.mode-cautious .btn--mode-action {
+  background:   #6b4200 !important;
+  color:        #fff !important;
+  border-color: var(--warning) !important;
+}
+body.mode-cautious .btn--mode-action:hover {
+  background:   #8a5500 !important;
+  border-color: var(--warning) !important;
+}
+
+/* Кнопка «🎙 Слушать» — особая (width:100%, состояние .listening).
+   Палитра та же: режим = цвет, listening = более насыщенный оттенок. */
+.btn--voice {
+  background:   #1f4068 !important;
+  color:        #fff !important;
+  border-color: var(--accent) !important;
+}
+.btn--voice:hover    { background: #2a5180 !important; }
+.btn--voice.listening {
+  background:   #2a5180 !important;
+  border-color: var(--accent2) !important;
+}
+
+body.mode-cautious .btn--voice {
+  background:   #6b4200 !important;
+  color:        #fff !important;
+  border-color: var(--warning) !important;
+}
+body.mode-cautious .btn--voice:hover    { background: #8a5500 !important; }
+body.mode-cautious .btn--voice.listening {
+  background:   #8a5500 !important;
+  border-color: #ffd166 !important;
+}
+
+body.mode-cautious .voice-status {
+  color: var(--warning) !important;
+  border-top-color: rgba(245,184,40,0.25) !important;
+}
 
 /* ── Переключатель публикации миссии (toggle-switch) ───────────────── */
 /* Использует hidden checkbox + кастомный slider, чтобы видеть состояние

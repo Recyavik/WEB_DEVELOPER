@@ -69,7 +69,7 @@
       <section class="card">
         <h3 class="card__title">Голосовое управление</h3>
         <p class="hint">Скажите <strong>«Вега»</strong> + команда</p>
-        <button id="btn-voice" class="btn btn--voice">🎙 Слушать</button>
+        <button id="btn-voice" class="btn btn--voice btn--mode-action">🎙 Слушать</button>
         <div id="voice-status" class="voice-status">Ожидание…</div>
       </section>
 
@@ -78,7 +78,7 @@
         <form id="cmd-form" class="cmd-form">
           <input id="cmd-input" type="text" class="cmd-input"
                  placeholder="Вега вперед" autocomplete="off">
-          <button type="submit" class="btn btn--primary">▶</button>
+          <button type="submit" class="btn btn--info btn--mode-action">▶</button>
         </form>
       </section>
 
@@ -240,7 +240,7 @@
                   title="Упорядочить код: константы → функции (без дублей) → вызовы">🧹</button>
           <button id="btn-clear-python-code" class="btn btn--xs" title="Очистить код">✕</button>
           <button id="btn-expand-python-code" class="btn btn--xs" title="Развернуть редактор на весь экран">⛶</button>
-          <button id="btn-run-python-code" class="btn btn--xs btn--primary" title="Запустить код" aria-label="Запустить код">▶</button>
+          <button id="btn-run-python-code" class="btn btn--xs btn--info btn--mode-action" title="Запустить код (или проверить миссию, если активна)" aria-label="Запустить код">▶</button>
         </div>
       </div>
       <div id="python-code-description" class="code-desc">Код будет автоматически формироваться по командам. Можно редактировать и запускать.</div>
@@ -253,7 +253,11 @@
     <section class="card card--full">
       <div class="card__title-row">
         <h3 class="card__title">Журнал</h3>
-        <button id="btn-clear-log" class="btn btn--xs">✕ Очистить</button>
+        <div class="program-actions">
+          <span id="mission-timer" class="mission-timer" hidden title="Время прохождения активной миссии">⏱ 00:00</span>
+          <button id="btn-show-mission" class="btn btn--xs" title="Показать задание текущей миссии в журнале">📋 Задание</button>
+          <button id="btn-clear-log" class="btn btn--xs">✕ Очистить</button>
+        </div>
       </div>
       <div id="cmd-log" class="cmd-log"></div>
     </section>
@@ -271,7 +275,7 @@
           <button id="btn-modal-tidy"  class="btn btn--xs"
                   title="Упорядочить код: константы → функции (без дублей) → вызовы">🧹</button>
           <button id="btn-modal-clear" class="btn btn--xs" title="Очистить код">✕</button>
-          <button id="btn-modal-run"   class="btn btn--xs btn--primary" title="Запустить код" aria-label="Запустить код">▶</button>
+          <button id="btn-modal-run"   class="btn btn--xs btn--info btn--mode-action" title="Запустить код" aria-label="Запустить код">▶</button>
           <button id="btn-collapse-python-code" class="btn btn--xs" title="Свернуть">⛶ Свернуть</button>
         </div>
       </div>

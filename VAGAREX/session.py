@@ -43,8 +43,12 @@ LIGHT_INDEX = 0
 LIGHT_COUNT = 1
 LIGHT_DEFAULT_COLOR = (255, 255, 255)
 
-# Интенты, которые не записываются в программу
-_NO_RECORD = {"report_pos", "report_status", "path_show", "path_hide", "recharge"}
+# Интенты, которые не записываются в программу — это UI-команды
+# (переключение интерфейсного режима, показ/скрытие путей, отчёты),
+# а не часть алгоритма. Если пользователь явно впишет `mode(cautious)`
+# в Python-код, парсер всё равно его распознает и выполнит.
+_NO_RECORD = {"report_pos", "report_status", "path_show", "path_hide",
+              "recharge", "mode_inspector", "mode_cautious"}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -257,9 +261,18 @@ class UserSession:
     # ── Миссии ──────────────────────────────────────────────────────────
 
     async def start_mission(self, mission_id: int) -> bool:
-        """Активировать миссию для текущей сессии. Загружает миссию из
-        БД, создаёт MissionRun (started_at = now), кладёт в self._mission,
-        широковещает 'mission_active'. Возвращает True при успехе."""
+        """Активировать миссию для текущей сессии.
+
+        Поведение «как новое поле + загрузка миссии»:
+          1. Загружаем миссию из БД, создаём MissionRun.
+          2. Сбрасываем поле (_run_reset): робот в стартовую точку,
+             зоны/путь очищаются, _program пустеет.
+          3. Опасные зоны миссии превращаются в начальные команды
+             mark_danger_cmd(...) в _program — пользователь видит их
+             как обычные команды программы (можно изучать/править/
+             запускать ▶).
+          4. Широковещаем mission_active + новое состояние world/program.
+        """
         from mission_state import from_mission_row
         from models import Mission as MissionRow, MissionRun
         db = SessionLocal()
@@ -269,6 +282,11 @@ class UserSession:
                 await self.push_message(
                     f"Миссия #{mission_id} не найдена.", "error")
                 return False
+            # Сначала reset поля — стартовая точка из настроек, зоны
+            # сбрасываются, _program пустеет. Это даёт чистый старт миссии.
+            # keep_mode=True — режим «осторожно» сохраняется через активацию,
+            # иначе action-кнопки моргают между синим и жёлтым.
+            await self._run_reset(db, keep_mode=True)
             run = MissionRun(mission_id=row.id, user_id=self.user_id)
             db.add(run); db.commit(); db.refresh(run)
             self._mission = from_mission_row(
@@ -276,6 +294,15 @@ class UserSession:
                 start_x=self.robot_state.x, start_y=self.robot_state.y,
                 run_id=run.id,
             )
+            # Опасные зоны миссии → начальные команды mark_danger_cmd
+            # в _program. В world они НЕ кладутся — появятся в физике,
+            # только когда пользователь запустит ▶ Запустить код.
+            for (zx, zy, zr) in self._mission.danger_zones:
+                raw = f"Вега опасная зона {int(zx)} {int(zy)} {int(zr)}"
+                cmd = self._build_cmd("mark_danger", raw)
+                if cmd is not None:
+                    self._program.append(cmd)
+            self._save_program()
         finally:
             db.close()
         await self.push_message(
@@ -287,6 +314,7 @@ class UserSession:
             "type":    "mission_active",
             "mission": self._mission.to_client_dict(),
         })
+        await self.push_program()
         await self.push_state()
         return True
 
@@ -334,15 +362,25 @@ class UserSession:
                     db.commit()
             finally:
                 db.close()
+        # Маркер миссии: предпочитаем title (он уже включает #ID
+        # в fallback-варианте «Миссия #N» из /missions/save), иначе #ID.
+        # Так избегаем дубля «#2 «Миссия #2»».
+        if m.title:
+            mission_label = f"«{m.title}»"
+        else:
+            mission_label = f"#{m.mission_id}"
         await self.broadcast({
-            "type":    "mission_finished",
-            "success": bool(success),
-            "stars":   stars,
+            "type":        "mission_finished",
+            "mission_id":  m.mission_id,
+            "title":       m.title or "",
+            "success":     bool(success),
+            "stars":       stars,
             "coefficient": round(m.coefficient, 3),
             "deviations":  m.deviations,
         })
         await self.push_message(
-            f"🏁 Миссия завершена: {'✓ успех' if success else '✗ не выполнена'}. "
+            f"🏁 Задание {mission_label} завершено: "
+            f"{'✓ успех' if success else '✗ не выполнено'}. "
             f"⭐ {stars}, коэф. {m.coefficient:.2f}, отклонений: {m.deviations}.",
             "success" if success else "warning")
         self._mission = None
@@ -2159,7 +2197,14 @@ class UserSession:
             zone.db_id = dz.id
         await self.push_world()
 
-    async def _run_reset(self, db: Session = None):
+    async def _run_reset(self, db: Session = None, keep_mode: bool = False):
+        """Сброс поля.
+
+        keep_mode=False (по умолчанию, явная команда «↺ Поле») — полный
+        сброс, включая режим (инспектор / осторожно).
+        keep_mode=True — частичный сброс для replay ▶ Запуск кода и
+        для активации миссии: пользовательский выбор «осторожно» должен
+        сохраниться через перезапуск, иначе action-кнопки моргают."""
         s = self.robot_state
         self.world.clear_danger_zones()
         self.world.clear_path()
@@ -2170,8 +2215,9 @@ class UserSession:
         s.speed     = 0
         s.steer     = 0.0
         s.dist_left = 0
-        s.mode      = "normal"
-        s.cautious  = False
+        if not keep_mode:
+            s.mode     = "normal"
+            s.cautious = False
         s.thinking  = "idle"
         s.light_color = (0, 0, 0)
         # Очищаем накопленную программу — после reset поле «как новое»,
@@ -3313,7 +3359,10 @@ odo = Odometry()    # глобальный экземпляр одометрии
             await self.broadcast({"type": "path_visible", "visible": False})
             msg = "Путь скрыт."
         elif intent == "reset":
-            await self._run_reset(db)
+            # При playback (replay программы) сохраняем режим
+            # «осторожно» — иначе ▶ Запуск кода каждый раз гасит его
+            # и action-кнопки моргают между жёлтым и синим.
+            await self._run_reset(db, keep_mode=bool(cmd.playback))
             msg = "Поле очищено."
         elif intent == "report_pos":
             msg = f"X={s.x:.0f} см, Y={s.y:.0f} см, курс={s.heading:.0f}°."
@@ -3332,7 +3381,7 @@ odo = Odometry()    # глобальный экземпляр одометрии
                 cur_lbl = f"{s.speed:+.0f}%"
             msg = (
                 f"📊 Статус робота:\n"
-                f"  • координаты: X={s.x:.1f}, Y={s.y:.1f}\n"
+                f"  • координаты: X={s.x:.1f} см, Y={s.y:.1f} см\n"
                 f"  • курс: {s.heading:.0f}°\n"
                 f"  • руль: {s.steer:+.0f}°\n"
                 f"  • скорость установленная: {c.move_speed}%\n"

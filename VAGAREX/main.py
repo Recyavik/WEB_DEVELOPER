@@ -540,15 +540,26 @@ async def tasks_page(request: Request, db: Session = Depends(get_db),
     Каталог содержит МОИ миссии + ОПУБЛИКОВАННЫЕ другими в одном
     списке с фильтрами (Все/Мои/Общие) и поиском по ID/названию.
     """
-    from sqlalchemy import or_
+    from sqlalchemy import or_, func
     rows = (db.query(Mission)
               .filter(or_(
                   Mission.owner_id == current_user.id,
                   Mission.published == True,
               ))
               .order_by(Mission.created_at.desc()).all())
+    # Лучшее прохождение пользователя по каждой миссии: max(stars) среди
+    # ЗАВЕРШЁННЫХ MissionRun (completed_at IS NOT NULL). Активные/брошенные
+    # прохождения сюда не входят — иначе «Набрано: 0⭐» появится в карточке
+    # сразу после ▶ Пройти, ещё до окончания миссии.
+    best_runs = (db.query(MissionRun.mission_id,
+                          func.max(MissionRun.stars))
+                   .filter(MissionRun.user_id == current_user.id)
+                   .filter(MissionRun.completed_at.isnot(None))
+                   .group_by(MissionRun.mission_id).all())
+    best_stars = {mid: stars for mid, stars in best_runs}
     return templates.TemplateResponse(request, "tasks.html", {
         "missions":     rows,
+        "best_stars":   best_stars,
         "current_user": current_user,
     })
 
@@ -889,6 +900,27 @@ async def missions_start(mission_id: int,
     if not ok:
         return JSONResponse({"error": "could not start"}, status_code=500)
     return JSONResponse({"ok": True, "mission_id": mission_id})
+
+
+@app.post("/missions/active/check")
+async def missions_check_active(current_user: User = Depends(require_user)):
+    """Заглушка проверки прохождения миссии. Завтра здесь будет логика:
+    запустить _program, отследить посещение waypoints / выполнение actions
+    относительно эталонной траектории, посчитать звёзды и завершить.
+    Сейчас — просто возвращает текущий progress, чтобы клиент мог
+    обозначить «проверка нажата»."""
+    sess = get_session(current_user.id)
+    if sess is None:
+        return JSONResponse({"error": "no active session"}, status_code=400)
+    if sess._mission is None:
+        return JSONResponse({"error": "no active mission"}, status_code=400)
+    await sess.push_message(
+        "🧪 Проверка миссии (заглушка — логика будет завтра).", "info")
+    return JSONResponse({
+        "ok":       True,
+        "stub":     True,
+        "progress": sess._mission.progress_dict(),
+    })
 
 
 @app.post("/missions/active/stop")

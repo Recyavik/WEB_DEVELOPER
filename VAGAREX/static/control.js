@@ -120,8 +120,41 @@
         logMsg(msg.output || 'Выполнено.', 'info');
         break;
 
+      // ── Миссии ────────────────────────────────────────────────────────
+      case 'mission_active':
+        // Активирована миссия: overlay на холсте, кнопка «Задание» и
+        // таймер в шапке журнала, журнал очищается (Python-код приходит
+        // отдельным сообщением 'program' от сервера после _save_program).
+        if (canvas && msg.mission) {
+          canvas.setMission(msg.mission);
+        }
+        if (msg.mission) {
+          window._currentMission = msg.mission;
+          _clearLogPanel();
+          showMissionButton(msg.mission);
+          _startMissionTimer();
+        }
+        break;
+
+      case 'mission_finished':
+        // Завершена миссия — таймер стоп, карточка задания (если была
+        // вставлена в журнал) удаляется, дальше идёт серверное сообщение
+        // «🏁 Миссия завершена...», модалка результата.
+        _stopMissionTimer();
+        document.querySelectorAll('#cmd-log .log-task-card')
+                .forEach(el => el.remove());
+        showMissionResultModal(msg);
+        if (canvas) canvas.setMission(null);
+        window._currentMission = null;
+        hideMissionButton();
+        break;
+
       case 'pong':
         break;
+    }
+    // state-сообщения могут содержать mission_progress — обновляем чип.
+    if (msg.type === 'state' && msg.mission_progress) {
+      updateMissionProgress(msg.mission_progress);
     }
   }
 
@@ -163,6 +196,149 @@
     modal.querySelector('.warn-modal__body').textContent  = text;
     modal.hidden = false;
     modal.querySelector('.warn-modal__close').focus();
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Миссии: статичная кнопка «📋 Задание» в шапке журнала, таймер,
+  // описание, результат, прогресс
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // Состояние таймера активной миссии.
+  let _missionTimerId    = null;
+  let _missionStartedAt  = 0;
+
+  function _fmtElapsed(ms) {
+    const total = Math.max(0, Math.floor(ms / 1000));
+    const mm = String(Math.floor(total / 60)).padStart(2, '0');
+    const ss = String(total % 60).padStart(2, '0');
+    return `⏱ ${mm}:${ss}`;
+  }
+  function _startMissionTimer() {
+    const el = document.getElementById('mission-timer');
+    if (!el) return;
+    _missionStartedAt = Date.now();
+    el.hidden = false;
+    el.textContent = _fmtElapsed(0);
+    if (_missionTimerId) clearInterval(_missionTimerId);
+    _missionTimerId = setInterval(() => {
+      el.textContent = _fmtElapsed(Date.now() - _missionStartedAt);
+    }, 1000);
+  }
+  function _stopMissionTimer() {
+    if (_missionTimerId) { clearInterval(_missionTimerId); _missionTimerId = null; }
+    const el = document.getElementById('mission-timer');
+    if (el) el.hidden = true;
+  }
+
+  function showMissionButton(mission) {
+    // Обновляет tooltip кнопки «📋 Задание» под активную миссию. Сама
+    // кнопка всегда видна — клик вставляет карточку задания в журнал
+    // (либо описание миссии, либо подсказку «миссия не загружена»).
+    const btn = document.getElementById('btn-show-mission');
+    if (!btn) return;
+    const title = mission ? (mission.title || `Миссия #${mission.mission_id}`) : null;
+    btn.title = title ? `Задание: ${title}` : 'Показать задание (миссия не загружена)';
+  }
+
+  function hideMissionButton() {
+    // Кнопка остаётся видимой — просто сбрасываем tooltip.
+    const btn = document.getElementById('btn-show-mission');
+    if (btn) btn.title = 'Показать задание (миссия не загружена)';
+  }
+
+  function _clearLogPanel() {
+    const log = document.getElementById('cmd-log');
+    if (log) log.innerHTML = '';
+  }
+
+  // Карточка, которая по клику на «📋 Задание» вставляется в журнал —
+  // либо описание текущей миссии (+ кнопка «⏹ Завершить»), либо подсказка
+  // как загрузить миссию из каталога.
+  function _appendTaskCard() {
+    const log = document.getElementById('cmd-log');
+    if (!log) return;
+    // Удаляем предыдущую карточку — не плодим дубликаты в журнале.
+    log.querySelectorAll('.log-task-card').forEach(el => el.remove());
+    const card = document.createElement('div');
+    card.className = 'log-task-card';
+    const m = window._currentMission;
+    if (m) {
+      const title = m.title || `Миссия #${m.mission_id}`;
+      card.innerHTML =
+        `<div class="log-task-card__title">📋 ${escHtml(title)}</div>` +
+        `<pre class="log-task-card__body">${escHtml(m.description || '')}</pre>` +
+        `<div class="log-task-card__actions">` +
+        `  <button type="button" class="btn btn--xs js-mission-stop"` +
+        `          style="background:#3d1a1a;color:var(--danger);border-color:rgba(248,81,73,0.35)">` +
+        `    ⏹ Завершить миссию</button>` +
+        `</div>`;
+      card.querySelector('.js-mission-stop').addEventListener('click', async () => {
+        if (!confirm('Завершить миссию досрочно (без звёзд)?')) return;
+        await fetch('/missions/active/stop', {method: 'POST'});
+      });
+    } else {
+      card.innerHTML =
+        '<div class="log-task-card__title">🎯 Миссия не загружена</div>' +
+        '<div class="log-task-card__body">' +
+          'Откройте <a href="/tasks#catalog">📋 Миссии → Каталог</a> и нажмите ' +
+          '<strong>▶ Пройти</strong> на любой миссии, чтобы загрузить её в это окно.' +
+        '</div>';
+    }
+    log.appendChild(card);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function updateMissionProgress(p) {
+    // Передаём прогресс на canvas — там есть встроенная плашка
+    // «⭐ N · точки X/Y · действия A/B · коэф %» с подсветкой отклонений.
+    if (canvas && typeof canvas.updateMissionProgress === 'function') {
+      canvas.updateMissionProgress(p);
+    }
+  }
+
+
+  function showMissionResultModal(msg) {
+    let modal = document.getElementById('mission-result-modal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'mission-result-modal';
+      modal.className = 'warn-modal';
+      modal.innerHTML = `
+        <div class="warn-modal__panel">
+          <div class="warn-modal__header">
+            <span class="warn-modal__icon mission-result-icon"></span>
+            <h3 class="warn-modal__title"></h3>
+          </div>
+          <div class="warn-modal__body mission-result-body"></div>
+          <div class="warn-modal__footer">
+            <button type="button" class="btn btn--primary warn-modal__close">OK</button>
+          </div>
+        </div>`;
+      document.body.appendChild(modal);
+      const close = () => { modal.hidden = true; };
+      modal.querySelector('.warn-modal__close').addEventListener('click', close);
+      modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+    }
+    const ok = !!msg.success;
+    modal.querySelector('.mission-result-icon').textContent = ok ? '⭐' : '⚠';
+    // Заголовок: предпочитаем пользовательский title (он уже несёт #ID
+    // в fallback-варианте «Миссия #N»). Если title пустой — fallback
+    // на номер миссии. Слово «Задание» вместо «Миссия» — чтобы избежать
+    // двойного «Миссия «Миссия #N»».
+    const which = msg.title ? `«${msg.title}»`
+                : (msg.mission_id ? `#${msg.mission_id}` : '');
+    const verdict = ok ? 'выполнено!' : 'не завершено';
+    modal.querySelector('.warn-modal__title').textContent =
+      which ? `Задание ${which} ${verdict}` : `Задание ${verdict}`;
+    const stars = msg.stars || 0;
+    const starsStr = '⭐'.repeat(Math.max(0, Math.min(10, stars)));
+    const coef = Math.round((msg.coefficient || 0) * 100);
+    modal.querySelector('.mission-result-body').innerHTML =
+      `<div style="text-align:center; font-size:1.4rem; margin-bottom:0.6rem">${starsStr || '—'}</div>` +
+      `<div>Звёзд: <strong>${stars}</strong></div>` +
+      `<div>Коэффициент точности: <strong>${coef}%</strong></div>` +
+      `<div>Отклонений от траектории: <strong>${msg.deviations || 0}</strong></div>`;
+    modal.hidden = false;
   }
 
   // ── Подсветка Python-кода (комментарии — зеленым) ─────────────────────────
@@ -317,16 +493,22 @@
       else if (battery < 60) stFill.classList.add('battery-gauge__fill--mid');
     }
 
-    // Взаимоисключающая подсветка кнопок «Инспектор» / «Осторожно».
-    const btnInsp = document.getElementById('btn-mode-inspector');
-    const btnCaut = document.getElementById('btn-mode-cautious');
-    if (btnInsp) btnInsp.classList.toggle('is-active', !cautious);
-    if (btnCaut) btnCaut.classList.toggle('is-active',  cautious);
-    // Цвет статусной строки в подвале повторяет цвет кнопки активного
-    // режима: серый = инспектор, жёлтый = осторожно. Ошибки/подсказки
-    // перебивают через свои !important-классы.
-    const appbar = document.querySelector('.appbar');
-    if (appbar) appbar.classList.toggle('appbar--cautious', cautious);
+    // Переключаем mode-классы ТОЛЬКО при реальной смене режима — иначе
+    // при каждом push_state (а они идут ~10/с во время движения) classList
+    // дёргается, и transition в .btn вызывает визуальное мигание кнопок
+    // «Инспектор» / «Осторожно». Кэшируем последнее значение на window.
+    if (window._lastCautious !== cautious) {
+      window._lastCautious = cautious;
+      const btnInsp = document.getElementById('btn-mode-inspector');
+      const btnCaut = document.getElementById('btn-mode-cautious');
+      if (btnInsp) btnInsp.classList.toggle('is-active', !cautious);
+      if (btnCaut) btnCaut.classList.toggle('is-active',  cautious);
+      const appbar = document.querySelector('.appbar');
+      if (appbar) appbar.classList.toggle('appbar--cautious', cautious);
+      // body.mode-cautious — глобальный сигнал «всё работает в осторожно»
+      // для action-кнопок (.btn--mode-action перекрашиваются под warn).
+      document.body.classList.toggle('mode-cautious', cautious);
+    }
 
     // Дублирующий бейдж больше не нужен — режим уже виден в строке «Режим».
     const caut = document.getElementById('caution-badge');
@@ -540,7 +722,23 @@
     if (modal && !modal.hidden && modalArea) modalArea.value = merged;
   }
 
-  function runPythonCode() {
+  async function runPythonCode() {
+    // Если активна миссия — нажатие ▶ означает «проверь моё прохождение»,
+    // а не «запусти код заново». Сервер сейчас отвечает заглушкой; завтра
+    // там появится реальная логика оценки.
+    if (window._currentMission) {
+      logMsg('🧪 Проверка миссии…', 'info');
+      try {
+        const r = await fetch('/missions/active/check', {method: 'POST'});
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          logMsg(`Ошибка проверки: ${err.error || r.status}`, 'error');
+        }
+      } catch (e) {
+        logMsg(`Ошибка проверки: ${e.message}`, 'error');
+      }
+      return;
+    }
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       logMsg('Нет соединения!', 'error');
       return;
@@ -785,6 +983,31 @@
 
     // WebSocket
     wsConnect();
+
+    // Auto-start миссии через ?mission=N в URL (приход с карточки
+    // «▶ Пройти» в каталоге). Делаем POST после установки WS, чтобы
+    // mission_active точно дошёл до клиента.
+    const _missionId = new URLSearchParams(window.location.search).get('mission');
+    if (_missionId) {
+      // Удалим query param из URL чтобы при F5 не активировать заново.
+      const cleanUrl = window.location.pathname + window.location.hash;
+      window.history.replaceState({}, '', cleanUrl);
+      // Небольшая задержка чтобы WS успел подключиться (auto-reconnect
+      // в wsConnect занимает <100мс). Без неё mission_active не дойдёт.
+      setTimeout(async () => {
+        try {
+          const r = await fetch('/missions/' + _missionId + '/start',
+                                {method: 'POST'});
+          if (!r.ok) {
+            const err = await r.json().catch(() => ({}));
+            logMsg(`Ошибка запуска миссии #${_missionId}: ${err.error || r.status}`,
+                   'error');
+          }
+        } catch (e) {
+          logMsg(`Ошибка запуска миссии: ${e.message}`, 'error');
+        }
+      }, 300);
+    }
 
     // Форма текстовых команд
     const form  = document.getElementById('cmd-form');
@@ -1050,6 +1273,14 @@
         const log = document.getElementById('cmd-log');
         if (log) log.innerHTML = '';
       });
+    }
+
+    // «📋 Задание» — вставляет карточку с описанием активной миссии в
+    // журнал. Если миссия не загружена — карточка содержит подсказку,
+    // как загрузить миссию из каталога.
+    const btnShowMission = document.getElementById('btn-show-mission');
+    if (btnShowMission) {
+      btnShowMission.addEventListener('click', _appendTaskCard);
     }
 
     // Голосовое управление

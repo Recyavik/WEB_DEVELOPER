@@ -65,8 +65,28 @@ class RobotCanvas {
     this.onZoneRemove    = null;   // (wx, wy)         — ПКМ
     this.onZoneRadiusChange = null;// (radius)         — +/- / Shift+колесо
 
+    // Активная миссия (если есть) — для overlay-отрисовки:
+    //   - mission.path        — серый пунктир эталонной траектории
+    //   - mission.waypoints   — точки-чекпоинты (с номерами)
+    //   - mission.danger_zones — красные dashed-круги (предзаданы)
+    //   - mission.actions     — обязательные действия с зонами
+    //   - mission.progress    — состояние прохождения (visited indices)
+    this.mission         = null;
+    this.missionProgress = null;
+
     this._resize();
     this._bindEvents();
+  }
+
+  // Активация/деактивация overlay миссии.
+  setMission(mission) {
+    this.mission = mission || null;
+    this.missionProgress = mission ? (mission.progress || null) : null;
+    this.draw();
+  }
+  updateMissionProgress(progress) {
+    this.missionProgress = progress || null;
+    this.draw();
   }
 
   // ── Изменение размера ──────────────────────────────────────────────────────
@@ -324,6 +344,9 @@ class RobotCanvas {
     this._drawAxes();
     this._drawWalls();
     this._drawStartPoint();
+    // Mission overlay рисуем ПОД обычными зонами/path, чтобы реальный
+    // путь робота и его зоны были видны поверх «эталона миссии».
+    if (this.mission) this._drawMissionOverlay();
     this._drawDangerZones();
     if (this.showPath) this._drawAutoSegments();   // фиолетовый план — поверх зон, под пройденным следом
     if (this.showPath) this._drawPath();
@@ -332,6 +355,122 @@ class RobotCanvas {
     this._drawLights();
     // Поверх всего — превью зоны под курсором + статус-плашка режима
     this._drawZoneModeOverlay();
+  }
+
+  _drawMissionOverlay() {
+    const ctx = this.ctx;
+    const m   = this.mission;
+    const p   = this.missionProgress || {};
+    const visited = new Set(p.waypoints_visited || []);
+
+    // 1) Серая пунктирная траектория-эталон.
+    const path = m.path || [];
+    if (path.length > 1) {
+      ctx.save();
+      ctx.beginPath();
+      const p0 = this.worldToCanvas(path[0][0], path[0][1]);
+      ctx.moveTo(p0.x, p0.y);
+      for (let i = 1; i < path.length; i++) {
+        const pi = this.worldToCanvas(path[i][0], path[i][1]);
+        ctx.lineTo(pi.x, pi.y);
+      }
+      ctx.strokeStyle = 'rgba(150,150,150,0.55)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([5, 3]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+    }
+
+    // 2) Опасные зоны миссии (предзаданы) — красные dashed.
+    (m.danger_zones || []).forEach(([x, y, r]) => {
+      const c = this.worldToCanvas(x, y);
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, r * this.scale, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(248,81,73,0.08)';
+      ctx.fill();
+      ctx.strokeStyle = '#f85149';
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([4, 3]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+    });
+
+    // 3) Зоны внимания из actions_required — серые dashed без заливки.
+    (m.actions || []).forEach((a, idx) => {
+      if (a.type !== 'place_attention') return;
+      const c = this.worldToCanvas(a.x, a.y);
+      const r = (a.r || 15) * this.scale;
+      const done = (p.actions_done || []).includes(idx);
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+      ctx.strokeStyle = done ? '#2ea043' : '#8b949e';
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([4, 3]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+    });
+
+    // 4) Маркеры контрольных точек: серые → зелёные при посещении.
+    (m.waypoints || []).forEach(([x, y], i) => {
+      const c = this.worldToCanvas(x, y);
+      const ok = visited.has(i);
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, 7, 0, Math.PI * 2);
+      ctx.fillStyle = ok ? '#2ea043' : '#1c2330';
+      ctx.fill();
+      ctx.strokeStyle = ok ? '#3fb950' : '#8b949e';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      // Номер точки
+      ctx.fillStyle = ok ? '#fff' : '#c9d1d9';
+      ctx.font = 'bold 10px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(String(i + 1), c.x, c.y);
+      ctx.restore();
+    });
+
+    // 5) Прогресс-плашка сверху холста.
+    this._drawMissionProgressChip();
+  }
+
+  _drawMissionProgressChip() {
+    const ctx = this.ctx;
+    const m   = this.mission;
+    const p   = this.missionProgress || {};
+    const stars = p.stars_now ?? 0;
+    const wpDone = (p.waypoints_visited || []).length;
+    const wpTotal = (m.waypoints || []).length;
+    const acDone = (p.actions_done || []).length;
+    const acTotal = (m.actions || []).length;
+    const coef = Math.round((p.coefficient ?? 1) * 100);
+    let text = `⭐ ${stars}  ·  точки ${wpDone}/${wpTotal}`;
+    if (acTotal) text += `  ·  действия ${acDone}/${acTotal}`;
+    text += `  ·  коэф ${coef}%`;
+    if (!p.in_margin && p.in_margin !== undefined) text += '  ·  ⚠ отклонение';
+
+    ctx.save();
+    ctx.font = 'bold 12px sans-serif';
+    const w = ctx.measureText(text).width + 18;
+    const h = 22;
+    const x = (this._cssW - w) / 2;
+    const y = 8;
+    ctx.fillStyle = 'rgba(13, 17, 23, 0.88)';
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = (p.complete) ? '#2ea043'
+                    : (!p.in_margin && p.in_margin !== undefined) ? '#f85149'
+                    : '#30363d';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x, y, w, h);
+    ctx.fillStyle = '#c9d1d9';
+    ctx.fillText(text, x + 9, y + 15);
+    ctx.restore();
   }
 
   _drawLights() {

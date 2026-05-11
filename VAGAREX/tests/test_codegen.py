@@ -28,7 +28,7 @@ from session import UserSession, UserCfg, RobotCmd  # noqa: E402
 def _make_cfg() -> UserCfg:
     return UserCfg(
         rex_host="127.0.0.1", rex_port=8765, simulation_mode=True,
-        move_speed=40, turn_angle=35, wheel_circ_cm=28.30,
+        move_speed=40, turn_angle=36, wheel_circ_cm=28.30,
         speed_at_100=80.0, heading_per_rot=25.0, turn_speed_ref=40,
         world_w_cm=400, world_h_cm=400, wall_thickness_cm=5.0,
         robot_length_cm=20.0, robot_width_cm=12.0,
@@ -86,7 +86,7 @@ class TestHelperRegistry(unittest.TestCase):
         # Подставим заглушки констант, чтобы ast.parse прошёл
         prologue = (
             "import math, time\n"
-            "DEFAULT_SPEED=40; DEFAULT_TURN_ANGLE=35\n"
+            "DEFAULT_SPEED=40; DEFAULT_TURN_ANGLE=36\n"
             "SPEED_CM_PER_S_AT_100=80.0; WHEEL_CIRC_CM=28.3\n"
             "HEADING_DEG_PER_ROT=25.0; ROBOT_LENGTH_CM=20.0\n"
             "START_X=0; START_Y=100; START_HEADING_DEG=0\n"

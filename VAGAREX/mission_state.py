@@ -84,6 +84,9 @@ class ActiveMission:
     safety_margin_cm: float
     start_x:          float
     start_y:          float
+    # Полная траектория для визуализации (плотный сэмпл, включая криволинейные
+    # участки у кастомных миссий). [] = клиент использует ломаную start→waypoints.
+    path:             list[tuple[float, float]] = field(default_factory=list)
     title:            str = ""
     description:      str = ""
     level:            int = 1
@@ -183,6 +186,7 @@ class ActiveMission:
             "description":  self.description,
             "level":        self.level,
             "waypoints":    [list(p) for p in self.waypoints],
+            "path":         [list(p) for p in self.path],
             "danger_zones": [list(z) for z in self.danger_zones],
             "actions":      list(self.actions_required),
             "safety_margin_cm": self.safety_margin_cm,
@@ -211,6 +215,11 @@ def from_mission_row(mission_row, user_id: int,
     waypoints = [tuple(p) for p in json.loads(mission_row.waypoints or "[]")]
     danger    = [tuple(z) for z in json.loads(mission_row.danger_zones or "[]")]
     actions   = json.loads(mission_row.actions_required or "[]")
+    # path — полная плотная траектория для серого пунктира на canvas.
+    # У старых миссий поле может отсутствовать → пустой список,
+    # клиент тогда отрисует ломаную start→waypoints как fallback.
+    path_raw  = getattr(mission_row, "path", None) or "[]"
+    path      = [tuple(p) for p in json.loads(path_raw)]
     return ActiveMission(
         mission_id       = mission_row.id,
         run_id           = run_id,
@@ -219,6 +228,7 @@ def from_mission_row(mission_row, user_id: int,
         description      = mission_row.description or "",
         level            = int(mission_row.level or 1),
         waypoints        = waypoints,
+        path             = path,
         danger_zones     = danger,
         actions_required = actions,
         safety_margin_cm = float(mission_row.safety_margin_cm or 5.0),
