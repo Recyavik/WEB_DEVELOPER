@@ -1428,6 +1428,47 @@ body { padding-bottom: 22px; }
   border-radius: 50%; font-weight: 700; font-size: 0.7rem; color: #fff;
 }
 .chip--lvl-0 .chip__lvlnum { background: #8b5cf6; font-size: 0.65rem; }
+
+/* ── Переключатель публикации миссии (toggle-switch) ───────────────── */
+/* Использует hidden checkbox + кастомный slider, чтобы видеть состояние
+   мгновенно без перезагрузки. Сидит в .mission-card__actions рядом с
+   обычными .btn-кнопками — поэтому выровнен по геометрии. */
+.pub-switch {
+  display: inline-flex; align-items: center; gap: 0.45rem;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg-panel); cursor: pointer;
+  font-size: 0.8rem; color: var(--text-dim);
+  user-select: none;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.pub-switch:hover { background: rgba(255,255,255,0.04); }
+.pub-switch input[type=checkbox] {
+  position: absolute; opacity: 0; pointer-events: none;
+}
+.pub-switch__slider {
+  position: relative;
+  width: 28px; height: 16px;
+  background: #30363d; border-radius: 10px;
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+.pub-switch__slider::before {
+  content: ''; position: absolute;
+  width: 12px; height: 12px; top: 2px; left: 2px;
+  background: #c9d1d9; border-radius: 50%;
+  transition: transform 0.18s;
+}
+.pub-switch input:checked + .pub-switch__slider {
+  background: var(--success);
+}
+.pub-switch input:checked + .pub-switch__slider::before {
+  transform: translateX(12px);
+  background: #fff;
+}
+.pub-switch input:checked ~ .pub-switch__txt {
+  color: var(--success); font-weight: 600;
+}
 .chip--lvl-1 .chip__lvlnum { background: #2ea043; }
 .chip--lvl-2 .chip__lvlnum { background: #58a6ff; }
 .chip--lvl-3 .chip__lvlnum { background: #d4a017; }

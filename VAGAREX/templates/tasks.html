@@ -158,7 +158,6 @@
           <p class="mission-card__owner">
             {% if is_mine %}
               👤 Моя миссия
-              {% if m.published %}<span class="mission-card__pubbadge" title="Опубликована, видна другим">📤 опубликована</span>{% endif %}
             {% else %}
               🌐 Опубликовал {{ m.owner.username if m.owner else '—' }}
             {% endif %}
@@ -169,15 +168,18 @@
             <button class="btn btn--sm js-view-mission" data-id="{{ m.id }}"
                     title="Открыть карту и описание миссии">👁 Просмотр</button>
             {% if is_mine %}
-              {# Свои миссии: публиковать/снимать + удалять. #}
-              <button class="btn btn--sm js-publish-toggle" data-id="{{ m.id }}">
-                {% if m.published %}🚫 Снять с публикации{% else %}📤 Опубликовать{% endif %}
-              </button>
+              {# Свои миссии: переключатель публикации + удалить. #}
+              <label class="pub-switch" title="Публиковать в общем каталоге">
+                <input type="checkbox" class="js-publish-toggle" data-id="{{ m.id }}"
+                       {% if m.published %}checked{% endif %}>
+                <span class="pub-switch__slider"></span>
+                <span class="pub-switch__txt">Публикация</span>
+              </label>
               <button class="btn btn--sm js-delete-mission" data-id="{{ m.id }}">🗑 Удалить</button>
             {% elif current_user.is_admin %}
               {# Админ-модерация чужих опубликованных миссий. #}
               {% if m.published %}
-              <button class="btn btn--sm js-publish-toggle" data-id="{{ m.id }}"
+              <button class="btn btn--sm js-publish-toggle-btn" data-id="{{ m.id }}"
                       title="Админ: снять чужую миссию с публикации">🛡 Снять с публикации</button>
               {% endif %}
               <button class="btn btn--sm js-delete-mission" data-id="{{ m.id }}"
@@ -473,11 +475,15 @@
   document.getElementById('btn-preview-publish')?.addEventListener('click',
     async () => {
       if (!_previewMissionId) return;
+      const btn = document.getElementById('btn-preview-publish');
       const r = await fetch('/missions/' + _previewMissionId + '/publish',
                             {method:'POST'});
       if (!r.ok) { flash('Ошибка публикации: HTTP ' + r.status, 'err'); return; }
       const d = await r.json();
       _catalogStale = true;
+      // Меняем надпись и стиль кнопки сразу — без reload.
+      btn.textContent = d.published ? '🚫 Снять с публикации' : '📤 Опубликовать';
+      btn.classList.toggle('btn--success', d.published);
       flash(d.published
         ? `✓ Миссия #${_previewMissionId} опубликована — видна другим.`
         : `↺ Миссия #${_previewMissionId} снята с публикации.`,
@@ -526,12 +532,42 @@
     });
   });
 
-  // ── Catalog: publish/delete buttons (для своих карточек) ────────────
-  document.querySelectorAll('.js-publish-toggle').forEach(btn => {
+  // ── Catalog: переключатель публикации (для своих) ──────────────────
+  // Чекбокс: меняется визуально мгновенно, на error — откатываемся.
+  document.querySelectorAll('.js-publish-toggle').forEach(input => {
+    input.addEventListener('change', async () => {
+      const id = input.dataset.id;
+      const desired = input.checked;
+      const r = await fetch('/missions/' + id + '/publish', {method:'POST'});
+      if (!r.ok) {
+        input.checked = !desired;       // откатить визуальное состояние
+        flash(`Ошибка переключения публикации: HTTP ${r.status}`, 'err');
+        return;
+      }
+      const d = await r.json();
+      input.checked = !!d.published;    // синхронизируем с реальным результатом
+      _catalogStale = true;
+      flash(d.published
+        ? `✓ Миссия #${id} опубликована — видна другим.`
+        : `↺ Миссия #${id} снята с публикации.`,
+        d.published ? 'ok' : 'info');
+    });
+  });
+  // Админ-кнопка снятия с публикации (на чужих картах) — обычная кнопка.
+  document.querySelectorAll('.js-publish-toggle-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
       const id = btn.dataset.id;
       const r = await fetch('/missions/' + id + '/publish', {method:'POST'});
-      if (r.ok) location.reload();
+      if (!r.ok) { flash(`Ошибка: HTTP ${r.status}`, 'err'); return; }
+      const d = await r.json();
+      _catalogStale = true;
+      flash(d.published
+        ? `✓ Миссия #${id} опубликована.`
+        : `🛡 Миссия #${id} снята с публикации (админ).`,
+        d.published ? 'ok' : 'info');
+      // Если миссия теперь не опубликована — у админа эта кнопка должна
+      // исчезнуть из чужой карточки. Уберём её локально (до reload).
+      if (!d.published) btn.remove();
     });
   });
   document.querySelectorAll('.js-delete-mission').forEach(btn => {
@@ -539,7 +575,12 @@
       const id = btn.dataset.id;
       if (!confirm('Удалить миссию?')) return;
       const r = await fetch('/missions/' + id, {method:'DELETE'});
-      if (r.ok) location.reload();
+      if (!r.ok) { flash(`Ошибка удаления: HTTP ${r.status}`, 'err'); return; }
+      _catalogStale = true;
+      bumpCatalogCount(-1);
+      // Удалим карточку из DOM сразу, без reload.
+      btn.closest('.js-mission-card')?.remove();
+      flash(`🗑 Миссия #${id} удалена.`);
     });
   });
 
