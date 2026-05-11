@@ -760,30 +760,25 @@ async def missions_save_custom(request: Request,
     # Снимок состояния симулятора.
     import math as _math
 
-    # Контрольные точки (НЕ включают старт — старт показан зелёной
-    # меткой отдельно). Гибридный сбор:
-    #   1) Endpoints исполненных команд движения (где робот оказался)
-    #   2) Сэмпл path_history с шагом 80см — на случай замкнутых
-    #      маршрутов, где endpoints совпадают со стартом.
-    # Дедуп подряд идущих точек в пределах 10см. Точки слишком близко
-    # к старту (< 10см) не считаем — это просто проход через начало.
+    # Контрольные точки = endpoints исполненных команд движения,
+    # т.е. начало/конец каждого манёвра. НЕ сэмплируем path_history
+    # (это даёт промежуточные точки внутри одного манёвра — пользова-
+    # тель не хочет такого «дробления»).
+    # Старт исключаем (отображается зелёной меткой отдельно).
+    # Дедуп подряд идущих точек в пределах 1см: face_*/kturn/etc.
+    # возвращают робота туда же — не плодим лишних маркеров.
+    # Для замкнутых маршрутов (circle/spiral) endpoints = start →
+    # waypoints оказывается пустым, описание явно укажет «замкнутый».
     raw_path_full = list(sess.world.path_history or [])
     start_x = round(float(sess.cfg.start_x_cm), 1)
     start_y = round(float(sess.cfg.start_y_cm), 1)
-    candidates: list[list[float]] = []
-    for c in sess._program:
-        if c.end_x is not None and c.end_y is not None:
-            candidates.append([c.end_x, c.end_y])
-    if len(raw_path_full) > 1:
-        last = raw_path_full[0]
-        for x, y in raw_path_full[1:]:
-            if _math.hypot(x - last[0], y - last[1]) >= 80.0:
-                candidates.append([round(x, 1), round(y, 1)])
-                last = (x, y)
     waypoints: list[list[float]] = []
-    last_wp = [start_x, start_y]   # «предыдущая» = старт, чтобы дедупнуть точки у старта
-    for wp in candidates:
-        if _math.hypot(wp[0]-last_wp[0], wp[1]-last_wp[1]) < 10.0:
+    last_wp = [start_x, start_y]
+    for c in sess._program:
+        if c.end_x is None or c.end_y is None:
+            continue
+        wp = [c.end_x, c.end_y]
+        if _math.hypot(wp[0]-last_wp[0], wp[1]-last_wp[1]) < 1.0:
             continue
         waypoints.append(wp)
         last_wp = wp
