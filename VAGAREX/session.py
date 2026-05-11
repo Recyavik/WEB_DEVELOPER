@@ -2174,6 +2174,12 @@ class UserSession:
         s.cautious  = False
         s.thinking  = "idle"
         s.light_color = (0, 0, 0)
+        # Очищаем накопленную программу — после reset поле «как новое»,
+        # старые команды уже не отражают актуальное состояние робота.
+        # Replay (▶ Запуск) дёргает reset первым, потом дозаписывает
+        # выполняемые команды обратно в _program с актуальными end_x/y —
+        # тогда save_custom видит то, что только что выполнилось.
+        self._program = []
         await self.robot.stop()
         await self.robot.set_servo_center()
         if db:
@@ -3408,7 +3414,7 @@ odo = Odometry()    # глобальный экземпляр одометрии
                     # внезапного рестарта сервера. Зарядка переживает рестарты.
                     self._save_battery_pct()
 
-                if (success and not cmd.playback and not cmd.skip_record
+                if (success and not cmd.skip_record
                         and cmd.intent not in _NO_RECORD):
                     if cmd.intent != "reset":
                         # Снимок позиции робота ПОСЛЕ исполнения — для
@@ -3417,7 +3423,12 @@ odo = Odometry()    # глобальный экземпляр одометрии
                         cmd.end_y       = round(self.robot_state.y, 1)
                         cmd.end_heading = round(self.robot_state.heading, 1)
                         self._program.append(cmd)
-                        self._save_program()
+                        # Сохраняем _program в БД ТОЛЬКО для voice/manual:
+                        # replay (playback=True) не должен переписывать
+                        # сохранённую программу — у неё уже есть свой
+                        # источник истины (textarea/_program до replay).
+                        if not cmd.playback:
+                            self._save_program()
                     # push_program НЕ вызываем — textarea наполняется
                     # через message.code (см. _dispatch). Иначе — двойная
                     # отправка и перезатирание накопленного.
