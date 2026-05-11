@@ -246,7 +246,7 @@ def _format_description(level: int, waypoints: list[list[float]],
             parts.append(f"❌ Удалите все опасные зоны ({d_count} шт).")
         if a_count:
             parts.append(f"❌ Удалите зоны внимания ({a_count} шт).")
-    parts.append("⭐ Звёзды = (точки + действия) × коэффициент точности маршрута.")
+    parts.append("⭐ За правильно выполненное задание вы получите звёзды.")
     return "\n".join(parts)
 
 
