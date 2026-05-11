@@ -520,7 +520,7 @@
       // Кнопка «▶ Пройти» доступна всем (для опубликованных миссий).
       document.getElementById('btn-preview-publish').style.display = data.is_mine ? '' : 'none';
       document.getElementById('btn-preview-delete').style.display  = data.is_mine ? '' : 'none';
-      if (selector) selector.style.display = 'none';
+      hideTabContent();
       previewBox.style.display = '';
       previewBox.scrollIntoView({behavior: 'smooth', block: 'start'});
     });
