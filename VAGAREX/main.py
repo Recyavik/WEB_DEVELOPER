@@ -634,6 +634,39 @@ async def missions_delete(mission_id: int,
     return JSONResponse({"ok": True})
 
 
+@app.post("/missions/{mission_id}/start")
+async def missions_start(mission_id: int,
+                         db: Session = Depends(get_db),
+                         current_user: User = Depends(require_user)):
+    """Активировать миссию для текущей сессии пользователя.
+    Доступ: своя миссия ИЛИ опубликованная другим."""
+    m = db.query(Mission).filter(Mission.id == mission_id).first()
+    if m is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    if m.owner_id != current_user.id and not m.published:
+        return JSONResponse({"error": "not accessible"}, status_code=403)
+    sess = get_session(current_user.id)
+    if sess is None:
+        return JSONResponse({"error": "no active session"}, status_code=400)
+    ok = await sess.start_mission(mission_id)
+    if not ok:
+        return JSONResponse({"error": "could not start"}, status_code=500)
+    return JSONResponse({"ok": True, "mission_id": mission_id})
+
+
+@app.post("/missions/active/stop")
+async def missions_stop_active(current_user: User = Depends(require_user)):
+    """Завершить текущую активную миссию (по требованию пользователя).
+    Незавершённая миссия не получает звёзд."""
+    sess = get_session(current_user.id)
+    if sess is None:
+        return JSONResponse({"error": "no active session"}, status_code=400)
+    if sess._mission is None:
+        return JSONResponse({"ok": True, "was_active": False})
+    await sess.stop_mission(success=False)
+    return JSONResponse({"ok": True, "was_active": True})
+
+
 @app.get("/missions", response_class=HTMLResponse)
 async def missions_page(request: Request, db: Session = Depends(get_db),
                         current_user: User = Depends(require_user)):

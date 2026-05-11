@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+import json
 import logging
 import math
 import re
@@ -170,6 +171,10 @@ class UserSession:
         self._queue_task:   Optional[asyncio.Task] = None
         self._db_session_id: Optional[int] = None
 
+        # Активная миссия пользователя (если есть). См. mission_state.py.
+        # None пока пользователь не нажал «Пройти» на какой-либо миссии.
+        self._mission = None
+
     # ── Жизненный цикл ─────────────────────────────────────────────────────────
 
     async def start(self):
@@ -242,6 +247,99 @@ class UserSession:
             finally:
                 db.close()
         log.info("[user %d] session stopped", self.user_id)
+
+    # ── Миссии ──────────────────────────────────────────────────────────
+
+    async def start_mission(self, mission_id: int) -> bool:
+        """Активировать миссию для текущей сессии. Загружает миссию из
+        БД, создаёт MissionRun (started_at = now), кладёт в self._mission,
+        широковещает 'mission_active'. Возвращает True при успехе."""
+        from mission_state import from_mission_row
+        from models import Mission as MissionRow, MissionRun
+        db = SessionLocal()
+        try:
+            row = db.query(MissionRow).filter(MissionRow.id == mission_id).first()
+            if row is None:
+                await self.push_message(
+                    f"Миссия #{mission_id} не найдена.", "error")
+                return False
+            run = MissionRun(mission_id=row.id, user_id=self.user_id)
+            db.add(run); db.commit(); db.refresh(run)
+            self._mission = from_mission_row(
+                row, user_id=self.user_id,
+                start_x=self.robot_state.x, start_y=self.robot_state.y,
+                run_id=run.id,
+            )
+        finally:
+            db.close()
+        await self.push_message(
+            f"🎯 Миссия «{self._mission.title}» активирована. "
+            f"Точек: {len(self._mission.waypoints)}, "
+            f"действий: {len(self._mission.actions_required)}.",
+            "info")
+        await self.broadcast({
+            "type":    "mission_active",
+            "mission": self._mission.to_client_dict(),
+        })
+        await self.push_state()
+        return True
+
+    def _mission_check_action(self, action_type: str,
+                              x: float, y: float) -> None:
+        """Если идёт миссия — проверить, не удовлетворяет ли это действие
+        одному из обязательных actions_required (place/remove зон).
+        No-op если миссии нет."""
+        if self._mission is None:
+            return
+        idx = self._mission.try_match_action(action_type, x, y)
+        if idx is not None:
+            # Уведомим пользователя, что засчитали действие миссии.
+            done = len(self._mission.actions_done)
+            total = len(self._mission.actions_required)
+            asyncio.create_task(self.push_message(
+                f"✓ Действие миссии засчитано ({action_type}). "
+                f"Прогресс: {done}/{total}.",
+                "success"))
+
+    async def stop_mission(self, success: Optional[bool] = None) -> None:
+        """Завершить активную миссию. Сохраняет финальный MissionRun
+        с count'ами и звёздами. Если success не указан — определяется
+        по is_complete()."""
+        if self._mission is None:
+            return
+        from datetime import datetime
+        from models import MissionRun
+        m = self._mission
+        if success is None:
+            success = m.is_complete()
+        stars = m.compute_stars() if success else 0
+        if m.run_id is not None:
+            db = SessionLocal()
+            try:
+                run = db.query(MissionRun).filter(MissionRun.id == m.run_id).first()
+                if run:
+                    run.completed_at      = datetime.utcnow()
+                    run.stars             = stars
+                    run.coefficient       = round(m.coefficient, 4)
+                    run.deviations        = m.deviations
+                    run.waypoints_visited = json.dumps(sorted(m.waypoints_visited))
+                    run.actions_done      = json.dumps(sorted(m.actions_done))
+                    run.success           = bool(success)
+                    db.commit()
+            finally:
+                db.close()
+        await self.broadcast({
+            "type":    "mission_finished",
+            "success": bool(success),
+            "stars":   stars,
+            "coefficient": round(m.coefficient, 3),
+            "deviations":  m.deviations,
+        })
+        await self.push_message(
+            f"🏁 Миссия завершена: {'✓ успех' if success else '✗ не выполнена'}. "
+            f"⭐ {stars}, коэф. {m.coefficient:.2f}, отклонений: {m.deviations}.",
+            "success" if success else "warning")
+        self._mission = None
 
     def _load_user_state(self):
         """Загрузить программу и зоны опасности пользователя из БД."""
@@ -349,6 +447,13 @@ class UserSession:
             "lines": self._program_lines(),
             "text":  self._program_text(),
         })
+        # Если уже идёт миссия (например пользователь обновил страницу) —
+        # доставим её состояние новому подключению.
+        if self._mission is not None:
+            await ws.send_json({
+                "type":    "mission_active",
+                "mission": self._mission.to_client_dict(),
+            })
 
     def remove_ws(self, ws: WebSocket):
         if ws in self._connections:
@@ -420,11 +525,30 @@ class UserSession:
         return d
 
     async def push_state(self):
-        await self.broadcast({
+        # Mission tracking: на каждый push_state — обновляем коэффициент и
+        # отмечаем посещённые waypoints. Если миссия завершилась — авто-стоп.
+        mission_progress = None
+        if self._mission is not None:
+            s = self.robot_state
+            self._mission.update_coefficient(s.x, s.y)
+            new_visits = self._mission.mark_waypoint_visits(s.x, s.y)
+            for idx in new_visits:
+                wp = self._mission.waypoints[idx]
+                await self.push_message(
+                    f"✓ Точка {idx + 1} ({wp[0]:.0f}, {wp[1]:.0f}) посещена.",
+                    "success")
+            mission_progress = self._mission.progress_dict()
+            if self._mission.is_complete():
+                await self.stop_mission(success=True)
+                mission_progress = None
+        payload = {
             "type":  "state",
             "robot": self._state_dict_with_effective(),
             "path":  self.world.path_history,
-        })
+        }
+        if mission_progress is not None:
+            payload["mission_progress"] = mission_progress
+        await self.broadcast(payload)
 
     async def push_message(self, text: str, level: str = "info",
                            code: str = None, description: str = None):
@@ -3116,6 +3240,8 @@ odo = Odometry()    # глобальный экземпляр одометрии
                 await self._run_set_algorithm_zone(tx, ty, r, db)
                 msg = (f"Алгоритмическая зона установлена в ({tx:.0f}, {ty:.0f})"
                        + (f", радиус {r:.0f}." if r is not None else "."))
+                # Mission tracking: матч с обязательным place_attention
+                self._mission_check_action("place_attention", tx, ty)
         elif intent == "remove_danger_zone":
             # UI-удаление ОПАСНОЙ зоны мышью (⛯ Режим зон + ПКМ).
             # Не записывается в Python-код программы (это pre-flight чистка
@@ -3140,6 +3266,8 @@ odo = Odometry()    # глобальный экземпляр одометрии
                     # В любом случае remove_danger_zone не записывается в код:
                     # это UI-команда, а не runtime-действие алгоритма.
                     cmd.skip_record = True
+                    # Mission tracking: матч с обязательным remove_danger
+                    self._mission_check_action("remove_danger", tx, ty)
                 else:
                     msg, ok = (f"В точке ({tx:.0f}, {ty:.0f}) опасных зон "
                                f"не найдено."), False
@@ -3151,6 +3279,11 @@ odo = Odometry()    # глобальный экземпляр одометрии
             if n_removed > 0:
                 msg = (f"Удалено зон: {n_removed} "
                        f"в точке ({tx:.0f}, {ty:.0f}).")
+                # Mission: можем удалять и опасные, и зоны внимания.
+                # Пробуем оба типа — try_match_action ничего не сделает,
+                # если такого action нет в required.
+                self._mission_check_action("remove_danger", tx, ty)
+                self._mission_check_action("remove_attention", tx, ty)
             else:
                 # _run_remove_zone уже отправил конкретную причину
                 # (нет зон / робот не внутри) — здесь msg оставляем пустым.

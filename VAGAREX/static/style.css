@@ -1224,13 +1224,19 @@ body { padding-bottom: 22px; }
 }
 .level-card__num {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 28px; height: 28px;
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: 50%;
-  font-weight: 700; font-size: 0.9rem; color: var(--text);
+  width: 30px; height: 30px;
+  border: 1px solid transparent; border-radius: 50%;
+  font-weight: 700; font-size: 0.95rem; color: #fff;
+  flex-shrink: 0;
 }
+/* Цвет круга — по уровню сложности (теже цвета что у .mission-card__level) */
+.level-card__num--1 { background: #2ea043; }
+.level-card__num--2 { background: #58a6ff; }
+.level-card__num--3 { background: #d4a017; }
+.level-card__num--4 { background: #d28438; }
+.level-card__num--5 { background: #d2392f; }
 .level-card--selected .level-card__num {
-  background: var(--accent); color: #fff; border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--bg-card), 0 0 0 4px var(--accent);
 }
 .level-card__name { font-size: 0.92rem; font-weight: 600; color: var(--text); }
 .level-card__desc { font-size: 0.78rem; color: var(--text-dim);
