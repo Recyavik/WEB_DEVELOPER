@@ -760,27 +760,33 @@ async def missions_save_custom(request: Request,
     # Снимок состояния симулятора.
     import math as _math
 
-    # Контрольные точки = НАЧАЛО (стартовая позиция) + endpoints
-    # исполненных команд движения. Команды-повороты на месте (face_*,
-    # kturn) НЕ создают новой точки — позиция не меняется.
-    # Дублирующиеся waypoints в пределах 1см подряд сжимаются.
-    waypoints: list[list[float]] = []
-    start_wp = [round(float(sess.cfg.start_x_cm), 1),
-                round(float(sess.cfg.start_y_cm), 1)]
-    waypoints.append(start_wp)
-    last_wp = start_wp
+    # Контрольные точки (НЕ включают старт — старт показан зелёной
+    # меткой отдельно). Гибридный сбор:
+    #   1) Endpoints исполненных команд движения (где робот оказался)
+    #   2) Сэмпл path_history с шагом 80см — на случай замкнутых
+    #      маршрутов, где endpoints совпадают со стартом.
+    # Дедуп подряд идущих точек в пределах 10см. Точки слишком близко
+    # к старту (< 10см) не считаем — это просто проход через начало.
+    raw_path_full = list(sess.world.path_history or [])
+    start_x = round(float(sess.cfg.start_x_cm), 1)
+    start_y = round(float(sess.cfg.start_y_cm), 1)
+    candidates: list[list[float]] = []
     for c in sess._program:
-        if c.end_x is None or c.end_y is None:
-            continue
-        wp = [c.end_x, c.end_y]
-        if _math.hypot(wp[0]-last_wp[0], wp[1]-last_wp[1]) < 1.0:
+        if c.end_x is not None and c.end_y is not None:
+            candidates.append([c.end_x, c.end_y])
+    if len(raw_path_full) > 1:
+        last = raw_path_full[0]
+        for x, y in raw_path_full[1:]:
+            if _math.hypot(x - last[0], y - last[1]) >= 80.0:
+                candidates.append([round(x, 1), round(y, 1)])
+                last = (x, y)
+    waypoints: list[list[float]] = []
+    last_wp = [start_x, start_y]   # «предыдущая» = старт, чтобы дедупнуть точки у старта
+    for wp in candidates:
+        if _math.hypot(wp[0]-last_wp[0], wp[1]-last_wp[1]) < 10.0:
             continue
         waypoints.append(wp)
         last_wp = wp
-    # Если робот никуда не уехал (одна стартовая точка) — миссия
-    # пустая, waypoints не нужны.
-    if len(waypoints) == 1:
-        waypoints = []
 
     danger_zones = []
     actions_required = []
@@ -817,23 +823,26 @@ async def missions_save_custom(request: Request,
     safety_margin_cm = float(sess.cfg.wall_thickness_cm)
 
     # Описание = только ЦЕЛИ миссии: координаты контрольных точек, зоны.
-    # БЕЗ списка команд: путь должен подсказывать SVG-траектория, а
-    # пользователь сам выбирает манёвры (вперёд/повернуть/в точку и т.п.)
-    # для прохождения. Список команд (reference_voice/code) сохраняется
-    # на сервере как «эталонное решение» и доступен только админу.
+    # БЕЗ списка команд: путь подсказывает SVG-траектория, пользователь
+    # сам выбирает манёвры. reference_voice/code сохраняются на сервере
+    # как «эталонное решение» — доступны только админу через подсказку.
     desc_parts = ["Уровень: Кастомная (свободный режим)."]
     if waypoints:
-        wp_str = ", ".join(f"({int(x)}, {int(y)})" for x, y in waypoints[1:])
-        if wp_str:
-            desc_parts.append(
-                f"📍 Посетите контрольные точки (после старта): {wp_str}.")
-        else:
-            desc_parts.append("📍 Маршрут заканчивается в стартовой точке.")
+        wp_str = ", ".join(f"({int(x)}, {int(y)})" for x, y in waypoints)
+        desc_parts.append(
+            f"📍 Контрольные точки маршрута ({len(waypoints)} шт.): {wp_str}.")
+    elif raw_path_full and len(raw_path_full) > 1:
+        desc_parts.append(
+            "📍 Маршрут замкнутый — начинается и заканчивается в стартовой "
+            "точке. Следуйте по серому пунктиру.")
+    else:
+        desc_parts.append("📍 Маршрут не зафиксирован (робот не двигался).")
     if actions_required:
         zs = ", ".join(f"({a['x']:.0f}, {a['y']:.0f})" for a in actions_required)
         desc_parts.append(f"📌 Установите зоны внимания: {zs}.")
     if danger_zones:
-        desc_parts.append(f"⚠ Опасных зон на карте: {len(danger_zones)} шт.")
+        zs = ", ".join(f"({z[0]:.0f}, {z[1]:.0f})" for z in danger_zones)
+        desc_parts.append(f"⚠ Опасные зоны на карте ({len(danger_zones)} шт.): {zs}. Не задевайте.")
     desc_parts.append("⭐ За правильно выполненное задание вы получите звёзды.")
     description = "\n".join(desc_parts)
 
