@@ -1241,9 +1241,9 @@ body { padding-bottom: 22px; }
 .level-card--selected .level-card__num {
   box-shadow: 0 0 0 2px var(--bg-card), 0 0 0 3px var(--accent);
 }
-.level-card__name { font-size: 0.85rem; font-weight: 600; color: var(--text); }
-.level-card__desc { font-size: 0.72rem; color: var(--text-dim);
-                    line-height: 1.35; margin: 0; }
+.level-card__name { font-size: 1.05rem; font-weight: 600; color: var(--text); }
+.level-card__desc { font-size: 0.75rem; color: var(--text-dim);
+                    line-height: 1.4; margin: 0; }
 
 .generate-actions {
   margin-top: 0.6rem; padding-top: 0.5rem;
