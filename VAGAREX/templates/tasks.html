@@ -350,6 +350,8 @@
         titleInput.readOnly = true;
       }
       setPreviewState(true);                  // переключаем кнопки
+      // Свежесохранённая миссия по дефолту НЕ опубликована.
+      syncPreviewPublishButton(false);
       _catalogStale = true;
       bumpCatalogCount(+1);
       flash(`✓ Сохранено как #${data.id} «${data.title}». Доступна в Каталоге.`, 'ok');
@@ -383,6 +385,15 @@
     if (!cnt) return;
     cnt.textContent = (parseInt(cnt.textContent || '0', 10) + delta);
   }
+  // Синхронизация кнопки публикации в превью с реальным флагом.
+  // Используется и при открытии превью, и после toggle-запроса.
+  function syncPreviewPublishButton(published) {
+    const btn = document.getElementById('btn-preview-publish');
+    if (!btn) return;
+    btn.textContent = published ? '🚫 Снять с публикации' : '📤 Опубликовать';
+    btn.classList.toggle('btn--success', published);
+  }
+
   // Синхронизация data-published атрибута и checkbox-состояния карточки
   // в каталоге после toggle публикации (хоть из preview, хоть из самой
   // карточки). Вызывается с новым флагом published, ВЫЗЫВАЕТ
@@ -503,16 +514,12 @@
   document.getElementById('btn-preview-publish')?.addEventListener('click',
     async () => {
       if (!_previewMissionId) return;
-      const btn = document.getElementById('btn-preview-publish');
       const r = await fetch('/missions/' + _previewMissionId + '/publish',
                             {method:'POST'});
       if (!r.ok) { flash('Ошибка публикации: HTTP ' + r.status, 'err'); return; }
       const d = await r.json();
       _catalogStale = true;
-      // Меняем надпись и стиль кнопки сразу — без reload.
-      btn.textContent = d.published ? '🚫 Снять с публикации' : '📤 Опубликовать';
-      btn.classList.toggle('btn--success', d.published);
-      // Синхронизировать карточку в каталоге (если он уже отрендерен).
+      syncPreviewPublishButton(!!d.published);
       syncCardPublishedState(_previewMissionId, d.published);
       flash(d.published
         ? `✓ Миссия #${_previewMissionId} опубликована — видна другим.`
@@ -556,6 +563,9 @@
       // Кнопка «▶ Пройти» доступна всем (для опубликованных миссий).
       document.getElementById('btn-preview-publish').style.display = data.is_mine ? '' : 'none';
       document.getElementById('btn-preview-delete').style.display  = data.is_mine ? '' : 'none';
+      // Синхронизировать текст и стиль кнопки публикации с реальным
+      // состоянием published (полученным с сервера).
+      syncPreviewPublishButton(!!data.published);
       hideTabContent();
       previewBox.style.display = '';
       previewBox.scrollIntoView({behavior: 'smooth', block: 'start'});
