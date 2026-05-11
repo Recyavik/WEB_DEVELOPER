@@ -179,6 +179,31 @@ def _candidate_face_to(state: dict, g: WorldGeom, rng: random.Random):
     return new, f"Вега поверни на {deg}", f"face_cmd({deg})", path_seg
 
 
+def _candidate_goto(state: dict, g: WorldGeom, rng: random.Random):
+    """«Вега в точку X Y» — робот сам поворачивает и едет к цели.
+    Целевая точка случайная в безопасной зоне поля, не ближе 60см
+    от текущей позиции (иначе goto уйдёт в tolerance и не запишется
+    в код). Координаты округляются до 10см для читаемости."""
+    half_w = g.world_w_cm / 2.0
+    half_h = g.world_h_cm / 2.0
+    margin = _wall_clearance_cm(g)
+    for _ in range(20):
+        tx = round(rng.uniform(-half_w + margin, half_w - margin) / 10) * 10
+        ty = round(rng.uniform(-half_h + margin, half_h - margin) / 10) * 10
+        if math.hypot(tx - state["x"], ty - state["y"]) < 60:
+            continue
+        # Курс после goto — направление на цель.
+        new = {
+            "x": tx, "y": ty,
+            "heading": math.degrees(math.atan2(tx - state["x"],
+                                               ty - state["y"])) % 360.0,
+        }
+        path_seg = _interpolate_straight(state, new)
+        return (new, f"Вега в точку {tx:g} {ty:g}",
+                f"goto_cmd({tx:g}, {ty:g})", path_seg)
+    return None
+
+
 # ── Генератор уровня 1 ─────────────────────────────────────────────────────
 
 def _generate_level_1(geom: WorldGeom, rng: random.Random) -> dict:
@@ -210,6 +235,10 @@ def _generate_level_1(geom: WorldGeom, rng: random.Random) -> dict:
         else:
             full_path.extend(seg)
 
+    # Команды-кандидаты двух типов:
+    # 1) «turn + move» — отдельный поворот, потом forward/back
+    # 2) «goto» — самодостаточная команда (включает поворот к цели)
+    # Случайный выбор стиля каждую итерацию обеспечивает разнообразие.
     movement_candidates = [_candidate_forward, _candidate_back]
     turn_candidates     = [_candidate_face_cardinal, _candidate_face_to]
 
@@ -217,6 +246,22 @@ def _generate_level_1(geom: WorldGeom, rng: random.Random) -> dict:
     safety_iter = 0
     while waypoints_created < n_waypoints and safety_iter < 50:
         safety_iter += 1
+        # 1/3 шансов на goto, 2/3 — на turn+move
+        style = rng.choice(['turn_move', 'turn_move', 'goto'])
+
+        if style == 'goto':
+            result = _candidate_goto(state, geom, rng)
+            if result is None:
+                continue
+            state, voice, code, path_seg = result
+            voice_steps.append(voice)
+            code_steps.append(code)
+            _extend_path(path_seg)
+            waypoints.append([round(state["x"], 1), round(state["y"], 1)])
+            waypoints_created += 1
+            continue
+
+        # turn + move
         turn_fn = rng.choice(turn_candidates)
         result = turn_fn(state, geom, rng)
         if result is None:
