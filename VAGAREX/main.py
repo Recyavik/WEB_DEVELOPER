@@ -606,12 +606,27 @@ async def missions_generate(level: int = Form(...),
     })
 
 
+def _smallest_unused_mission_id(db: Session, max_attempts: int = 100) -> int:
+    """Минимальный целочисленный ID, не занятый ни одной миссией.
+    Если в БД [3, 5, 7] — вернёт 1. Если [1, 2, 3] — вернёт 4.
+    Это намеренное «переиспользование номеров»: пользователь много
+    генерирует и удаляет миссии, и ID не должен расти бесконечно."""
+    existing = {row[0] for row in db.query(Mission.id).all()}
+    n = 1
+    while n in existing and n < max_attempts + len(existing):
+        n += 1
+    return n
+
+
 @app.post("/missions/save")
 async def missions_save(request: Request,
                         db: Session = Depends(get_db),
                         current_user: User = Depends(require_user)):
     """Сохранить ранее сгенерированную миссию в БД. На вход — JSON
-    с полями миссии (как _save_payload из /missions/generate)."""
+    с полями миссии (как _save_payload из /missions/generate).
+    ID назначается как минимальный свободный (переиспользует
+    освободившиеся номера после удалений)."""
+    from sqlalchemy.exc import IntegrityError
     payload = await request.json()
     required = {"title", "description", "level", "waypoints",
                 "danger_zones", "actions_required",
@@ -620,21 +635,32 @@ async def missions_save(request: Request,
     if missing:
         return JSONResponse({"error": f"missing fields: {sorted(missing)}"},
                             status_code=400)
-    m = Mission(
-        owner_id=current_user.id,
-        title=payload["title"],
-        description=payload["description"],
-        level=int(payload["level"]),
-        waypoints=payload["waypoints"],
-        danger_zones=payload["danger_zones"],
-        actions_required=payload["actions_required"],
-        reference_voice=payload["reference_voice"],
-        reference_code=payload["reference_code"],
-        safety_margin_cm=float(payload["safety_margin_cm"]),
-        published=False,
-    )
-    db.add(m); db.commit(); db.refresh(m)
-    return JSONResponse({"id": m.id, "ok": True})
+
+    # До 3 попыток на случай гонки с другим юзером, который параллельно
+    # сохраняет миссию и забрал «наш» минимальный свободный id.
+    for attempt in range(3):
+        new_id = _smallest_unused_mission_id(db)
+        m = Mission(
+            id=new_id,
+            owner_id=current_user.id,
+            title=payload["title"],
+            description=payload["description"],
+            level=int(payload["level"]),
+            waypoints=payload["waypoints"],
+            danger_zones=payload["danger_zones"],
+            actions_required=payload["actions_required"],
+            reference_voice=payload["reference_voice"],
+            reference_code=payload["reference_code"],
+            safety_margin_cm=float(payload["safety_margin_cm"]),
+            published=False,
+        )
+        try:
+            db.add(m); db.commit(); db.refresh(m)
+            return JSONResponse({"id": m.id, "ok": True})
+        except IntegrityError:
+            db.rollback()
+            continue
+    return JSONResponse({"error": "id collision after retries"}, status_code=500)
 
 
 @app.post("/missions/{mission_id}/publish")
