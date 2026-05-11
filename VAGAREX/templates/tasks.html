@@ -12,15 +12,14 @@
 
 <div class="missions-page">
 
+  {% set my_count   = missions|selectattr('owner_id', 'equalto', current_user.id)|list|length %}
+  {% set pub_others = missions|rejectattr('owner_id', 'equalto', current_user.id)|list|length %}
   <nav class="tabs" role="tablist">
     <button class="tabs__btn tabs__btn--active" data-tab="generate" role="tab">
       ✨ Сгенерировать
     </button>
-    <button class="tabs__btn" data-tab="published" role="tab">
-      📚 Опубликованные <span class="tabs__count">{{ published|length }}</span>
-    </button>
-    <button class="tabs__btn" data-tab="mine" role="tab">
-      👤 Мои миссии <span class="tabs__count">{{ my_missions|length }}</span>
+    <button class="tabs__btn" data-tab="catalog" role="tab">
+      📋 Каталог <span class="tabs__count">{{ missions|length }}</span>
     </button>
   </nav>
 
@@ -94,66 +93,71 @@
   </section>
 
   {# ═══════════════════════════════════════════════════════════════════ #}
-  {# TAB: ОПУБЛИКОВАННЫЕ #}
+  {# TAB: КАТАЛОГ — мои + опубликованные другими, с фильтром и поиском #}
   {# ═══════════════════════════════════════════════════════════════════ #}
-  <section class="tab-panel" data-panel="published">
-    {% if published %}
-    <div class="missions-grid">
-      {% for m in published %}
-      <article class="mission-card">
-        <header class="mission-card__head">
-          <span class="mission-card__level mission-card__level--{{ m.level }}">{{ m.level }}</span>
-          <h3 class="mission-card__title">{{ m.title }}</h3>
-        </header>
-        <p class="mission-card__owner">👤 {{ m.owner.username }}</p>
-        <p class="mission-card__desc">{{ (m.description or '')[:150] }}{% if m.description and m.description|length > 150 %}…{% endif %}</p>
-        <div class="mission-card__actions">
-          <a href="/?mission={{ m.id }}" class="btn btn--primary btn--sm">▶ Пройти</a>
-        </div>
-      </article>
+  <section class="tab-panel" data-panel="catalog">
+    {% if missions %}
+    <div class="catalog-toolbar">
+      <div class="filter-chips" role="tablist" aria-label="Фильтр миссий">
+        <button class="chip chip--active" data-filter="all" role="tab">
+          Все <span class="chip__count">{{ missions|length }}</span>
+        </button>
+        <button class="chip" data-filter="mine" role="tab">
+          👤 Мои <span class="chip__count">{{ my_count }}</span>
+        </button>
+        <button class="chip" data-filter="others" role="tab">
+          🌐 Общие <span class="chip__count">{{ pub_others }}</span>
+        </button>
+      </div>
+      <div class="catalog-search">
+        <input type="search" id="catalog-search-input" class="settings-input"
+               placeholder="🔍 Поиск по ID или названию…"
+               autocomplete="off">
+      </div>
+    </div>
+    <div class="missions-grid" id="catalog-grid">
+      {% for m in missions %}
+        {% set is_mine = (m.owner_id == current_user.id) %}
+        <article class="mission-card js-mission-card"
+                 data-id="{{ m.id }}"
+                 data-mine="{{ '1' if is_mine else '0' }}"
+                 data-title="{{ m.title|lower }}"
+                 data-level="{{ m.level }}">
+          <header class="mission-card__head">
+            <span class="mission-card__level mission-card__level--{{ m.level }}"
+                  title="Уровень сложности">{{ m.level }}</span>
+            <h3 class="mission-card__title">{{ m.title }}</h3>
+            <span class="mission-card__id">#{{ m.id }}</span>
+          </header>
+          <p class="mission-card__owner">
+            {% if is_mine %}
+              👤 Моя миссия
+              {% if m.published %}<span class="mission-card__pubbadge" title="Опубликована, видна другим">📤 опубликована</span>{% endif %}
+            {% else %}
+              🌐 Опубликовал {{ m.owner.username if m.owner else '—' }}
+            {% endif %}
+          </p>
+          <p class="mission-card__desc">{{ (m.description or '')[:150] }}{% if m.description and m.description|length > 150 %}…{% endif %}</p>
+          <div class="mission-card__actions">
+            <a href="/?mission={{ m.id }}" class="btn btn--primary btn--sm">▶ Пройти</a>
+            {% if is_mine %}
+            <button class="btn btn--sm js-publish-toggle" data-id="{{ m.id }}">
+              {% if m.published %}🚫 Снять с публикации{% else %}📤 Опубликовать{% endif %}
+            </button>
+            <button class="btn btn--sm js-delete-mission" data-id="{{ m.id }}">🗑 Удалить</button>
+            {% endif %}
+          </div>
+        </article>
       {% endfor %}
     </div>
+    <p class="empty-hint" id="catalog-empty-hint" style="display:none">
+      По фильтру/поиску ничего не найдено.
+    </p>
     {% else %}
     <div class="card">
       <p class="empty-hint">
-        Пока нет опубликованных миссий от других пользователей.
-        Будьте первым — сгенерируйте и опубликуйте свою!
-      </p>
-    </div>
-    {% endif %}
-  </section>
-
-  {# ═══════════════════════════════════════════════════════════════════ #}
-  {# TAB: МОИ МИССИИ #}
-  {# ═══════════════════════════════════════════════════════════════════ #}
-  <section class="tab-panel" data-panel="mine">
-    {% if my_missions %}
-    <div class="missions-grid">
-      {% for m in my_missions %}
-      <article class="mission-card" data-mission-id="{{ m.id }}">
-        <header class="mission-card__head">
-          <span class="mission-card__level mission-card__level--{{ m.level }}">{{ m.level }}</span>
-          <h3 class="mission-card__title">{{ m.title }}</h3>
-          {% if m.published %}
-          <span class="badge badge--online" title="Опубликована">📤</span>
-          {% endif %}
-        </header>
-        <p class="mission-card__desc">{{ (m.description or '')[:150] }}{% if m.description and m.description|length > 150 %}…{% endif %}</p>
-        <div class="mission-card__actions">
-          <a href="/?mission={{ m.id }}" class="btn btn--primary btn--sm">▶ Пройти</a>
-          <button class="btn btn--sm js-publish-toggle" data-id="{{ m.id }}">
-            {% if m.published %}🚫 Снять{% else %}📤 Опубликовать{% endif %}
-          </button>
-          <button class="btn btn--sm js-delete-mission" data-id="{{ m.id }}">🗑 Удалить</button>
-        </div>
-      </article>
-      {% endfor %}
-    </div>
-    {% else %}
-    <div class="card">
-      <p class="empty-hint">
-        Вы пока не создали ни одной миссии. Перейдите на вкладку
-        «Сгенерировать», выберите уровень и нажмите «Сгенерировать».
+        Каталог пуст. Сгенерируйте свою миссию на вкладке «Сгенерировать»
+        или попросите кого-то опубликовать миссию для общего доступа.
       </p>
     </div>
     {% endif %}
@@ -377,7 +381,7 @@
       if (r.ok) closePreview();
     });
 
-  // ── Mine tab: publish/delete buttons ─────────────────────────────────
+  // ── Catalog: publish/delete buttons (для своих карточек) ────────────
   document.querySelectorAll('.js-publish-toggle').forEach(btn => {
     btn.addEventListener('click', async () => {
       const id = btn.dataset.id;
@@ -393,5 +397,41 @@
       if (r.ok) location.reload();
     });
   });
+
+  // ── Catalog: фильтр (Все / Мои / Общие) + поиск (ID / название) ─────
+  const catalogChips = document.querySelectorAll('.filter-chips .chip');
+  const catalogInput = document.getElementById('catalog-search-input');
+  const catalogCards = document.querySelectorAll('.js-mission-card');
+  const catalogHint  = document.getElementById('catalog-empty-hint');
+  let _filter = 'all';
+
+  function applyCatalogFilter() {
+    const q = (catalogInput?.value || '').trim().toLowerCase();
+    let visible = 0;
+    catalogCards.forEach(card => {
+      const isMine = card.dataset.mine === '1';
+      const ownerOk =
+        _filter === 'all'    ||
+        _filter === 'mine'   && isMine ||
+        _filter === 'others' && !isMine;
+      const searchOk = !q ||
+        card.dataset.title.includes(q) ||
+        ('#' + card.dataset.id) === q ||
+        card.dataset.id === q;
+      const show = ownerOk && searchOk;
+      card.style.display = show ? '' : 'none';
+      if (show) visible++;
+    });
+    if (catalogHint) catalogHint.style.display = visible ? 'none' : '';
+  }
+
+  catalogChips.forEach(chip => {
+    chip.addEventListener('click', () => {
+      catalogChips.forEach(c => c.classList.toggle('chip--active', c === chip));
+      _filter = chip.dataset.filter;
+      applyCatalogFilter();
+    });
+  });
+  catalogInput?.addEventListener('input', applyCatalogFilter);
 </script>
 {% endblock %}

@@ -533,18 +533,19 @@ async def maneuvers_docs(request: Request,
 @app.get("/tasks", response_class=HTMLResponse)
 async def tasks_page(request: Request, db: Session = Depends(get_db),
                      current_user: User = Depends(require_user)):
-    """Хаб миссий: 3 таба — «Сгенерировать», «Опубликованные», «Мои».
-    Запросы к БД — раздельно для своих и чужих опубликованных."""
-    my_missions = (db.query(Mission)
-                     .filter(Mission.owner_id == current_user.id)
-                     .order_by(Mission.created_at.desc()).all())
-    published = (db.query(Mission)
-                   .filter(Mission.published == True,
-                           Mission.owner_id != current_user.id)
-                   .order_by(Mission.created_at.desc()).all())
+    """Хаб миссий: 2 таба — «Сгенерировать» и «Каталог».
+    Каталог содержит МОИ миссии + ОПУБЛИКОВАННЫЕ другими в одном
+    списке с фильтрами (Все/Мои/Общие) и поиском по ID/названию.
+    """
+    from sqlalchemy import or_
+    rows = (db.query(Mission)
+              .filter(or_(
+                  Mission.owner_id == current_user.id,
+                  Mission.published == True,
+              ))
+              .order_by(Mission.created_at.desc()).all())
     return templates.TemplateResponse(request, "tasks.html", {
-        "my_missions":  my_missions,
-        "published":    published,
+        "missions":     rows,
         "current_user": current_user,
     })
 

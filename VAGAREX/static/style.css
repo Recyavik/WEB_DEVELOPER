@@ -1333,3 +1333,50 @@ body { padding-bottom: 22px; }
 .mission-card__level--3 { background: #d4a017; }   /* жёлтый */
 .mission-card__level--4 { background: #d28438; }   /* оранжевый */
 .mission-card__level--5 { background: #d2392f; }   /* красный */
+/* ID-чип в правом верхнем углу карточки */
+.mission-card__id {
+  font-family: monospace; font-size: 0.7rem; color: var(--text-dim);
+  padding: 1px 5px; background: var(--bg-panel); border-radius: 4px;
+  margin-left: auto;
+}
+/* Бейдж «опубликована» возле текста владельца */
+.mission-card__pubbadge {
+  font-size: 0.7rem; color: var(--success);
+  margin-left: 0.4rem; padding: 1px 6px;
+  background: rgba(46,160,67,0.10); border-radius: 4px;
+}
+
+/* ── Каталог: тулбар с фильтром и поиском ────────────────────────── */
+.catalog-toolbar {
+  display: flex; flex-wrap: wrap; gap: 0.6rem;
+  align-items: center; justify-content: space-between;
+  margin-bottom: 0.8rem;
+}
+.filter-chips { display: inline-flex; gap: 0.35rem; flex-wrap: wrap; }
+.chip {
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  padding: 0.32rem 0.7rem; font-size: 0.8rem; font-weight: 500;
+  background: var(--bg-panel); color: var(--text-dim);
+  border: 1px solid var(--border); border-radius: 14px;
+  cursor: pointer; font-family: inherit;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.chip:hover { color: var(--text); border-color: var(--text-dim); }
+.chip--active {
+  background: rgba(88,166,255,0.10);
+  color: var(--accent);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+.chip__count {
+  font-size: 0.68rem; padding: 0 5px; border-radius: 8px;
+  background: var(--border); color: var(--text-dim);
+  min-width: 18px; text-align: center;
+}
+.chip--active .chip__count { background: var(--accent); color: #fff; }
+
+.catalog-search { flex: 1; min-width: 200px; max-width: 360px; }
+.catalog-search .settings-input {
+  width: 100%; padding: 0.4rem 0.7rem;
+  font-size: 0.85rem;
+}
