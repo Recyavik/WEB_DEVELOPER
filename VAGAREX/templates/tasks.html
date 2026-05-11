@@ -370,9 +370,11 @@
       svg.appendChild(mk('line', {x1:-300, y1:v, x2:300, y2:v,
         stroke:'#1f2530', 'stroke-width':0.4}));
     }
-    // Контур игрового поля (для дефолтного 500×500). Тонкая белёсая рамка.
+    // Контур игрового поля (стены) — толстая светлая рамка, чтобы
+    // визуально читалась как «стенки» а не как сетка.
     svg.appendChild(mk('rect', {x:-250, y:-250, width:500, height:500,
-      fill:'none', stroke:'#3a4250', 'stroke-width':1}));
+      fill:'none', stroke:'#c9d1d9', 'stroke-width':4,
+      'stroke-linejoin':'round'}));
     // Оси (чуть ярче сетки)
     svg.appendChild(mk('line', {x1:0, y1:-300, x2:0, y2:300,
       stroke:'#30363d', 'stroke-width':0.8}));
