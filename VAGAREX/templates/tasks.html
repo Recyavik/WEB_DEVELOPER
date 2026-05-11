@@ -619,8 +619,23 @@
       if (!r.ok) { flash(`Ошибка удаления: HTTP ${r.status}`, 'err'); return; }
       _catalogStale = true;
       bumpCatalogCount(-1);
-      // Удалим карточку из DOM сразу, без reload.
-      btn.closest('.js-mission-card')?.remove();
+      // Узнаем мы или нет, чтобы корректно поправить chip-счётчики.
+      const card = btn.closest('.js-mission-card');
+      if (card) {
+        const wasMine      = card.dataset.mine === '1';
+        const wasPublished = card.dataset.published === '1';
+        if (wasMine)      bumpChipCount('mine',      -1);
+        if (wasPublished) bumpChipCount('published', -1);
+        // Также уменьшаем счётчик у chip уровня и у chip «Все».
+        const lvl = card.dataset.level;
+        const lvlChip = document.querySelector(
+          `.filter-chips--level .chip[data-level="${lvl}"] .chip__count`);
+        if (lvlChip) lvlChip.textContent = parseInt(lvlChip.textContent, 10) - 1;
+        bumpChipCount('all', -1);
+        card.remove();
+      }
+      // Пересчитать видимость и при необходимости показать пустое состояние.
+      applyCatalogFilter();
       flash(`🗑 Миссия #${id} удалена.`);
     });
   });
@@ -632,15 +647,17 @@
   const ownerChips   = document.querySelectorAll('.filter-chips:not(.filter-chips--level) .chip');
   const levelChips   = document.querySelectorAll('.filter-chips--level .chip');
   const catalogInput = document.getElementById('catalog-search-input');
-  const catalogCards = document.querySelectorAll('.js-mission-card');
   const catalogHint  = document.getElementById('catalog-empty-hint');
   let _ownerFilter = 'all';
   let _levelFilter = 'all';
 
   function applyCatalogFilter() {
+    // Каждый раз re-query: после удаления карточек NodeList был бы
+    // устаревшим (включал удалённые), а нам нужен текущий набор.
+    const cards = document.querySelectorAll('.js-mission-card');
     const q = (catalogInput?.value || '').trim().toLowerCase();
     let visible = 0;
-    catalogCards.forEach(card => {
+    cards.forEach(card => {
       const isMine      = card.dataset.mine === '1';
       const isPublished = card.dataset.published === '1';
       const lvl    = card.dataset.level;
@@ -657,7 +674,18 @@
       card.style.display = show ? '' : 'none';
       if (show) visible++;
     });
-    if (catalogHint) catalogHint.style.display = visible ? 'none' : '';
+    if (catalogHint) {
+      if (visible) {
+        catalogHint.style.display = 'none';
+      } else if (cards.length === 0) {
+        catalogHint.textContent =
+          'Каталог пуст. Сгенерируйте свою миссию или сохраните кастомную из «Управление».';
+        catalogHint.style.display = '';
+      } else {
+        catalogHint.textContent = 'По фильтру/поиску ничего не найдено.';
+        catalogHint.style.display = '';
+      }
+    }
   }
 
   ownerChips.forEach(chip => {
