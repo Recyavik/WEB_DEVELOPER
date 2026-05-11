@@ -377,6 +377,29 @@
     if (!cnt) return;
     cnt.textContent = (parseInt(cnt.textContent || '0', 10) + delta);
   }
+  function bumpChipCount(filterValue, delta) {
+    const cnt = document.querySelector(
+      `.filter-chips .chip[data-filter="${filterValue}"] .chip__count`);
+    if (!cnt) return;
+    cnt.textContent = (parseInt(cnt.textContent || '0', 10) + delta);
+  }
+  // Синхронизация data-published атрибута и checkbox-состояния карточки
+  // в каталоге после toggle публикации (хоть из preview, хоть из самой
+  // карточки). Вызывается с новым флагом published, ВЫЗЫВАЕТ
+  // applyCatalogFilter для пересчёта видимости и обновляет счётчик
+  // фильтра «Общие».
+  function syncCardPublishedState(missionId, published) {
+    const card = document.querySelector(
+      `.js-mission-card[data-id="${missionId}"]`);
+    if (!card) return;
+    const wasPublished = card.dataset.published === '1';
+    if (wasPublished === !!published) return;     // ничего не менялось
+    card.dataset.published = published ? '1' : '0';
+    const cb = card.querySelector('.js-publish-toggle');
+    if (cb) cb.checked = !!published;
+    bumpChipCount('published', published ? +1 : -1);
+    if (typeof applyCatalogFilter === 'function') applyCatalogFilter();
+  }
 
   document.getElementById('btn-preview-close')?.addEventListener('click', closePreview);
 
@@ -489,6 +512,8 @@
       // Меняем надпись и стиль кнопки сразу — без reload.
       btn.textContent = d.published ? '🚫 Снять с публикации' : '📤 Опубликовать';
       btn.classList.toggle('btn--success', d.published);
+      // Синхронизировать карточку в каталоге (если он уже отрендерен).
+      syncCardPublishedState(_previewMissionId, d.published);
       flash(d.published
         ? `✓ Миссия #${_previewMissionId} опубликована — видна другим.`
         : `↺ Миссия #${_previewMissionId} снята с публикации.`,
@@ -552,6 +577,8 @@
       const d = await r.json();
       input.checked = !!d.published;    // синхронизируем с реальным результатом
       _catalogStale = true;
+      // Обновить data-published, счётчик «Общие» и пересчитать фильтр.
+      syncCardPublishedState(id, d.published);
       flash(d.published
         ? `✓ Миссия #${id} опубликована — видна другим.`
         : `↺ Миссия #${id} снята с публикации.`,
@@ -566,12 +593,11 @@
       if (!r.ok) { flash(`Ошибка: HTTP ${r.status}`, 'err'); return; }
       const d = await r.json();
       _catalogStale = true;
+      syncCardPublishedState(id, d.published);
       flash(d.published
         ? `✓ Миссия #${id} опубликована.`
         : `🛡 Миссия #${id} снята с публикации (админ).`,
         d.published ? 'ok' : 'info');
-      // Если миссия теперь не опубликована — у админа эта кнопка должна
-      // исчезнуть из чужой карточки. Уберём её локально (до reload).
       if (!d.published) btn.remove();
     });
   });
