@@ -26,7 +26,7 @@ import config
 from auth import (hash_password, login_user, logout_user, require_admin,
                   require_user, verify_password)
 from database import Base, SessionLocal, engine, get_db
-from models import (AppSettings, CommandLog, DangerZone, Mission, MissionResult,
+from models import (AppSettings, CommandLog, DangerZone, Mission, MissionRun,
                     PathPoint, ProgramCommand, PublishedRoute, RobotSession,
                     SavedRoute, User, UserSettings)
 from session import (UserCfg, _ensure_user_settings, get_or_create_session,
@@ -42,14 +42,42 @@ log = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # ВАЖНО: дроп legacy-таблиц должен быть ДО create_all, чтобы новая
+    # схема Mission/MissionRun создалась с нуля (create_all не альтерит
+    # существующие таблицы).
+    _drop_legacy_missions()
     Base.metadata.create_all(bind=engine)
     _ensure_schema_migrations()
     _ensure_app_settings()
     _ensure_admin_exists()
-    _seed_missions()
     yield
     # При остановке — корректно гасим все сессии
     await stop_all_sessions()
+
+
+def _drop_legacy_missions():
+    """Одноразовая миграция: схема Mission/MissionResult полностью
+    переделана под систему сгенерированных миссий с траекторией, зонами
+    и звёздами. Проще всего дропнуть старые таблицы — пользовательские
+    данные в них не хранились (только три демо-миссии)."""
+    from sqlalchemy import inspect, text
+    insp = inspect(engine)
+    existing = set(insp.get_table_names())
+    legacy_signature_columns = {
+        # старая Mission имела target_x/target_y/time_limit/difficulty,
+        # новая — owner_id/level/waypoints/...
+        "missions": "target_x",
+    }
+    for table, marker in legacy_signature_columns.items():
+        if table not in existing:
+            continue
+        cols = {c["name"] for c in insp.get_columns(table)}
+        if marker in cols:
+            log.info("Dropping legacy %s table (incompatible schema)", table)
+            with engine.begin() as conn:
+                # mission_results имеет FK на missions — дропаем сначала зависимый
+                conn.execute(text("DROP TABLE IF EXISTS mission_results"))
+                conn.execute(text(f"DROP TABLE IF EXISTS {table}"))
 
 
 def _ensure_admin_exists():
@@ -121,25 +149,8 @@ def _ensure_app_settings():
         db.close()
 
 
-def _seed_missions():
-    db = SessionLocal()
-    try:
-        if db.query(Mission).count() == 0:
-            demos = [
-                Mission(title="Прямо к цели",
-                        description="Доедь до точки (100, 0) из начальной позиции без опасных зон.",
-                        target_x=100, target_y=0, time_limit=60, difficulty="easy"),
-                Mission(title="Объезд препятствий",
-                        description="Добраться до точки (150, 150), объезжая отмеченные зоны.",
-                        target_x=150, target_y=150, time_limit=120, difficulty="medium"),
-                Mission(title="Маршрут патрулирования",
-                        description="Пройти три контрольных точки: (50,50) → (150,50) → (150,150).",
-                        target_x=150, target_y=150, time_limit=300, difficulty="hard"),
-            ]
-            db.add_all(demos)
-            db.commit()
-    finally:
-        db.close()
+# _seed_missions удалён вместе со старой схемой — миссии теперь создают
+# пользователи через генератор на странице /tasks.
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -521,7 +532,10 @@ async def maneuvers_docs(request: Request,
 @app.get("/tasks", response_class=HTMLResponse)
 async def tasks_page(request: Request, db: Session = Depends(get_db),
                      current_user: User = Depends(require_user)):
-    missions = db.query(Mission).all()
+    """Хаб миссий. На текущем этапе показывает все миссии в БД, далее
+    разделим на табы «Сгенерировать / Опубликованные / Мои»."""
+    missions = (db.query(Mission)
+                  .order_by(Mission.created_at.desc()).all())
     return templates.TemplateResponse(request, "tasks.html", {
         "missions":     missions,
         "current_user": current_user,

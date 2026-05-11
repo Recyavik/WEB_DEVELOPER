@@ -200,29 +200,74 @@ class DangerZone(Base):
 
 
 class Mission(Base):
+    """Сгенерированная миссия для робота: траектория из waypoints, опасные
+    зоны, обязательные действия (поставить/удалить зоны), эталонное решение.
+    Создаётся пользователем (через генератор) и может быть опубликована
+    для прохождения другими."""
     __tablename__ = "missions"
 
     id          = Column(Integer, primary_key=True, index=True)
-    title       = Column(String(200))
-    description = Column(Text)
-    target_x    = Column(Float)
-    target_y    = Column(Float)
-    time_limit  = Column(Integer, default=300)
-    difficulty  = Column(String(20), default="easy")
-    created_at  = Column(DateTime, default=datetime.utcnow)
+    owner_id    = Column(Integer,
+                         ForeignKey("users.id", ondelete="CASCADE"),
+                         nullable=False, index=True)
+    title       = Column(String(200), nullable=False)
+    description = Column(Text, nullable=True)
+    level       = Column(Integer, nullable=False)        # 1..5
 
-    results = relationship("MissionResult", back_populates="mission", cascade="all, delete-orphan")
+    # Геометрия и цели — JSON-поля.
+    # waypoints: [[x, y], ...] — точки, которые надо посетить (в любом порядке).
+    # danger_zones: [[x, y, r], ...] — пред-расставленные опасные зоны
+    #               (рисуются красным, удаляются только по action_required).
+    # actions_required: [{type, x, y, r}, ...] — обязательные действия:
+    #   {"type": "place_attention", "x": ..., "y": ..., "r": ...}
+    #   {"type": "remove_danger",   "x": ..., "y": ...}
+    #   {"type": "remove_attention","x": ..., "y": ...}
+    waypoints        = Column(Text, nullable=False)
+    danger_zones     = Column(Text, nullable=False, default="[]")
+    actions_required = Column(Text, nullable=False, default="[]")
+
+    # Эталонное решение (видно админу как «подсказка»).
+    reference_voice = Column(Text, nullable=True)        # JSON: список голосовых фраз
+    reference_code  = Column(Text, nullable=True)        # готовый Python-код
+
+    # Снимок safety_margin на момент генерации — чтобы оценка была
+    # одинаковой у всех проходящих миссию, даже если глобальная настройка
+    # сменилась.
+    safety_margin_cm = Column(Float, nullable=False, default=5.0)
+
+    published   = Column(Boolean, default=False, nullable=False)
+    created_at  = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at  = Column(DateTime, default=datetime.utcnow,
+                         onupdate=datetime.utcnow, nullable=False)
+
+    owner = relationship("User", foreign_keys=[owner_id])
+    runs  = relationship("MissionRun",
+                         back_populates="mission",
+                         cascade="all, delete-orphan")
 
 
-class MissionResult(Base):
-    __tablename__ = "mission_results"
+class MissionRun(Base):
+    """Один прогон миссии пользователем. Записывается при завершении или
+    отмене. Хранит набранные звёзды, итоговый коэффициент точности
+    траектории, выполненные действия и посещённые точки."""
+    __tablename__ = "mission_runs"
 
-    id           = Column(Integer, primary_key=True, index=True)
-    mission_id   = Column(Integer, ForeignKey("missions.id", ondelete="CASCADE"))
-    completed_at = Column(DateTime, default=datetime.utcnow)
-    duration     = Column(Float)
-    success      = Column(Boolean)
-    score        = Column(Float)
-    notes        = Column(Text, nullable=True)
+    id            = Column(Integer, primary_key=True, index=True)
+    mission_id    = Column(Integer,
+                           ForeignKey("missions.id", ondelete="CASCADE"),
+                           nullable=False, index=True)
+    user_id       = Column(Integer,
+                           ForeignKey("users.id", ondelete="CASCADE"),
+                           nullable=False, index=True)
+    started_at    = Column(DateTime, default=datetime.utcnow, nullable=False)
+    completed_at  = Column(DateTime, nullable=True)
 
-    mission = relationship("Mission", back_populates="results")
+    stars             = Column(Integer, default=0, nullable=False)
+    coefficient       = Column(Float,   default=1.0, nullable=False)
+    deviations        = Column(Integer, default=0, nullable=False)
+    waypoints_visited = Column(Text,    default="[]", nullable=False)   # JSON: индексы
+    actions_done      = Column(Text,    default="[]", nullable=False)   # JSON: индексы
+    success           = Column(Boolean, default=False, nullable=False)
+
+    mission = relationship("Mission", back_populates="runs")
+    user    = relationship("User", foreign_keys=[user_id])
