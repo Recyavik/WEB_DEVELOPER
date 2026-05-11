@@ -63,6 +63,12 @@ class RobotCmd:
     # Используется для взаимного гашения «поставил → удалил» опасную зону:
     # обе команды пропадают из программы, как будто их и не было.
     skip_record: bool = False
+    # Позиция робота ПОСЛЕ исполнения команды. Заполняется в _dispatch.
+    # Используется при сохранении кастомной миссии: waypoints =
+    # endpoints команд движения (а не сэмплы path_history).
+    end_x:       Optional[float] = None
+    end_y:       Optional[float] = None
+    end_heading: Optional[float] = None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -3405,6 +3411,11 @@ odo = Odometry()    # глобальный экземпляр одометрии
                 if (success and not cmd.playback and not cmd.skip_record
                         and cmd.intent not in _NO_RECORD):
                     if cmd.intent != "reset":
+                        # Снимок позиции робота ПОСЛЕ исполнения — для
+                        # последующего сохранения кастомной миссии.
+                        cmd.end_x       = round(self.robot_state.x, 1)
+                        cmd.end_y       = round(self.robot_state.y, 1)
+                        cmd.end_heading = round(self.robot_state.heading, 1)
                         self._program.append(cmd)
                         self._save_program()
                     # push_program НЕ вызываем — textarea наполняется

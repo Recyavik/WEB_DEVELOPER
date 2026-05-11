@@ -752,27 +752,28 @@ async def missions_save_custom(request: Request,
 
     # Снимок состояния симулятора.
     import math as _math
-    s = sess.robot_state
 
-    # Сэмплируем path_history: один waypoint на каждые ~40см движения.
-    # Так получаем «опорные точки» вдоль реальной траектории, а не одну
-    # финальную позицию. Финальная точка добавляется отдельно, чтобы
-    # гарантировать её наличие.
-    raw_path = list(sess.world.path_history or [])
-    SAMPLE_DIST_CM = 40.0
+    # Контрольные точки = НАЧАЛО (стартовая позиция) + endpoints
+    # исполненных команд движения. Команды-повороты на месте (face_*,
+    # kturn) НЕ создают новой точки — позиция не меняется.
+    # Дублирующиеся waypoints в пределах 1см подряд сжимаются.
     waypoints: list[list[float]] = []
-    if raw_path:
-        last_x, last_y = raw_path[0]
-        # Стартовую точку (как правило 0,0) не включаем — это позиция робота
-        # ДО движения, не цель.
-        for x, y in raw_path[1:]:
-            if _math.hypot(x - last_x, y - last_y) >= SAMPLE_DIST_CM:
-                waypoints.append([round(x, 1), round(y, 1)])
-                last_x, last_y = x, y
-        # Гарантируем финальную точку
-        fx, fy = raw_path[-1]
-        if not waypoints or _math.hypot(fx - waypoints[-1][0], fy - waypoints[-1][1]) > 5.0:
-            waypoints.append([round(fx, 1), round(fy, 1)])
+    start_wp = [round(float(sess.cfg.start_x_cm), 1),
+                round(float(sess.cfg.start_y_cm), 1)]
+    waypoints.append(start_wp)
+    last_wp = start_wp
+    for c in sess._program:
+        if c.end_x is None or c.end_y is None:
+            continue
+        wp = [c.end_x, c.end_y]
+        if _math.hypot(wp[0]-last_wp[0], wp[1]-last_wp[1]) < 1.0:
+            continue
+        waypoints.append(wp)
+        last_wp = wp
+    # Если робот никуда не уехал (одна стартовая точка) — миссия
+    # пустая, waypoints не нужны.
+    if len(waypoints) == 1:
+        waypoints = []
 
     danger_zones = []
     actions_required = []
@@ -791,27 +792,23 @@ async def missions_save_custom(request: Request,
     reference_code  = sess._program_text() or ""
     safety_margin_cm = float(sess.cfg.wall_thickness_cm)
 
-    # Описание — отражает что именно сохранено.
-    path_len_cm = 0.0
-    if len(raw_path) >= 2:
-        path_len_cm = sum(
-            _math.hypot(raw_path[i+1][0]-raw_path[i][0],
-                        raw_path[i+1][1]-raw_path[i][1])
-            for i in range(len(raw_path)-1)
-        )
+    # Описание = сводка + список команд (для кастомной миссии — это
+    # ОК показывать, потому что её содержание определяется исполнением
+    # пользователя, а не «угадай как пройти»).
     desc_parts = ["Уровень: Кастомная (свободный режим)."]
     if waypoints:
-        desc_parts.append(
-            f"📍 Контрольных точек: {len(waypoints)} (вдоль траектории "
-            f"≈{path_len_cm:.0f} см). Посетите все по порядку или в "
-            f"любом порядке.")
-    else:
-        desc_parts.append("📍 Маршрут пуст — робот не двигался.")
+        desc_parts.append(f"📍 Контрольные точки маршрута: {len(waypoints)} шт.")
     if actions_required:
         zs = ", ".join(f"({a['x']:.0f}, {a['y']:.0f})" for a in actions_required)
         desc_parts.append(f"📌 Установите зоны внимания: {zs}.")
     if danger_zones:
-        desc_parts.append(f"⚠ Опасных зон на карте: {len(danger_zones)}.")
+        desc_parts.append(f"⚠ Опасных зон на карте: {len(danger_zones)} шт.")
+    if reference_voice:
+        desc_parts.append("")
+        desc_parts.append("📜 Список команд (как выполнялись):")
+        for i, phrase in enumerate(reference_voice, 1):
+            desc_parts.append(f"  {i}. {phrase}")
+    desc_parts.append("")
     desc_parts.append("⭐ За правильно выполненное задание вы получите звёзды.")
     description = "\n".join(desc_parts)
 
