@@ -536,7 +536,21 @@
         _catalogStale = true;
         bumpCatalogCount(-1);
         const id = _previewMissionId;
+        // Найти карточку в каталоге, обновить chip-счётчики и удалить.
+        const card = document.querySelector(
+          `.js-mission-card[data-id="${id}"]`);
+        if (card) {
+          if (card.dataset.mine === '1')      bumpChipCount('mine',      -1);
+          if (card.dataset.published === '1') bumpChipCount('published', -1);
+          const lvl = card.dataset.level;
+          const lvlChip = document.querySelector(
+            `.filter-chips--level .chip[data-level="${lvl}"] .chip__count`);
+          if (lvlChip) lvlChip.textContent = parseInt(lvlChip.textContent, 10) - 1;
+          bumpChipCount('all', -1);
+          card.remove();
+        }
         closePreview();
+        if (typeof applyCatalogFilter === 'function') applyCatalogFilter();
         flash(`🗑 Миссия #${id} удалена.`);
       }
     });
