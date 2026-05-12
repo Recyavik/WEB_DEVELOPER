@@ -537,6 +537,16 @@ async def maneuvers_docs(request: Request,
     })
 
 
+@app.get("/about", response_class=HTMLResponse)
+async def about_page(request: Request,
+                     current_user: User = Depends(require_user)):
+    """Страница «О программе» — описание проекта, целей, технологий,
+    автор. Версия подтягивается из шаблона (robot_version)."""
+    return templates.TemplateResponse(request, "about.html", {
+        "current_user": current_user,
+    })
+
+
 @app.get("/tasks", response_class=HTMLResponse)
 async def tasks_page(request: Request, db: Session = Depends(get_db),
                      current_user: User = Depends(require_user)):
@@ -584,6 +594,7 @@ def _build_user_geom(db: Session, current_user: User):
             start_x=float(settings.start_x_cm),
             start_y=float(settings.start_y_cm),
             start_heading=float(settings.start_heading_deg),
+            danger_zone_radius_cm=float(settings.danger_zone_radius),
         )
     return WorldGeom()
 

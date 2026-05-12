@@ -19,7 +19,28 @@ from mission_generator import (
     WorldGeom, generate_mission,
     _wall_clearance_cm, _inside_field,
     _format_description, _format_reference_code,
+    _min_dist_to_polyline,
+    _CARDINAL_HEADINGS, _angular_diff_deg,
+    _MIN_PATH_GAP_CM, _GRID_CELL_CM,
+    _dist_point_to_segment, _generate_trajectory,
 )  # noqa: E402
+import random as _random
+
+
+def _waypoint_headings_from_path(path):
+    """Вернуть курсы (в градусах) каждого сегмента path, в порядке появления."""
+    headings = []
+    for i in range(len(path) - 1):
+        dx = path[i + 1][0] - path[i][0]
+        dy = path[i + 1][1] - path[i][1]
+        if math.hypot(dx, dy) < 0.5:
+            continue
+        deg = math.degrees(math.atan2(dx, dy)) % 360.0
+        # Объединяем коллинеарные сегменты (атан и так выдаёт один курс).
+        if headings and abs(((deg - headings[-1] + 180) % 360) - 180) < 0.5:
+            continue
+        headings.append(deg)
+    return headings
 
 
 def _geom_default() -> WorldGeom:
@@ -140,8 +161,10 @@ class TestStartPoint(unittest.TestCase):
     """
 
     def test_path_starts_at_geom_start(self):
-        """Первая точка full_path == (start_x, start_y) для любого старта."""
-        for sx, sy in [(0, 0), (100, 50), (-150, 80), (200, -200)]:
+        """Первая точка full_path == (start_x, start_y) для любого старта,
+        снапнутого к узлу сетки 50×50 (уровень 1 выравнивает старт).
+        Используем стартовые координаты уже на сетке, чтобы snap был no-op."""
+        for sx, sy in [(0, 0), (100, 50), (-150, 100), (200, -200)]:
             with self.subTest(start=(sx, sy)):
                 g = WorldGeom(world_w_cm=600, world_h_cm=600,
                               robot_w_cm=12, robot_l_cm=20,
@@ -156,11 +179,24 @@ class TestStartPoint(unittest.TestCase):
                                        msg=f"path[0].y ≠ start_y для start=({sx},{sy})")
 
     def test_description_includes_offset_start_coords(self):
-        """🟢 Начало маршрута содержит фактические start_x/start_y, не (0,0)."""
-        g = WorldGeom(world_w_cm=600, world_h_cm=600, start_x=150, start_y=-80)
+        """🟢 Начало маршрута содержит фактические start_x/start_y, не (0,0).
+        Координаты выбраны на сетке 50×50 — snap старта на уровне 1 no-op."""
+        g = WorldGeom(world_w_cm=600, world_h_cm=600, start_x=150, start_y=-100)
         m = generate_mission(level=1, geom=g, seed=7)
-        self.assertIn("Начало маршрута (150, -80)", m["description"],
+        self.assertIn("Начало маршрута (150, -100)", m["description"],
                       f"описание не содержит start-координаты: {m['description']!r}")
+
+    def test_level_1_snaps_start_off_grid_to_nearest_node(self):
+        """Если в настройках старт не на сетке 50×50, уровень 1 снапит
+        его к ближайшему узлу — иначе waypoints не могут лежать на сетке."""
+        g = WorldGeom(world_w_cm=600, world_h_cm=600,
+                      start_x=158, start_y=-77)
+        m = generate_mission(level=1, geom=g, seed=7)
+        path = json.loads(m["path"])
+        # 158 → 150, -77 → -100 (ближайшие узлы 50-сетки)
+        self.assertAlmostEqual(path[0][0], 150, places=1)
+        self.assertAlmostEqual(path[0][1], -100, places=1)
+        self.assertIn("Начало маршрута (150, -100)", m["description"])
 
     def test_waypoints_reflect_start_offset(self):
         """С большим смещением старта waypoints НЕ должны кучковаться у нуля —
@@ -282,6 +318,313 @@ class TestReferenceCode(unittest.TestCase):
         # Каждый шаг — отдельная строка
         self.assertEqual(out.count("\n"), out.strip().count("\n") + 1,
                          "должен заканчиваться единственным переводом строки")
+
+
+class TestLevel1Grid(unittest.TestCase):
+    """Уровень 1: waypoints обязаны лежать в узлах сетки 50×50."""
+
+    def test_waypoints_on_grid_nodes(self):
+        for seed in range(40):
+            m = generate_mission(level=1, geom=_geom_default(), seed=seed)
+            wp = json.loads(m["waypoints"])
+            for (x, y) in wp:
+                with self.subTest(seed=seed, point=(x, y)):
+                    self.assertAlmostEqual(
+                        x, round(x / _GRID_CELL_CM) * _GRID_CELL_CM,
+                        places=1, msg=f"x={x} не на сетке {_GRID_CELL_CM}")
+                    self.assertAlmostEqual(
+                        y, round(y / _GRID_CELL_CM) * _GRID_CELL_CM,
+                        places=1, msg=f"y={y} не на сетке {_GRID_CELL_CM}")
+
+
+class TestCardinalHeadings(unittest.TestCase):
+    """Курсы сегментов траектории кратны заявленному шагу:
+        уровень 1 — 45° (8 направлений), уровень 2 — 15° (24 направления).
+
+    Допуск ~3° на накопление округлений (level 2 не снапит позицию,
+    после нескольких диагональных шагов state.x/y становятся
+    нецелыми, направление к следующей точке отклоняется на 1-3°)."""
+
+    def _check_segments_match_step(self, level, step_deg, tolerance_deg,
+                                     seeds=range(30)):
+        for seed in seeds:
+            g = _geom_default()
+            m = generate_mission(level=level, geom=g, seed=seed)
+            path = json.loads(m["path"])
+            for h in _waypoint_headings_from_path(path):
+                snapped = round(h / step_deg) * step_deg % 360
+                diff = _angular_diff_deg(h % 360, snapped)
+                with self.subTest(level=level, seed=seed, heading=h):
+                    self.assertLessEqual(diff, tolerance_deg,
+                        f"курс {h:.2f}° не кратен {step_deg}° "
+                        f"(ближайший {snapped}°, расхождение {diff:.2f}°, "
+                        f"seed={seed}, level={level})")
+
+    def test_level_1_all_segments_kr_45(self):
+        # Уровень 1 снапит позицию к сетке — все курсы точно кратны 45°.
+        self._check_segments_match_step(level=1, step_deg=45,
+                                          tolerance_deg=1.0)
+
+    def test_level_2_all_segments_kr_15(self):
+        # Уровень 2 округляет цели goto до 10 см, отсюда дрифт направления
+        # до ~5°. Это допустимое отклонение для человеко-читаемых
+        # координат «в точку 123 -45», робот всё равно движется ровно.
+        self._check_segments_match_step(level=2, step_deg=15,
+                                          tolerance_deg=5.0)
+
+
+class TestSmoothTurns(unittest.TestCase):
+    """Соседние курсы РОБОТА (heading) отличаются не более чем на 90° —
+    нет резких 135°/180°. Курс пути может реверсироваться 180° на команде
+    «назад» (это допустимо: heading не меняется, путь идёт в обратную
+    сторону); зеркальное наложение track-over-track ловится отдельно
+    тестом TestPathSelfClearance."""
+
+    def _check_smooth(self, align_to_grid, n_waypoints, heading_step_deg,
+                       seeds=range(30)):
+        g = _geom_default()
+        for seed in seeds:
+            traj = _generate_trajectory(n_waypoints, g, _random.Random(seed),
+                                         align_to_grid=align_to_grid,
+                                         heading_step_deg=heading_step_deg)
+            headings = traj["heading_steps"]
+            for i in range(1, len(headings)):
+                diff = _angular_diff_deg(headings[i], headings[i - 1])
+                with self.subTest(seed=seed, i=i,
+                                  a=headings[i - 1], b=headings[i]):
+                    self.assertLessEqual(diff, 90.5,
+                        f"резкая смена курса {diff:.1f}° между "
+                        f"{headings[i-1]:.0f}° → {headings[i]:.0f}° "
+                        f"(seed={seed})")
+
+    def test_level_1_no_sharp_turns(self):
+        self._check_smooth(align_to_grid=True, n_waypoints=3,
+                            heading_step_deg=45)
+
+    def test_level_2_no_sharp_turns(self):
+        self._check_smooth(align_to_grid=False, n_waypoints=5,
+                            heading_step_deg=15)
+
+
+class TestPathSelfClearance(unittest.TestCase):
+    """Параллельные/обратные прохождения траектории не должны проходить
+    ближе min_gap к ранее пройденному пути.
+
+    Проверяем на РАЗРЕЖЁННОМ списке вершин (vertices) — точки поворотов,
+    не дансная интерполяция. Иначе у плавного 90° поворота два дансных
+    суб-сегмента возле точки стыковки оказываются «близко» друг к другу
+    (рядом с общим узлом), это false positive."""
+
+    def _min_pair_distance_vertices(self, verts):
+        """Минимальное расстояние сэмпла одного сегмента до НЕпримыкающего
+        сегмента ломаной из vertices. Используем `_dist_to_segment_interior`
+        для adjacent — пропускаем близость у точки стыковки."""
+        if len(verts) < 4:
+            return float("inf")
+        best = float("inf")
+        n_seg = len(verts) - 1
+        for i in range(n_seg):
+            ax = verts[i][0]; ay = verts[i][1]
+            bx = verts[i + 1][0]; by = verts[i + 1][1]
+            for j in range(n_seg):
+                if abs(i - j) <= 1:
+                    continue
+                cx = verts[j][0]; cy = verts[j][1]
+                dx = verts[j + 1][0]; dy = verts[j + 1][1]
+                for t_idx in range(1, 5):
+                    t = t_idx / 5.0
+                    px = ax + (bx - ax) * t
+                    py = ay + (by - ay) * t
+                    d = _dist_point_to_segment(px, py, cx, cy, dx, dy)
+                    if d < best:
+                        best = d
+        return best
+
+    def _check(self, level, align_to_grid, n_waypoints, heading_step_deg):
+        g = _geom_default()
+        for seed in range(30):
+            traj = _generate_trajectory(n_waypoints, g, _random.Random(seed),
+                                         align_to_grid=align_to_grid,
+                                         heading_step_deg=heading_step_deg)
+            verts = traj["vertices"]
+            min_d = self._min_pair_distance_vertices(verts)
+            with self.subTest(seed=seed, level=level, verts=verts):
+                # 5 см допуск на округления, _MIN_PATH_GAP_CM = 30.
+                self.assertGreaterEqual(min_d, _MIN_PATH_GAP_CM - 5,
+                    f"seed={seed}: сегменты сближаются до {min_d:.1f} см "
+                    f"(требуется ≥ {_MIN_PATH_GAP_CM} см)")
+
+    def test_level_1_path_keeps_min_gap(self):
+        self._check(level=1, align_to_grid=True, n_waypoints=3,
+                     heading_step_deg=45)
+
+    def test_level_2_path_keeps_min_gap(self):
+        self._check(level=2, align_to_grid=False, n_waypoints=5,
+                     heading_step_deg=15)
+
+
+class TestLevel2Shape(unittest.TestCase):
+    """Структура сгенерированной миссии level 2.
+
+    По ТЗ: 4-5 waypoints, 1-2 опасные зоны. Никаких actions_required
+    (они появляются с уровня 3). Опасные зоны должны быть ВНЕ эталонной
+    траектории — иначе эталонное решение нельзя пройти без коллизий."""
+
+    def test_level_2_has_4_or_5_waypoints(self):
+        for seed in range(30):
+            with self.subTest(seed=seed):
+                m = generate_mission(level=2, geom=_geom_default(), seed=seed)
+                wp = json.loads(m["waypoints"])
+                self.assertGreaterEqual(len(wp), 4,
+                                        f"seed={seed}: меньше 4 точек ({len(wp)})")
+                self.assertLessEqual(len(wp), 5,
+                                     f"seed={seed}: больше 5 точек ({len(wp)})")
+
+    def test_level_2_has_2_danger_zones(self):
+        """Уровень 2 ВСЕГДА запрашивает ровно 2 зоны. На обычной геометрии
+        (500×500) обе должны разместиться на подавляющем большинстве
+        seed'ов; крайне редко на узком поле может получиться 1 зона —
+        это не критично, лимит сверху строго 2."""
+        zone_counts = []
+        for seed in range(30):
+            m = generate_mission(level=2, geom=_geom_default(), seed=seed)
+            zones = json.loads(m["danger_zones"])
+            self.assertLessEqual(len(zones), 2,
+                                  f"seed={seed}: больше 2 зон")
+            zone_counts.append(len(zones))
+        n_with_two = sum(1 for c in zone_counts if c == 2)
+        self.assertGreaterEqual(n_with_two, 25,
+                                f"только {n_with_two}/30 seed'ов дали 2 зоны")
+
+    def test_level_2_no_actions_required(self):
+        for seed in range(10):
+            m = generate_mission(level=2, seed=seed)
+            self.assertEqual(json.loads(m["actions_required"]), [],
+                              f"seed={seed}: actions_required не пуст")
+
+    def test_level_2_zones_use_settings_radius(self):
+        """Радиус зон берётся из geom.danger_zone_radius_cm."""
+        for r in (10.0, 15.0, 20.0):
+            g = WorldGeom(world_w_cm=500, world_h_cm=500,
+                          robot_w_cm=12, robot_l_cm=20,
+                          danger_zone_radius_cm=r)
+            for seed in range(5):
+                m = generate_mission(level=2, geom=g, seed=seed)
+                zones = json.loads(m["danger_zones"])
+                for z in zones:
+                    with self.subTest(seed=seed, radius_setting=r, zone=z):
+                        self.assertAlmostEqual(z[2], r, places=1,
+                                                msg=f"радиус зоны ≠ {r}: {z}")
+
+    def test_level_2_zones_close_to_trajectory(self):
+        """Зоны должны угрожать роботу: расстояние от траектории до
+        края зоны (= dist_to_path - zone_radius) не превышает
+        clearance + max_extra. Иначе зона стоит «где-то в углу» и
+        миссия проходится игнорируя её — не работает как препятствие."""
+        g = _geom_default()
+        half_robot = max(g.robot_w_cm, g.robot_l_cm) / 2.0
+        clearance = g.safety_margin_cm + half_robot
+        # Алгоритм: required = zone_radius + clearance, extra ∈ [0, 25].
+        # После округления координаты до 5 см возможно смещение до ~3.5 см
+        # (диагональ от центра ячейки). Допуск +5 см на округление.
+        max_dist_from_path_to_center = (
+            g.danger_zone_radius_cm + clearance + 25.0 + 5.0
+        )
+        for seed in range(30):
+            m = generate_mission(level=2, geom=g, seed=seed)
+            path = json.loads(m["path"])
+            for (zx, zy, zr) in json.loads(m["danger_zones"]):
+                d = _min_dist_to_polyline(zx, zy, path)
+                with self.subTest(seed=seed, zone=(zx, zy, zr)):
+                    self.assertLessEqual(
+                        d, max_dist_from_path_to_center,
+                        f"seed={seed}: зона ({zx},{zy}) слишком далеко от "
+                        f"траектории ({d:.1f} см) — не угрожает прохождению")
+
+    def test_level_2_zones_outside_reference_trajectory(self):
+        """Главное свойство уровня 2: эталонная траектория не должна
+        проходить через опасные зоны (с учётом safety + габаритов робота).
+
+        Допуск проверки: zone_radius + safety_margin + half_robot_dim."""
+        g = _geom_default()
+        half_robot = max(g.robot_w_cm, g.robot_l_cm) / 2.0
+        for seed in range(30):
+            m = generate_mission(level=2, geom=g, seed=seed)
+            zones = json.loads(m["danger_zones"])
+            path = json.loads(m["path"])
+            for (zx, zy, zr) in zones:
+                with self.subTest(seed=seed, zone=(zx, zy, zr)):
+                    d = _min_dist_to_polyline(zx, zy, path)
+                    required = zr + g.safety_margin_cm + half_robot
+                    self.assertGreaterEqual(
+                        d, required - 0.5,   # допуск 0.5см на округления
+                        f"seed={seed}: зона ({zx},{zy},{zr}) слишком близко "
+                        f"к траектории: {d:.1f} < требуется {required:.1f}")
+
+    def test_level_2_zones_not_on_start(self):
+        """Робот не должен начинать миссию ВНУТРИ опасной зоны."""
+        for seed in range(20):
+            g = _geom_default()
+            m = generate_mission(level=2, geom=g, seed=seed)
+            for (zx, zy, zr) in json.loads(m["danger_zones"]):
+                d = math.hypot(zx - g.start_x, zy - g.start_y)
+                with self.subTest(seed=seed):
+                    self.assertGreater(d, zr,
+                                       f"стартовая точка внутри зоны ({zx},{zy},{zr})")
+
+    def test_level_2_zones_inside_field(self):
+        """Зона целиком внутри игрового поля (с запасом стенки)."""
+        g = _geom_default()
+        half_w = g.world_w_cm / 2.0
+        half_h = g.world_h_cm / 2.0
+        for seed in range(20):
+            m = generate_mission(level=2, geom=g, seed=seed)
+            for (zx, zy, zr) in json.loads(m["danger_zones"]):
+                with self.subTest(seed=seed, zone=(zx, zy, zr)):
+                    self.assertGreaterEqual(zx - zr, -half_w + g.wall_thick_cm - 0.5)
+                    self.assertLessEqual(zx + zr,    half_w - g.wall_thick_cm + 0.5)
+                    self.assertGreaterEqual(zy - zr, -half_h + g.wall_thick_cm - 0.5)
+                    self.assertLessEqual(zy + zr,    half_h - g.wall_thick_cm + 0.5)
+
+    def test_level_2_zones_not_overlapping(self):
+        """Если зон две, они не пересекаются (визуально разнесены)."""
+        for seed in range(30):
+            m = generate_mission(level=2, geom=_geom_default(), seed=seed)
+            zones = json.loads(m["danger_zones"])
+            for i in range(len(zones)):
+                for j in range(i + 1, len(zones)):
+                    zx1, zy1, zr1 = zones[i]
+                    zx2, zy2, zr2 = zones[j]
+                    d = math.hypot(zx1 - zx2, zy1 - zy2)
+                    with self.subTest(seed=seed):
+                        self.assertGreater(d, zr1 + zr2,
+                                           f"зоны пересекаются: {zones[i]} vs {zones[j]}")
+
+    def test_level_2_description_includes_danger_block(self):
+        """Описание уровня 2, в котором есть зоны, должно содержать строку
+        «Опасные зоны на карте»."""
+        for seed in range(20):
+            m = generate_mission(level=2, geom=_geom_default(), seed=seed)
+            zones = json.loads(m["danger_zones"])
+            if not zones:
+                continue
+            self.assertIn("Опасные зоны на карте", m["description"],
+                           f"seed={seed}: блок с зонами отсутствует в описании")
+            for (zx, zy, _r) in zones:
+                self.assertIn(f"({int(zx)}, {int(zy)})", m["description"],
+                              f"seed={seed}: координата зоны не в описании")
+
+    def test_level_2_determinism(self):
+        a = generate_mission(level=2, seed=77)
+        b = generate_mission(level=2, seed=77)
+        self.assertEqual(a["waypoints"],   b["waypoints"])
+        self.assertEqual(a["danger_zones"], b["danger_zones"])
+        self.assertEqual(a["reference_voice"], b["reference_voice"])
+
+    def test_level_2_title_empty_level_field_set(self):
+        m = generate_mission(level=2, seed=1)
+        self.assertEqual(m["title"], "")
+        self.assertEqual(m["level"], 2)
 
 
 class TestGeomHelpers(unittest.TestCase):

@@ -39,6 +39,9 @@
     <a href="/missions" class="nav-link {% if request.url.path == '/missions' %}nav-link--active{% endif %}">
       🕘 История
     </a>
+    <a href="/about" class="nav-link {% if request.url.path == '/about' %}nav-link--active{% endif %}">
+      ℹ️ О программе
+    </a>
     {% if current_user and current_user.is_admin %}
     <a href="/admin" class="nav-link {% if request.url.path == '/admin' %}nav-link--active{% endif %}">
       🛡️ Админ

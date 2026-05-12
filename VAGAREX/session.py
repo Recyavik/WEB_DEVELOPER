@@ -330,6 +330,16 @@ class UserSession:
             self._save_program()
         finally:
             db.close()
+        # На миссиях с опасными зонами (уровень ≥ 2) форсим режим
+        # «осторожно». Проверка миссии должна выполняться в нём, и
+        # переключиться обратно нельзя до stop/finalize (см. handler
+        # mode_inspector).
+        if self._mission.danger_zones and not self.robot_state.cautious:
+            self.robot_state.cautious = True
+            await self.push_message(
+                "⚠ Миссия с опасными зонами — включён режим «осторожно». "
+                "До завершения миссии переключение режима недоступно.",
+                "info")
         await self.push_message(
             f"🎯 Миссия «{self._mission.title}» активирована. "
             f"Точек: {len(self._mission.waypoints)}, "
@@ -3510,11 +3520,25 @@ odo = Odometry()    # глобальный экземпляр одометрии
                 # (нет зон / робот не внутри) — здесь msg оставляем пустым.
                 msg, ok = "", False
         elif intent == "mode_inspector":
-            s.mode = "normal"; s.cautious = False
-            msg = "Режим инспектор."
+            # На миссиях с опасными зонами (уровень ≥ 2) режим зафиксирован
+            # на «осторожно» — пока миссия активна, переключаться нельзя.
+            if self._mission is not None and self._mission.danger_zones:
+                msg, ok = ("Во время миссии с опасными зонами режим "
+                           "переключать нельзя. Завершите или остановите "
+                           "миссию.", False)
+            else:
+                s.mode = "normal"; s.cautious = False
+                msg = "Режим инспектор."
         elif intent == "mode_cautious":
-            s.cautious = True
-            msg = "Режим осторожно."
+            # Симметричная блокировка: пока идёт миссия с опасными зонами,
+            # «осторожно» и так уже включён, явная команда — no-op.
+            if self._mission is not None and self._mission.danger_zones:
+                msg, ok = ("Во время миссии с опасными зонами режим "
+                           "переключать нельзя. Завершите или остановите "
+                           "миссию.", False)
+            else:
+                s.cautious = True
+                msg = "Режим осторожно."
         elif intent == "path_show":
             await self.broadcast({"type": "path_visible", "visible": True})
             msg = "Путь показан."

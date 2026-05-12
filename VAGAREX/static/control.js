@@ -149,6 +149,13 @@
           _clearLogPanel();
           showMissionButton(msg.mission);
           _startMissionTimer();
+          // Уровень ≥ 2 (опасные зоны) — режим зафиксирован «осторожно»
+          // на всё время миссии. Сервер тоже не даст переключиться.
+          const hasDanger = Array.isArray(msg.mission.danger_zones)
+                            && msg.mission.danger_zones.length > 0;
+          _setModeButtonsLocked(hasDanger,
+            'Режим зафиксирован миссией с опасными зонами. '
+            + 'Завершите или остановите миссию, чтобы переключиться.');
         }
         break;
 
@@ -162,6 +169,7 @@
         if (canvas) canvas.setMission(null);
         window._currentMission = null;
         hideMissionButton();
+        _setModeButtonsLocked(false);
         document.querySelectorAll('#cmd-log .log-task-card').forEach(card => {
           card.classList.add('log-task-card--finalized');
           card.querySelectorAll('button').forEach(b => { b.disabled = true; });
@@ -314,8 +322,29 @@
     }
     window._currentMission = null;
     hideMissionButton();
+    _setModeButtonsLocked(false);
     document.querySelectorAll('#cmd-log .log-task-card')
             .forEach(el => el.remove());
+  }
+
+  function _setModeButtonsLocked(locked, reason) {
+    // Блокирует кнопки «Инспектор» / «⚠ Осторожно» во время миссии
+    // с опасными зонами: переключаться нельзя до stop/finalize. Сервер
+    // тоже отвергает такой intent — это просто UX-индикация.
+    const btnInsp = document.getElementById('btn-mode-inspector');
+    const btnCaut = document.getElementById('btn-mode-cautious');
+    [btnInsp, btnCaut].forEach(b => {
+      if (!b) return;
+      b.disabled = !!locked;
+      b.classList.toggle('is-locked', !!locked);
+      if (locked) {
+        if (!b.dataset._titleOrig) b.dataset._titleOrig = b.title || '';
+        b.title = reason || 'Режим зафиксирован миссией';
+      } else if (b.dataset._titleOrig !== undefined) {
+        b.title = b.dataset._titleOrig;
+        delete b.dataset._titleOrig;
+      }
+    });
   }
 
   function _clearLogPanel() {

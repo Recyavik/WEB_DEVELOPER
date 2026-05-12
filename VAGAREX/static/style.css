@@ -132,6 +132,298 @@ body {
 }
 .help-card .btn:hover { opacity: 0.9; }
 
+/* ── Страница «О программе» ──────────────────────────────────────────
+   Композиция: hero сверху, ниже последовательность секций-карточек
+   с акцентной полосой слева (--sec-accent). Сетки tech/features/audience
+   адаптивные (auto-fit). Стиль перекликается с help-card, но это уже
+   контент-страница, не хаб, поэтому без grid 3-в-ряд по умолчанию. */
+.about-page {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0.4rem 0.6rem 2rem;
+  display: flex; flex-direction: column;
+  gap: 1.6rem;
+}
+
+/* Hero */
+.about-hero {
+  position: relative; overflow: hidden;
+  background:
+    radial-gradient(circle at 18% 20%, rgba(88,166,255,0.18) 0%, transparent 55%),
+    radial-gradient(circle at 82% 30%, rgba(163,113,247,0.18) 0%, transparent 55%),
+    linear-gradient(180deg, #1c2330 0%, #161b22 100%);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 2rem 2rem 1.8rem;
+  text-align: center;
+}
+.about-hero__badge {
+  display: inline-block;
+  padding: 0.25rem 0.8rem;
+  font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: 999px;
+  margin-bottom: 1rem;
+}
+.about-hero__title {
+  font-size: clamp(2.5rem, 6vw, 4rem);
+  font-weight: 800;
+  letter-spacing: -2px;
+  margin: 0.2rem 0 0.8rem;
+  line-height: 1;
+}
+.about-hero__title .brand-vega,
+.about-hero__title .brand-rex {
+  font-size: inherit;
+}
+.about-hero__tagline {
+  max-width: 720px;
+  margin: 0 auto 1.2rem;
+  font-size: 1.02rem;
+  color: var(--text-dim);
+  line-height: 1.55;
+}
+.about-hero__tagline strong { color: var(--text); }
+.about-hero__meta {
+  display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: center;
+  margin-top: 0.4rem;
+}
+.about-chip {
+  font-size: 0.74rem;
+  padding: 0.28rem 0.7rem;
+  border-radius: 999px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+.about-chip--accent {
+  background: color-mix(in srgb, var(--accent2) 18%, transparent);
+  border-color: color-mix(in srgb, var(--accent2) 45%, transparent);
+  color: var(--accent2);
+  font-weight: 600;
+}
+
+/* Секции */
+.about-section {
+  position: relative;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.5rem 1.6rem 1.4rem;
+  transition: border-color 0.18s, box-shadow 0.18s;
+}
+.about-section::before {
+  content: '';
+  position: absolute; left: 0; top: 18px; bottom: 18px;
+  width: 3px;
+  background: var(--sec-accent, var(--accent));
+  border-radius: 2px;
+}
+.about-section:hover {
+  border-color: color-mix(in srgb, var(--sec-accent, var(--accent)) 60%, var(--border));
+  box-shadow: 0 8px 24px rgba(0,0,0,0.30);
+}
+.about-section__head {
+  display: flex; align-items: center; gap: 0.8rem;
+  margin-bottom: 1rem;
+}
+.about-section__icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 42px; height: 42px;
+  font-size: 1.4rem; line-height: 1;
+  background: color-mix(in srgb, var(--sec-accent, var(--accent)) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sec-accent, var(--accent)) 35%, transparent);
+  border-radius: 10px;
+}
+.about-section__title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  margin: 0;
+}
+.about-section__body {
+  color: var(--text-dim);
+  font-size: 0.92rem;
+  line-height: 1.65;
+}
+.about-section__body p + p { margin-top: 0.7rem; }
+.about-section__body strong { color: var(--text); font-weight: 600; }
+
+.about-goal {
+  font-size: 1.02rem !important;
+  color: var(--text) !important;
+  padding: 0.8rem 1rem;
+  background: color-mix(in srgb, var(--sec-accent, var(--accent)) 8%, transparent);
+  border-left: 3px solid var(--sec-accent, var(--accent));
+  border-radius: 0 8px 8px 0;
+  margin-bottom: 1rem;
+}
+.about-list {
+  margin: 0; padding-left: 1.4rem;
+  display: flex; flex-direction: column; gap: 0.4rem;
+}
+.about-list li::marker { color: var(--sec-accent, var(--accent)); }
+
+/* Возможности — сетка плиток */
+.about-features {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1rem;
+}
+.about-feature {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.1rem 1.1rem 1rem;
+  transition: transform 0.18s ease, border-color 0.18s;
+}
+.about-feature:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--sec-accent, var(--accent)) 60%, var(--border));
+}
+.about-feature__icon {
+  font-size: 1.6rem;
+  margin-bottom: 0.5rem;
+}
+.about-feature h3 {
+  font-size: 0.98rem;
+  font-weight: 700;
+  margin: 0 0 0.4rem;
+  color: var(--text);
+}
+.about-feature p {
+  font-size: 0.83rem;
+  line-height: 1.5;
+  color: var(--text-dim);
+  margin: 0;
+}
+
+/* Технологии */
+.about-tech-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.6rem;
+}
+.about-tech {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--sec-accent, var(--accent));
+  border-radius: 6px;
+  padding: 0.6rem 0.85rem;
+  transition: background 0.15s;
+}
+.about-tech:hover {
+  background: color-mix(in srgb, var(--sec-accent, var(--accent)) 8%, var(--bg-panel));
+}
+.about-tech__name {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 0.1rem;
+}
+.about-tech__role {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+/* Аудитория */
+.about-audience {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1rem;
+}
+.about-audience__card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.2rem 1.1rem 1rem;
+  text-align: center;
+  transition: transform 0.18s, border-color 0.18s;
+}
+.about-audience__card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--sec-accent, var(--accent)) 55%, var(--border));
+}
+.about-audience__icon {
+  font-size: 2rem;
+  margin-bottom: 0.5rem;
+}
+.about-audience__card h3 {
+  font-size: 0.95rem;
+  font-weight: 700;
+  margin: 0 0 0.4rem;
+  color: var(--text);
+}
+.about-audience__card p {
+  font-size: 0.82rem;
+  color: var(--text-dim);
+  line-height: 1.5;
+  margin: 0;
+}
+
+/* Автор */
+.about-author-section { background:
+  linear-gradient(135deg,
+    color-mix(in srgb, var(--sec-accent, var(--accent)) 10%, var(--bg-card)) 0%,
+    var(--bg-card) 60%);
+}
+.about-author {
+  display: flex; align-items: center; gap: 1.3rem;
+  padding: 0.4rem 0.2rem;
+}
+.about-author__avatar {
+  flex-shrink: 0;
+  width: 72px; height: 72px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  font-weight: 800;
+  font-size: 1.4rem;
+  letter-spacing: 1px;
+  color: #fff;
+  background:
+    linear-gradient(135deg, var(--sec-accent, var(--accent)) 0%, #b07a00 100%);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+}
+.about-author__name {
+  font-size: 1.2rem;
+  font-weight: 700;
+  margin: 0 0 0.25rem;
+  color: var(--text);
+  letter-spacing: -0.2px;
+}
+.about-author__role {
+  margin: 0;
+  font-size: 0.92rem;
+  color: var(--text-dim);
+}
+
+/* Подвал страницы (отдельно от глобального .appbar) */
+.about-footer {
+  display: flex; justify-content: center; align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.6rem;
+  padding: 0.8rem;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+.about-footer__name {
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  background: linear-gradient(90deg, var(--accent) 0%, var(--accent2) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.about-footer__dot { opacity: 0.4; }
+
+/* Адаптив под узкие экраны: автор в колонку */
+@media (max-width: 520px) {
+  .about-author { flex-direction: column; text-align: center; gap: 0.7rem; }
+}
+
 /* ── Статус-подвал ──────────────────────────────────────────────────────
    Полностью непрозрачный, фиксирован внизу. Содержит статус-строку слева
    и версию справа. Контент основного грида (control-layout) отнимает
@@ -1594,6 +1886,17 @@ body { padding-bottom: 22px; }
   color: var(--accent);
   border: 1px solid #1e2c40;
   white-space: nowrap;
+}
+
+/* ── Блокировка кнопок режима миссией с опасными зонами ─────────────────
+   .is-locked + disabled — UX-индикация «менять режим нельзя». Серверная
+   валидация (mode_inspector/mode_cautious) в любом случае отвергает
+   переключение, это просто визуальная подсказка. */
+#btn-mode-inspector.is-locked,
+#btn-mode-cautious.is-locked {
+  opacity:        0.55;
+  cursor:         not-allowed;
+  filter:         grayscale(35%);
 }
 
 /* ── Action-кнопки: цвет = активный режим робота ────────────────────────

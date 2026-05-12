@@ -1,0 +1,255 @@
+{% extends "base.html" %}
+
+{% block title %}VEGAREX — О программе{% endblock %}
+
+{% block content %}
+<div class="about-page">
+
+  {# ── Hero: название проекта + краткое описание ─────────────────────── #}
+  <section class="about-hero">
+    <div class="about-hero__badge">Образовательная робототехника</div>
+    <h1 class="about-hero__title">
+      <span class="brand-vega">VEGA</span><span class="brand-rex">REX</span>
+    </h1>
+    <p class="about-hero__tagline">
+      Голосовое управление и программирование роботом
+      <strong>1Т REX</strong> для обучения школьников и студентов основам
+      алгоритмики, Python и инженерной логики.
+    </p>
+    <div class="about-hero__meta">
+      <span class="about-chip about-chip--accent">Версия {{ robot_version }}</span>
+      <span class="about-chip">Web · FastAPI</span>
+      <span class="about-chip">WebSocket real-time</span>
+      <span class="about-chip">Python · DSL · NLU</span>
+    </div>
+  </section>
+
+  {# ── Проблема и актуальность ────────────────────────────────────────── #}
+  <section class="about-section" style="--sec-accent: #f85149;">
+    <header class="about-section__head">
+      <span class="about-section__icon">⚠️</span>
+      <h2 class="about-section__title">Проблема и актуальность</h2>
+    </header>
+    <div class="about-section__body">
+      <p>
+        Современное образование требует от обучающегося практического опыта
+        работы с реальными техническими системами, а не только теории.
+        Классическое изучение программирования и алгоритмов на бумаге не
+        даёт ощущения, что собственный код управляет физическим миром.
+      </p>
+      <p>
+        При этом готовые робототехнические платформы либо <strong>закрыты</strong>
+        от модификации (нельзя редактировать код), либо <strong>слишком сложны</strong>
+        в первичной настройке (требуют установки IDE, драйверов, прошивок).
+        Между «коробочными решениями» и «инженерными стендами» образуется
+        провал — и именно туда уходит интерес будущего разработчика.
+      </p>
+      <p>
+        VEGAREX закрывает этот провал: робот управляется голосом
+        и одновременно генерирует читаемый Python-код, который обучающийся
+        видит, правит и запускает заново — всё в одном браузере.
+      </p>
+    </div>
+  </section>
+
+  {# ── Цель проекта ──────────────────────────────────────────────────── #}
+  <section class="about-section" style="--sec-accent: #58a6ff;">
+    <header class="about-section__head">
+      <span class="about-section__icon">🎯</span>
+      <h2 class="about-section__title">Цель проекта</h2>
+    </header>
+    <div class="about-section__body">
+      <p class="about-goal">
+        Сделать изучение программирования
+        <strong>наглядным, ощущаемым и пошаговым</strong>: от голосовой команды
+        к собственному алгоритму, от алгоритма — к самостоятельной миссии,
+        от миссии — к инженерному мышлению.
+      </p>
+      <ul class="about-list">
+        <li>Снять порог входа: обучающийся начинает работать сразу, без
+            установки.</li>
+        <li>Сократить разрыв «команда → код → результат» до секунд.</li>
+        <li>Дать преподавателю инструмент для построения курса с уровнями
+            сложности 1–5.</li>
+      </ul>
+    </div>
+  </section>
+
+  {# ── Возможности программы ─────────────────────────────────────────── #}
+  <section class="about-section" style="--sec-accent: #a371f7;">
+    <header class="about-section__head">
+      <span class="about-section__icon">🧰</span>
+      <h2 class="about-section__title">Возможности программы</h2>
+    </header>
+    <div class="about-features">
+      <div class="about-feature">
+        <div class="about-feature__icon">🎙️</div>
+        <h3>Голосовое управление</h3>
+        <p>Распознавание русских команд: «Вега вперёд 50 см», «в точку 100 50»,
+           «осторожно», «опасная зона» — мгновенно преобразуется в исполнение
+           и Python-код.</p>
+      </div>
+      <div class="about-feature">
+        <div class="about-feature__icon">📝</div>
+        <h3>Редактор Python-кода</h3>
+        <p>Источник правды — текст программы. Подсветка строк, ручное
+           редактирование, запуск, сохранение в личной библиотеке.</p>
+      </div>
+      <div class="about-feature">
+        <div class="about-feature__icon">🗺️</div>
+        <h3>Игровое поле с физикой</h3>
+        <p>2D-симуляция со стенами, дальномером, ИК-датчиком цвета, опасными
+           зонами и зонами внимания — поведение совпадает с реальным 1Т REX.</p>
+      </div>
+      <div class="about-feature">
+        <div class="about-feature__icon">🎯</div>
+        <h3>Система миссий 1–5</h3>
+        <p>Автогенерация заданий по уровням сложности, отслеживание прохождения,
+           звёзды за точность и скорость, история прогресса обучающегося.</p>
+      </div>
+      <div class="about-feature">
+        <div class="about-feature__icon">⚠️</div>
+        <h3>Режим «Осторожно»</h3>
+        <p>Планировщик A* + pure-pursuit обходит опасные зоны автоматически.
+           Ученик ставит цель — робот сам рассчитывает безопасный путь.</p>
+      </div>
+      <div class="about-feature">
+        <div class="about-feature__icon">📚</div>
+        <h3>Библиотека маршрутов</h3>
+        <p>Готовые манёвры: K-turn, S-волна, восьмёрка, спираль, объезд
+           препятствий. Каждый разобран с диаграммами и формулами в справке.</p>
+      </div>
+      <div class="about-feature">
+        <div class="about-feature__icon">📊</div>
+        <h3>Статистика и журнал</h3>
+        <p>Сессии прохождения, время алгоритма, отклонения от траектории,
+           экспорт результатов — для контроля и обратной связи преподавателю.</p>
+      </div>
+      <div class="about-feature">
+        <div class="about-feature__icon">🔌</div>
+        <h3>Реальный робот или симулятор</h3>
+        <p>Один и тот же код работает на физическом 1Т REX через TCP и на
+           встроенном симуляторе. Переключение — одним кликом в настройках.</p>
+      </div>
+    </div>
+  </section>
+
+  {# ── Используемые технологии ───────────────────────────────────────── #}
+  <section class="about-section" style="--sec-accent: #3fb950;">
+    <header class="about-section__head">
+      <span class="about-section__icon">⚙️</span>
+      <h2 class="about-section__title">Используемые технологии</h2>
+    </header>
+    <div class="about-tech-grid">
+      <div class="about-tech">
+        <div class="about-tech__name">Python 3.12</div>
+        <div class="about-tech__role">основной язык бэкенда</div>
+      </div>
+      <div class="about-tech">
+        <div class="about-tech__name">FastAPI</div>
+        <div class="about-tech__role">веб-фреймворк и REST API</div>
+      </div>
+      <div class="about-tech">
+        <div class="about-tech__name">WebSocket</div>
+        <div class="about-tech__role">real-time канал «робот ↔ браузер»</div>
+      </div>
+      <div class="about-tech">
+        <div class="about-tech__name">SQLAlchemy + SQLite</div>
+        <div class="about-tech__role">ORM и хранение пользователей, миссий, сессий</div>
+      </div>
+      <div class="about-tech">
+        <div class="about-tech__name">Jinja2</div>
+        <div class="about-tech__role">шаблоны страниц</div>
+      </div>
+      <div class="about-tech">
+        <div class="about-tech__name">HTML5 Canvas</div>
+        <div class="about-tech__role">отрисовка поля и траекторий</div>
+      </div>
+      <div class="about-tech">
+        <div class="about-tech__name">Web Speech API</div>
+        <div class="about-tech__role">распознавание голоса в браузере</div>
+      </div>
+      <div class="about-tech">
+        <div class="about-tech__name">NLU + регулярки</div>
+        <div class="about-tech__role">разбор русских команд</div>
+      </div>
+      <div class="about-tech">
+        <div class="about-tech__name">DSL Python-код</div>
+        <div class="about-tech__role">кодген из голоса в исполняемый алгоритм</div>
+      </div>
+      <div class="about-tech">
+        <div class="about-tech__name">A* + pure-pursuit</div>
+        <div class="about-tech__role">планировщик пути с обходом зон</div>
+      </div>
+      <div class="about-tech">
+        <div class="about-tech__name">Docker + Coolify</div>
+        <div class="about-tech__role">контейнеризация и деплой</div>
+      </div>
+      <div class="about-tech">
+        <div class="about-tech__name">unittest</div>
+        <div class="about-tech__role">164 регрессионных теста</div>
+      </div>
+    </div>
+  </section>
+
+  {# ── Целевая аудитория ─────────────────────────────────────────────── #}
+  <section class="about-section" style="--sec-accent: #f0883e;">
+    <header class="about-section__head">
+      <span class="about-section__icon">👥</span>
+      <h2 class="about-section__title">Целевая аудитория</h2>
+    </header>
+    <div class="about-audience">
+      <div class="about-audience__card">
+        <div class="about-audience__icon">🎒</div>
+        <h3>Школьники 5–11 классов</h3>
+        <p>Изучают программирование через ощутимый результат: команда
+           произнесена — робот поехал. Без барьера установки софта.</p>
+      </div>
+      <div class="about-audience__card">
+        <div class="about-audience__icon">🧑‍🏫</div>
+        <h3>Преподаватели робототехники</h3>
+        <p>Получают готовый курс с пятью уровнями миссий, журналом сессий
+           и встроенной справкой. Подходит для очных и онлайн-уроков.</p>
+      </div>
+      <div class="about-audience__card">
+        <div class="about-audience__icon">🏫</div>
+        <h3>Кружки и центры доп. образования</h3>
+        <p>Один сервер обслуживает группу. У каждого обучающегося — свой
+           аккаунт, своя библиотека маршрутов, своя статистика прохождения.</p>
+      </div>
+      <div class="about-audience__card">
+        <div class="about-audience__icon">🛠️</div>
+        <h3>Студенты-инженеры</h3>
+        <p>Работают с настоящей робототехнической платформой 1Т REX:
+           изучают планировщики пути, K-turn, pure-pursuit, A* — в коде,
+           который они сами могут править.</p>
+      </div>
+    </div>
+  </section>
+
+  {# ── Автор проекта ─────────────────────────────────────────────────── #}
+  <section class="about-section about-author-section" style="--sec-accent: #d29922;">
+    <header class="about-section__head">
+      <span class="about-section__icon">✍️</span>
+      <h2 class="about-section__title">Автор проекта</h2>
+    </header>
+    <div class="about-author">
+      <div class="about-author__avatar">КВБ</div>
+      <div class="about-author__info">
+        <h3 class="about-author__name">Катаев Виктор Борисович</h3>
+        <p class="about-author__role">
+          Преподаватель-методист корпорации «1Т»
+        </p>
+      </div>
+    </div>
+  </section>
+
+  {# ── Подвал с версией и названием ──────────────────────────────────── #}
+  <div class="about-footer">
+    <span class="about-footer__name">VEGAREX</span>
+    <span class="about-footer__dot">·</span>
+    <span class="about-footer__version">Версия {{ robot_version }}</span>
+  </div>
+
+</div>
+{% endblock %}
