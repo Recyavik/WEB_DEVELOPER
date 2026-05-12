@@ -474,6 +474,125 @@ face_cmd(180)  # на юг
         self.assertEqual(cmds[0].intent, "forward_to_wall")
         self.assertEqual(cmds[1].intent, "face_s")
 
+    def test_body_distance_overrides_marker(self):
+        """⛯ Пользовательская правка `robot.move(P, duration(D, ...))` в textarea
+        должна переопределять distance из маркера `# CMD: forward(N)`.
+
+        Сценарий: пользователь сгенерировал forward(40), потом руками в коде
+        поменял число в duration на 80. При запуске робот должен проехать
+        80 см, а не 40 (textarea — источник истины)."""
+        text = """
+# CMD: forward(40)
+robot.set_angle(0)
+robot.move(40, duration(80, 40))  # пользователь поменял 40 → 80
+robot.stop()
+"""
+        cmds = self.s._parse_program_text(text)
+        self.assertEqual(len(cmds), 1)
+        self.assertEqual(cmds[0].intent, "forward")
+        # raw должен содержать «80», а не «40» — distance взят из тела
+        self.assertIn("80", cmds[0].raw)
+        self.assertNotIn(" 40 см", cmds[0].raw)
+
+    def test_body_distance_back_too(self):
+        """То же для back — distance берётся из `robot.move(-P, duration(D, P))`."""
+        text = """
+# CMD: back(20)
+robot.set_angle(0)
+robot.move(-40, duration(120, 40))
+robot.stop()
+"""
+        cmds = self.s._parse_program_text(text)
+        self.assertEqual(len(cmds), 1)
+        self.assertEqual(cmds[0].intent, "back")
+        self.assertIn("120", cmds[0].raw)
+
+    def test_body_steer_emits_separate_steer_cmd(self):
+        """⛯ Пользовательская правка `robot.set_angle(N)` в теле forward должна
+        давать дополнительную команду steer ПЕРЕД forward.
+
+        Сценарий: пользователь сгенерировал forward(40), потом поменял
+        `robot.set_angle(0)` на `robot.set_angle(15)`. При запуске робот
+        должен сначала повернуть руль на 15°, потом проехать."""
+        text = """
+# CMD: forward(40)
+robot.set_angle(15)                # пользователь поставил 15°
+robot.move(40, duration(40, 40))
+robot.stop()
+"""
+        cmds = self.s._parse_program_text(text)
+        self.assertEqual(len(cmds), 2,
+                         f"должны быть 2 команды (steer + forward), "
+                         f"получено {[c.intent for c in cmds]}")
+        self.assertEqual(cmds[0].intent, "steer_right")
+        self.assertIn("15", cmds[0].raw)
+        self.assertEqual(cmds[1].intent, "forward")
+
+    def test_body_steer_negative_emits_steer_left(self):
+        """Отрицательный угол в теле — команда steer_left."""
+        text = """
+# CMD: forward(40)
+robot.set_angle(-20)
+robot.move(40, duration(40, 40))
+robot.stop()
+"""
+        cmds = self.s._parse_program_text(text)
+        self.assertEqual(len(cmds), 2)
+        self.assertEqual(cmds[0].intent, "steer_left")
+        self.assertIn("20", cmds[0].raw)
+
+    def test_body_steer_zero_no_extra_cmd(self):
+        """Если в теле `set_angle(0)` — лишняя steer-команда НЕ нужна
+        (forward сам поставит руль в 0)."""
+        text = """
+# CMD: forward(40)
+robot.set_angle(0)
+robot.move(40, duration(40, 40))
+robot.stop()
+"""
+        cmds = self.s._parse_program_text(text)
+        self.assertEqual(len(cmds), 1, "только forward, без лишнего steer")
+        self.assertEqual(cmds[0].intent, "forward")
+
+    def test_body_steer_clamps_above_45(self):
+        """Угол > 45° зажимается до 45 (физический предел сервопривода)."""
+        text = """
+# CMD: forward(40)
+robot.set_angle(90)
+robot.move(40, duration(80, 40))
+robot.stop()
+"""
+        cmds = self.s._parse_program_text(text)
+        self.assertEqual(len(cmds), 2)
+        self.assertEqual(cmds[0].intent, "steer_right")
+        # 90 → должно зажаться до 45 (см. extract_angle)
+        self.assertIn("45", cmds[0].code)
+        # distance тоже из тела — 80, не 40 из маркера
+        self.assertEqual(cmds[1].intent, "forward")
+        self.assertIn("80", cmds[1].raw)
+
+    def test_marker_is_decorative_body_is_truth(self):
+        """⛯ Маркер `# CMD:` — декоративен. Источник истины — тело.
+
+        Регрессия v4.0+: парсер больше не fallback'ает на аргумент маркера.
+        Если пользователь поправил тело так, что там нет `duration(D, ...)`,
+        парсится то, что реально написано в `robot.move(...)` — continuous
+        режим без distance (как и есть на железе). Из аргумента маркера
+        ничего не подтягивается."""
+        text = """
+# CMD: forward(15)
+robot.set_angle(0)
+robot.move(40, 1.0)                # без duration() — continuous 1 сек
+"""
+        cmds = self.s._parse_program_text(text)
+        # Парсится только тело: set_angle(0) при last_steer=0 → skip,
+        # robot.move(40, 1.0) → forward без distance, robot.stop() — нет.
+        self.assertEqual(len(cmds), 1)
+        self.assertEqual(cmds[0].intent, "forward")
+        # Дистанции в raw не должно быть — её нет в теле.
+        self.assertNotIn("15", cmds[0].raw,
+                         "args маркера НЕ должны просачиваться в команду")
+
     def test_atomic_cmds_via_cmd_marker(self):
         """Регрессия: атомарные команды (forward, steer, stop) генерируют
         сырые `robot.X(...)` вызовы. regex `_DSL_LINE` их не пропускает

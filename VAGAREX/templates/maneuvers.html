@@ -311,14 +311,28 @@ robot.set_servo_center()   <span class="c"># эквивалент set_angle(0)</
   <!-- ── RGB-индикатор ───────────────────────────────────────────────── -->
   <h3 id="a-light">1.4. RGB-индикатор</h3>
 
-  <p>Адресуем светодиод по индексу. Тройка <code>(R, G, B)</code> — 0..255.
-  <code>(0, 0, 0)</code> — погасить. Параметр <code>count</code> — сколько
-  светодиодов подряд (для адресной ленты).</p>
+  <p>Сигнатура: <code>robot.set_rgb(index, (R, G, B), delay=1.2)</code>.
+  Адресуем светодиод по индексу из <code>robot.leds</code>. Тройка
+  <code>(R, G, B)</code> — 0..255 (прямая яркость каналов; 255 — горит,
+  0 — не горит). <strong>Третий параметр — <code>delay</code> в СЕКУНДАХ</strong>
+  (задержка между установкой каналов): default 1.2 = плавный fade,
+  <code>0.0</code> = мгновенно. Для индикации режима используем 0.0.</p>
 
   <h4 class="example-title">Пример вызова</h4>
-<pre class="alg-code">robot.set_rgb(0, (0, 255, 0), 1)   <span class="c"># зажечь зеленый, 1 диод (idx=0)</span>
-robot.set_rgb(0, (255, 80, 0), 1)  <span class="c"># оранжевый</span>
-robot.set_rgb(0, (0, 0, 0), 1)     <span class="c"># погасить</span></pre>
+<pre class="alg-code">robot.set_rgb(0, (0, 255, 0), 0.0)   <span class="c"># зажечь зелёный мгновенно (idx=0)</span>
+robot.set_rgb(0, (255, 80, 0), 0.0)  <span class="c"># оранжевый</span>
+robot.set_rgb(0, (0, 0, 0),   0.0)   <span class="c"># погасить</span>
+robot.set_rgb(0, (0, 0, 255), 1.5)   <span class="c"># синий с плавным fade 1.5 с</span></pre>
+
+  <p class="note">
+    <strong>Внимание:</strong> раньше в наших примерах в этом месте стояло
+    <code>1</code> с подписью «1 диод» — это была ошибка документации.
+    Параметр <code>count</code> у платы НЕТ; передача <code>1</code>
+    интерпретируется как <code>delay=1.0 сек</code> и даёт заметный fade.
+    Для управления несколькими светодиодами используется
+    <code>robot.leds.bind([адреса…])</code> и обращение по индексу
+    <code>robot.set_rgb(robot.leds[i], …)</code>.
+  </p>
 </section>
 
 

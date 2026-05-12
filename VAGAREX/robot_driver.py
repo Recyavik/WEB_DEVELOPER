@@ -5,14 +5,22 @@ RexDriver  — реальный робот через WiFi/TCP (REX Board)
 SimDriver  — симулятор для отладки без железа
 
 Документированные команды 1T REX Python API:
-  robot.move(speed)          — движение (0–100, отрицательное = назад)
-  robot.set_angle(angle)     — рулежка -45..45 градусов
-  robot.set_servo_center()   — руль прямо
-  robot.enable_mpu()         — включить гироскоп
-  robot.get_laser()          — дальность до препятствия (см)
-  robot.get_color()          — показания цветового датчика
-  robot.start()              — запуск системы
-  robot.set_rgb(idx,color,n) — подсветка LED
+  robot.start(interval=10)       — инициализация, интервал опроса в мс
+  robot.move(value, timeout=None)— движение (-100..100), timeout в секундах
+  robot.invert_move()            — инвертировать направление motor
+  robot.stop()                   — остановка
+  robot.set_angle(value)         — руль -45..45°
+  robot.set_servo_center()       — руль 0
+  robot.enable_mpu(timeout=5)    — включить гироскоп
+  robot.get_angle() / get_angles() — yaw/pitch/roll (Z/X/Y)
+  robot.get_laser()              — дальность до препятствия
+  robot.get_color()              — массив словарей TCA/R/G/B/C
+  robot.init_led(addr,timeout=3) — инициализировать LED-модуль
+  robot.set_rgb(idx,(R,G,B),delay=1.2) — RGB, delay в секундах
+  robot.leds / leds[i] / leds.bind(list) — адреса светодиодов
+  robot.init_sound(addr,timeout=2) / set_sound(0..100) — звук
+  robot.set_timeout(sec) / set_multiplexer_channel(n) — служебное
+  robot.send_command(str)        — отправка raw-команды
 """
 import asyncio
 import logging
@@ -127,9 +135,12 @@ class RexDriver:
     async def start(self) -> bool:
         return await self._send("START")
 
-    async def set_rgb(self, index: int, color: tuple, count: int = 1) -> bool:
+    async def set_rgb(self, index: int, color: tuple, delay: float = 1.2) -> bool:
+        """API 1T REX: robot.set_rgb(index, (R,G,B), delay=1.2).
+        delay — задержка между установкой каналов в секундах
+        (0.0 = мгновенно, default 1.2 = плавный fade)."""
         r, g, b = color
-        return await self._send(f"RGB:{index},{r},{g},{b},{count}")
+        return await self._send(f"RGB:{index},{r},{g},{b},{delay}")
 
     async def ping(self) -> bool:
         await self._send("BpE")
@@ -182,7 +193,7 @@ class SimDriver:
     async def start(self) -> bool:
         return True
 
-    async def set_rgb(self, index: int, color: tuple, count: int = 1) -> bool:
+    async def set_rgb(self, index: int, color: tuple, delay: float = 1.2) -> bool:
         return True
 
     async def ping(self) -> bool:

@@ -108,11 +108,26 @@
           const textarea = document.getElementById('python-code');
           const desc     = document.getElementById('python-code-description');
           if (desc) desc.textContent = 'Программа робота (редактируется)';
-          if (textarea) textarea.value = msg.text;
+          // Если в localStorage есть черновик пользовательских правок,
+          // которые ещё не были применены (не нажимал ▶) — он переживает
+          // reload страницы и подставляется поверх серверного состояния.
+          // Иначе пользователь правил `robot.move(40, duration(80, 40))`,
+          // обновил страницу — и правки терялись.
+          const draft = _readCodeDraft();
+          const serverText = msg.text;
+          const useDraft = draft && draft !== serverText && draft.trim() !== '';
+          const finalText = useDraft ? draft : serverText;
+          if (textarea) {
+            textarea.value = finalText;
+            if (useDraft) {
+              logMsg('↻ Восстановлены несохранённые правки кода '
+                   + '(▶ применит их, ✕ — отменит).', 'info');
+            }
+          }
           // Если модалка открыта — тоже обновляем
           const modal     = document.getElementById('python-code-modal');
           const modalArea = document.getElementById('python-code-modal-area');
-          if (modal && !modal.hidden && modalArea) modalArea.value = msg.text;
+          if (modal && !modal.hidden && modalArea) modalArea.value = finalText;
         }
         break;
 
@@ -497,6 +512,29 @@
     if (pos < N) out += escHtmlCode(text.slice(pos));
     return out + '\n';   // финальный \n чтобы overlay не «съедал» нижнюю строку
   }
+  // ── Черновик кода (localStorage) ─────────────────────────────────────────
+  // Когда пользователь правит textarea, но ещё не нажал ▶ — сервер про эти
+  // правки не знает. Если страница перезагружается, сервер шлёт `program`
+  // с серверным состоянием и стирает правки. Чтобы это не происходило,
+  // на каждое изменение textarea сохраняем её в localStorage; при reload
+  // (обработчик 'program') читаем оттуда и подставляем поверх серверного.
+  // Удаляется при ▶ (правки применены) и при ✕ (явный сброс).
+  const _CODE_DRAFT_KEY = 'vegarex.code_draft';
+  function _readCodeDraft() {
+    try { return localStorage.getItem(_CODE_DRAFT_KEY) || ''; }
+    catch (_) { return ''; }
+  }
+  function _saveCodeDraft(text) {
+    try {
+      if (text && text.trim()) localStorage.setItem(_CODE_DRAFT_KEY, text);
+      else                     localStorage.removeItem(_CODE_DRAFT_KEY);
+    } catch (_) {}
+  }
+  function _clearCodeDraft() {
+    try { localStorage.removeItem(_CODE_DRAFT_KEY); }
+    catch (_) {}
+  }
+
   function attachCodeHighlight(textareaId, overlayId) {
     const ta = document.getElementById(textareaId);
     const ov = document.getElementById(overlayId);
@@ -514,7 +552,12 @@
       code.innerHTML = highlightPython(ta.value || '');
       syncScroll();
     };
+    // Каждое пользовательское изменение текстареи — backup в localStorage,
+    // чтобы reload не стёр правки. Применяется к обоим редакторам
+    // (боковая панель + модальное окно «во весь экран»).
+    const saveDraft = () => _saveCodeDraft(ta.value || '');
     ta.addEventListener('input',  syncContent);
+    ta.addEventListener('input',  saveDraft);
     ta.addEventListener('scroll', syncScroll);
     // Стрелки/PageDown/PageUp могут двигать каретку без срабатывания scroll —
     // на них тоже досинхронизируем сразу.
@@ -833,7 +876,10 @@
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({code: codeText}),
         });
-        if (!r.ok) {
+        if (r.ok) {
+          // Правки приняты сервером — черновик в localStorage больше не нужен.
+          _clearCodeDraft();
+        } else {
           const err = await r.json().catch(() => ({}));
           // Если сервер говорит «нет активной миссии» — клиент держит
           // устаревшее состояние (обычно после рестарта сервера).
@@ -859,11 +905,17 @@
     const textarea = document.getElementById('python-code');
     if (!textarea) return;
     ws.send(JSON.stringify({ type: 'run_python_code', code: textarea.value }));
+    // Правки уехали на сервер — черновик можно стереть.
+    _clearCodeDraft();
     logMsg('▶ Выполняется Python-код…', 'info');
   }
 
   function clearPythonCode() {
     // Очистка идет через сервер — он перешлет обновленный текст программы (пустой + шапка).
+    // Заодно стираем localStorage-черновик: без этого сервер пришлёт пустой
+    // текст, а клиент подменит его старым черновиком — и команда «✕» ничего
+    // не очистит.
+    _clearCodeDraft();
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'clear_program' }));
     } else {
@@ -1245,6 +1297,7 @@
       if (confirm('Очистить весь код?')) {
         modalArea.value = '';
         sideArea.value  = '';
+        _clearCodeDraft();
         if (ws && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'clear_program' }));
         }

@@ -268,7 +268,11 @@ def extract_distance(text: str) -> Optional[int]:
 
 
 def extract_angle(text: str) -> Optional[int]:
-    """Угол руля 1–45°. None если не указан."""
+    """Угол руля 1–45°. None если не указан.
+
+    Любое положительное число клампится в [1; 45] — плата 1T REX
+    физически не повернёт руль дальше ±45°, поэтому большее значение
+    из голоса/текста обрезаем без потери смысла команды."""
     n = norm(text)
     m = re.search(r'(\d+)\s*(?:градус|°)', n)
     if m:
@@ -276,7 +280,7 @@ def extract_angle(text: str) -> Optional[int]:
     m = re.search(r'(?:направо|налево|вправо|влево)\s+(\d+)', n)
     if m:
         val = int(m.group(1))
-        if val <= 45:
+        if val > 0:
             return max(1, min(45, val))
     return None
 

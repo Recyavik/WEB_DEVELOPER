@@ -54,7 +54,10 @@ MOVE_SPEED   = int(os.getenv("MOVE_SPEED", "40"))    # % мощности по �
 TURN_ANGLE   = int(os.getenv("TURN_ANGLE", "36"))    # угол руля в градусах (-45..45)
 
 LIGHT_INDEX = int(os.getenv("LIGHT_INDEX", "0"))
-LIGHT_COUNT = int(os.getenv("LIGHT_COUNT", "1"))
+# Задержка между установкой каналов R/G/B в robot.set_rgb (третий параметр).
+# Default API = 1.2 с — это плавный fade; для индикации режима нам нужен
+# мгновенный отклик. 0.0 = зажигание без задержки.
+LIGHT_DELAY_SEC = float(os.getenv("LIGHT_DELAY_SEC", "0.0"))
 LIGHT_DEFAULT_COLOR = tuple(int(x) for x in os.getenv("LIGHT_DEFAULT_COLOR", "255,255,255").split(","))
 
 # Колесо D90: диаметр 90 мм → длина окружности π × 9 см ≈ 28.3 см за оборот

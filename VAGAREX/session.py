@@ -40,7 +40,11 @@ log = logging.getLogger(__name__)
 # Константы, общие для всех пользователей
 SOUND_SPEED_CM_S = 34000.0
 LIGHT_INDEX = 0
-LIGHT_COUNT = 1
+# 3-й параметр robot.set_rgb — `delay`, задержка между каналами в секундах
+# (API: default 1.2 = плавный fade). Для индикации режима используем 0.0 —
+# мгновенный отклик. Раньше тут было LIGHT_COUNT=1 — это была ошибка,
+# которая на железе вызывала медленный fade вместо немедленного зажигания.
+LIGHT_DELAY_SEC = 0.0
 LIGHT_DEFAULT_COLOR = (255, 255, 255)
 
 # Интенты, которые не записываются в программу — это UI-команды
@@ -2964,8 +2968,8 @@ odo = Odometry()    # глобальный экземпляр одометрии
             f"ROBOT_WIDTH_CM        = {c.robot_width_cm:.1f}   # ширина робота, см\n"
             "\n"
             "# ── RGB-индикатор на плате ───────────────────────────────────\n"
-            f"LIGHT_INDEX           = {LIGHT_INDEX}      # индекс первого LED в ленте (0 = первый)\n"
-            f"LIGHT_COUNT           = {LIGHT_COUNT}      # сколько LED подряд зажигать одной командой\n"
+            f"LIGHT_INDEX           = {LIGHT_INDEX}      # индекс LED (robot.leds[LIGHT_INDEX])\n"
+            f"LIGHT_DELAY_SEC       = {LIGHT_DELAY_SEC}    # задержка между каналами в robot.set_rgb (0.0 = мгновенно, default API 1.2)\n"
             f"LIGHT_DEFAULT_COLOR   = {LIGHT_DEFAULT_COLOR}  # цвет «по умолчанию», кортеж (R, G, B) 0..255\n"
             "\n"
             "# ── Стартовая точка робота — «домой» и сброс одометрии ──────\n"
@@ -3036,7 +3040,7 @@ odo = Odometry()    # глобальный экземпляр одометрии
         def steer(angle_expr: str) -> str: return f"robot.set_angle({angle_expr})"
         def move(power: str, dur: str) -> str: return f"robot.move({power}, {dur})"
         def stop() -> str: return "robot.stop()"
-        def light(c_expr: str) -> str: return f"robot.set_rgb(LIGHT_INDEX, {c_expr}, LIGHT_COUNT)"
+        def light(c_expr: str) -> str: return f"robot.set_rgb(LIGHT_INDEX, {c_expr}, LIGHT_DELAY_SEC)"
 
         if intent == "forward":
             if dist:
@@ -3540,16 +3544,16 @@ odo = Odometry()    # глобальный экземпляр одометрии
             )
         elif intent == "light_on":
             s.light_color = LIGHT_DEFAULT_COLOR
-            await self.robot.set_rgb(LIGHT_INDEX, LIGHT_DEFAULT_COLOR, LIGHT_COUNT)
+            await self.robot.set_rgb(LIGHT_INDEX, LIGHT_DEFAULT_COLOR, LIGHT_DELAY_SEC)
             msg = "Свет включен."
         elif intent == "light_off":
             s.light_color = (0, 0, 0)
-            await self.robot.set_rgb(LIGHT_INDEX, (0, 0, 0), LIGHT_COUNT)
+            await self.robot.set_rgb(LIGHT_INDEX, (0, 0, 0), LIGHT_DELAY_SEC)
             msg = "Свет выключен."
         elif intent == "light_color":
             color = nlu.extract_color(raw) or LIGHT_DEFAULT_COLOR
             s.light_color = color
-            await self.robot.set_rgb(LIGHT_INDEX, color, LIGHT_COUNT)
+            await self.robot.set_rgb(LIGHT_INDEX, color, LIGHT_DELAY_SEC)
             msg = f"Свет установлен: {color}."
         elif intent == "recharge":
             await self._run_recharge()
@@ -3666,6 +3670,36 @@ odo = Odometry()    # глобальный экземпляр одометрии
 
     _DSL_LINE   = re.compile(r'^\s*([a-z_]+)\s*\(\s*([^)]*)\s*\)\s*(?:#.*)?$')
     _CMD_MARKER = re.compile(r'^\s*#\s*CMD\s*:\s*([a-z_]+)\s*\(\s*([^)]*)\s*\)')
+    # Извлечь дистанцию из тела атомарной команды forward/back:
+    # `robot.move(40, duration(80, 40))` → 80 — правки в textarea имеют приоритет
+    # над аргументом маркера `# CMD: forward(N)`.
+    _BODY_DURATION_RE = re.compile(
+        r'robot\.move\(\s*-?\d+\s*,\s*duration\(\s*(\d+(?:\.\d+)?)')
+    # Извлечь угол руля из тела forward/back: `robot.set_angle(N)` → N.
+    # Нужно, чтобы правка `robot.set_angle(15)` в textarea действительно
+    # выставила руль на 15° перед движением (а не игнорировалась).
+    _BODY_STEER_RE = re.compile(
+        r'robot\.set_angle\(\s*(-?\d+)\s*\)')
+
+    # Регекспы для парсинга атомарных вызовов прямо из тела программы
+    # (источник истины — то, что фактически выполнится на железе).
+    # Маркеры `# CMD: …` декоративны: парсер их игнорирует.
+    _RE_BODY_SET_ANGLE       = re.compile(r'^\s*robot\.set_angle\(\s*(-?\d+)\s*\)')
+    _RE_BODY_SET_SERVO       = re.compile(r'^\s*robot\.set_servo_center\(\s*\)')
+    _RE_BODY_STOP            = re.compile(r'^\s*robot\.stop\(\s*\)')
+    # robot.move(P, duration(D, ...)) — основная форма forward/back
+    _RE_BODY_MOVE_DURATION   = re.compile(
+        r'^\s*robot\.move\(\s*(-?\d+)\s*,\s*duration\(\s*(\d+(?:\.\d+)?)')
+    # robot.move(P, T) с числом-длительностью — continuous N секунд
+    _RE_BODY_MOVE_SECONDS    = re.compile(
+        r'^\s*robot\.move\(\s*(-?\d+)\s*,\s*(\d+(?:\.\d+)?)\s*\)')
+    # robot.move(P) — мотор без длительности (крутится до явного stop)
+    _RE_BODY_MOVE_NOTIME     = re.compile(r'^\s*robot\.move\(\s*(-?\d+)\s*\)')
+    # robot.set_rgb(idx, (r, g, b), count) — индикатор
+    _RE_BODY_SET_RGB         = re.compile(
+        r'^\s*robot\.set_rgb\(\s*[\w_]+\s*,\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)')
+    # time.sleep(T) — пауза
+    _RE_BODY_TIME_SLEEP      = re.compile(r'^\s*time\.sleep\(\s*(\d+(?:\.\d+)?)\s*\)')
 
     @staticmethod
     def _parse_dsl_line(fn: str, args: str) -> Optional[tuple[str, str]]:
@@ -3848,60 +3882,246 @@ odo = Odometry()    # глобальный экземпляр одометрии
         return None
 
     def _parse_program_text(self, text: str) -> list[RobotCmd]:
-        """Парсит команды из textarea.
+        """Парсит команды из textarea — источник истины ТЕЛО программы.
 
-        Источник истины (в порядке приоритета):
-          1) Маркер `# CMD: name(args)` — для АТОМАРНЫХ команд (forward, steer,
-             stop, light, …), чьё тело — сырые `robot.X(...)` вызовы. Сами
-             эти вызовы regex `_DSL_LINE` не пропускает (точка в имени).
-          2) Строка вызова `name(args)` (без точек) — для COMPOUND-команд
-             (`circle_cmd(args)`, `face_cmd(180)`, `goto_cmd(x,y)`),
-             а также короткая DSL-форма (`forward(100)`, `set_course(90)`)
-             и legacy-префикс `cmd_X(args)`.
+        Архитектура (v4.0+):
+          • АТОМАРНЫЕ строки (`robot.X(...)`, `time.sleep(...)`) парсятся
+            напрямую: что написано в textarea, то и выполнится. Правка
+            `robot.set_angle(15)` → руль 15°. Правка
+            `robot.move(40, duration(80, 40))` → проезд 80 см. Правка
+            `robot.set_rgb(0, (0, 255, 0), 1)` → зажжётся зелёный.
+          • COMPOUND-строки (`circle_cmd(…)`, `face_cmd(180)`, `goto_cmd(x,y)`,
+            `home_cmd()`, …) парсятся через _DSL_LINE — это обёртки наших
+            хелперов с собственными параметрами.
+          • Маркеры `# CMD: name(args)` — ДЕКОРАТИВНЫ. Парсер их игнорирует.
+            Они нужны только пользователю для понимания, какая команда тут
+            родилась изначально (из голоса/манёвра/каталога).
 
         Игнорируется:
-          • пустые строки и обычные `# комментарии` (не CMD-маркеры);
-          • def/class и сырые `robot.X(...)` вызовы (отсекает regex);
-          • reset/brake/stop — они оборачивают воспроизведение автоматически."""
-        cmds: list[RobotCmd] = []
+          • пустые строки и любые `# комментарии`;
+          • def/class и сами строки преамбулы;
+          • `robot.stop()` (служебная остановка) и `robot.set_servo_center()`
+            при руле уже = 0 (нет смысла плодить дубли).
 
-        for line in text.split("\n"):
-            stripped = line.strip()
-            if not stripped:
+        Локальный трекер `last_steer` нужен, чтобы не плодить избыточные
+        steer_center/steer_right — если руль УЖЕ в нужном положении после
+        предыдущей команды, новая идентичная set_angle пропускается."""
+        cmds: list[RobotCmd] = []
+        last_steer = 0
+
+        for raw_line in text.split("\n"):
+            line = raw_line.strip()
+            if not line:
                 continue
-            # 1) Маркер `# CMD: foo(args)` — приоритетно. Это единственный
-            #    способ распознать атомарные команды.
-            mm = self._CMD_MARKER.match(stripped)
-            if mm:
-                fn, args = mm.group(1), mm.group(2)
-                parsed = self._parse_dsl_line(fn, args)
-                if parsed:
-                    intent, raw = parsed
-                    if intent not in ("reset", "brake", "stop"):
-                        cmd = self._build_cmd(intent, raw)
-                        if cmd:
-                            cmds.append(cmd)
+            # Индентированные строки = тело def/while/if/etc. (наши хелперы
+            # `def to_wall_cmd(...):` и т.п. содержат `robot.move(...)` и
+            # `time.sleep(...)` внутри функции — они НЕ должны парситься как
+            # пользовательские команды, иначе из преамбулы вылезут призраки).
+            if raw_line and raw_line[0] in (' ', '\t'):
                 continue
-            # Любые другие комментарии — пропускаем.
-            if stripped.startswith("#"):
+
+            # 1) Атомарные команды — `robot.X(...)` / `time.sleep(...)`.
+            #    Маркер `# CMD:` пропускаем без обработки (декоративный).
+            body_cmd, new_steer = self._parse_body_line(line, last_steer)
+            if body_cmd is not None:
+                cmds.append(body_cmd)
+                last_steer = new_steer
                 continue
-            # 2) Простой вызов name(args). def/class/многострочные выражения
-            #    в _DSL_LINE не подходят — отсекаются регуляркой. Сырые
-            #    `robot.X(...)` тоже отсекаются (точка в имени).
-            md = self._DSL_LINE.match(stripped)
+            if new_steer != last_steer:
+                # Парсер хочет обновить steer без выдачи cmd
+                # (например, robot.set_angle(0) при уже нулевом руле).
+                last_steer = new_steer
+                continue
+
+            # 2) Любые комментарии (включая `# CMD:`) — пропускаем.
+            if line.startswith("#"):
+                continue
+
+            # 3) Compound: `name(args)` без точки. Сюда попадают наши хелперы
+            #    (circle_cmd, face_cmd, goto_cmd, …) и DSL-формы (forward(N)).
+            md = self._DSL_LINE.match(line)
             if not md:
                 continue
             fn_raw, args_raw = md.group(1), md.group(2)
             parsed = self._parse_dsl_line(fn_raw, args_raw)
             if not parsed:
                 continue
-            intent, raw = parsed
+            intent, cmd_raw = parsed
             if intent in ("reset", "brake", "stop"):
                 continue
-            cmd = self._build_cmd(intent, raw)
+            cmd = self._build_cmd(intent, cmd_raw)
             if cmd:
                 cmds.append(cmd)
+                last_steer = self._steer_after_cmd(intent, cmd_raw, last_steer)
         return cmds
+
+    def _parse_body_line(self, line: str,
+                         last_steer: int) -> tuple[Optional[RobotCmd], int]:
+        """Распарсить ОДНУ строку тела (`robot.X(...)` / `time.sleep(...)`).
+
+        Возвращает (cmd_или_None, new_last_steer). Если строка не атомарная
+        (не начинается с robot. / time.) — возвращает (None, last_steer):
+        вызывающий код продолжит парсить как маркер/comment/compound.
+
+        Особые случаи (cmd=None, но last_steer обновился):
+          • `robot.set_angle(N)` где N == last_steer — без cmd;
+          • `robot.set_angle(0)` при last_steer == 0 — без cmd;
+          • `robot.stop()`, `robot.set_servo_center()` без надобности — без cmd.
+        """
+        # robot.set_angle(N) — поставить руль на N°.
+        m = self._RE_BODY_SET_ANGLE.match(line)
+        if m:
+            n = max(-45, min(45, int(m.group(1))))
+            if n == last_steer:
+                return (None, last_steer)
+            if n == 0:
+                cmd = self._build_cmd("steer_center", "вега руль прямо")
+            elif n > 0:
+                cmd = self._build_cmd("steer_right", f"вега направо {n}")
+            else:
+                cmd = self._build_cmd("steer_left",  f"вега налево {abs(n)}")
+            return (cmd, n)
+
+        # robot.set_servo_center() — то же что set_angle(0).
+        if self._RE_BODY_SET_SERVO.match(line):
+            if last_steer == 0:
+                return (None, 0)
+            cmd = self._build_cmd("steer_center", "вега руль прямо")
+            return (cmd, 0)
+
+        # robot.move(P, duration(D, ...)) — forward(D) или back(D).
+        m = self._RE_BODY_MOVE_DURATION.match(line)
+        if m:
+            power = int(m.group(1))
+            dist  = int(round(float(m.group(2))))
+            intent = "forward" if power >= 0 else "back"
+            verb   = "вперед"  if power >= 0 else "назад"
+            cmd = self._build_cmd(intent, f"вега {verb} {dist} см")
+            return (cmd, last_steer)
+
+        # robot.move(P, T) с T-секундами без duration() — continuous N сек.
+        # Преобразуем в forward без distance + pause T + brake (упрощённо
+        # генерируем forward как continuous; время поездки контролирует
+        # сам мотор на железе аргументом duration_sec).
+        m = self._RE_BODY_MOVE_SECONDS.match(line)
+        if m:
+            power = int(m.group(1))
+            intent = "forward" if power >= 0 else "back"
+            verb   = "вперед"  if power >= 0 else "назад"
+            cmd = self._build_cmd(intent, f"вега {verb}")
+            return (cmd, last_steer)
+
+        # robot.move(P) — мотор без длительности (continuous до явного stop).
+        m = self._RE_BODY_MOVE_NOTIME.match(line)
+        if m:
+            power = int(m.group(1))
+            intent = "forward" if power >= 0 else "back"
+            verb   = "вперед"  if power >= 0 else "назад"
+            cmd = self._build_cmd(intent, f"вега {verb}")
+            return (cmd, last_steer)
+
+        # robot.stop() — служебная остановка между командами, в программу
+        # не записываем (forward сам делает stop в конце duration).
+        if self._RE_BODY_STOP.match(line):
+            return (None, last_steer)
+
+        # robot.set_rgb(idx, (r,g,b), count) — индикатор.
+        m = self._RE_BODY_SET_RGB.match(line)
+        if m:
+            r_v, g_v, b_v = map(int, (m.group(1), m.group(2), m.group(3)))
+            if (r_v, g_v, b_v) == (0, 0, 0):
+                cmd = self._build_cmd("light_off", "вега выключи свет")
+            else:
+                cmd = self._build_cmd(
+                    "light_color",
+                    f"вега свет цвет {r_v} {g_v} {b_v}")
+            return (cmd, last_steer)
+
+        # time.sleep(T) — пауза T секунд.
+        m = self._RE_BODY_TIME_SLEEP.match(line)
+        if m:
+            secs = float(m.group(1))
+            cmd = self._build_cmd("pause", f"вега пауза {secs}")
+            return (cmd, last_steer)
+
+        return (None, last_steer)
+
+    @staticmethod
+    def _steer_after_cmd(intent: str, raw: str, prev_steer: int) -> int:
+        """Какой угол руля будет ПОСЛЕ выполнения команды.
+
+        Нужен для отслеживания состояния руля при парсинге программы —
+        чтобы не плодить лишних steer-команд перед forward, когда руль
+        уже в нужном положении. Только эвристика на основе intent."""
+        if intent in ("steer_right", "steer_right_small"):
+            a = nlu.extract_angle(raw)
+            return a if a is not None else prev_steer
+        if intent in ("steer_left", "steer_left_small"):
+            a = nlu.extract_angle(raw)
+            return -a if a is not None else prev_steer
+        if intent == "steer_center":
+            return 0
+        # Compound-команды (face_*, circle_*, goto, home, kturn, …) в конце
+        # вызывают set_servo_center() → руль обнуляется.
+        if intent in ("face_n", "face_ne", "face_e", "face_se",
+                      "face_s", "face_sw", "face_w", "face_nw",
+                      "face_to", "circle", "figure_eight",
+                      "spiral_in", "spiral_out", "bypass_right", "bypass_left",
+                      "turn_around", "turn_around_place",
+                      "goto", "home", "set_course",
+                      "forward_to_wall", "backward_to_wall"):
+            return 0
+        # forward/back явно ставят set_angle(prev_steer) — руль не меняют.
+        return prev_steer
+
+    def _extract_distance_from_body(self, lines: list[str],
+                                    start: int, total: int) -> Optional[int]:
+        """Найти в строках тела `robot.move(P, duration(D, ...))` и вернуть D.
+
+        Просматриваем максимум 5 строк начиная со start. Останавливаемся, если
+        встретили следующий `# CMD:` маркер (значит, ушли в следующую команду).
+        Возвращаем None если в теле нет вызова `robot.move(...)` с duration —
+        тогда вызывающий код использует аргумент маркера как fallback.
+
+        Это нужно чтобы пользовательская правка строки
+        `robot.move(40, duration(80, 40))` была реально применена при запуске
+        (textarea — источник истины для forward/back параметров)."""
+        for j in range(start, min(start + 5, total)):
+            line = lines[j].strip()
+            if not line:
+                continue
+            # Натолкнулись на следующую команду — стоп.
+            if self._CMD_MARKER.match(line):
+                return None
+            m = self._BODY_DURATION_RE.search(line)
+            if m:
+                try:
+                    return int(round(float(m.group(1))))
+                except (ValueError, TypeError):
+                    return None
+        return None
+
+    def _extract_steer_from_body(self, lines: list[str],
+                                 start: int, total: int) -> Optional[int]:
+        """Найти в теле `robot.set_angle(N)` и вернуть N.
+
+        Та же логика, что и у _extract_distance_from_body: правки в textarea
+        приоритетнее аргумента маркера. Если пользователь поправил
+        `robot.set_angle(15)` — руль должен реально выставиться на 15° перед
+        forward/back, а не игнорироваться."""
+        for j in range(start, min(start + 5, total)):
+            line = lines[j].strip()
+            if not line:
+                continue
+            if self._CMD_MARKER.match(line):
+                return None
+            m = self._BODY_STEER_RE.search(line)
+            if m:
+                try:
+                    return int(m.group(1))
+                except (ValueError, TypeError):
+                    return None
+        return None
 
     async def run_textarea_program(self, text: str):
         """Парсит текст из textarea, перестраивает self._program и запускает.
