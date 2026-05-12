@@ -680,7 +680,82 @@ body { padding-bottom: 22px; }
 .log-task-card__actions {
   margin-top: 0.5rem;
   display: flex; gap: 0.4rem;
+  flex-wrap: wrap;
 }
+/* Карточка после mission_finished — кнопки заблокированы, бейдж итога. */
+.log-task-card--finalized { opacity: 0.85; }
+.log-task-card--finalized button[disabled] {
+  cursor: not-allowed; opacity: 0.45;
+}
+.task-verdict {
+  margin-left: 0.5rem;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  vertical-align: middle;
+}
+.task-verdict--ok   { background: #16321f; color: var(--success); border: 1px solid #1f4d2c; }
+.task-verdict--fail { background: #3d1a1a; color: var(--danger);  border: 1px solid rgba(248,81,73,0.35); }
+
+/* ── Страница статистики ────────────────────────────────────────────── */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.6rem;
+  margin-top: 0.5rem;
+}
+.stats-item {
+  display: flex; flex-direction: column;
+  padding: 0.7rem 0.9rem;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.stats-label {
+  font-size: 0.78rem; color: var(--text-dim); margin-bottom: 0.25rem;
+}
+.stats-value {
+  font-size: 1.4rem; font-weight: 600; color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.stats-value--accent { color: var(--warning); }
+
+.stats-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+  table-layout: auto;
+}
+.stats-table th,
+.stats-table td {
+  padding: 0.7rem 1.1rem;       /* больше воздуха между колонками */
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;          /* шапка не переносится «Лучшая\nточность» */
+}
+.stats-table th {
+  color: var(--text-dim);
+  font-weight: 500;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.stats-table tbody tr:hover { background: rgba(63,185,80,0.05); }
+/* Узкая колонка № — фиксированная по контенту, не растягивается. */
+.stats-table__col-num { width: 1%; text-align: right; }
+.stats-table__num     { text-align: right; color: var(--text-dim);
+                        font-family: ui-monospace, Consolas, monospace; }
+/* Колонка «Миссия» забирает остаток ширины. */
+.stats-table th:nth-child(2),
+.stats-table td:nth-child(2) { white-space: normal; width: auto; }
+.stats-table__stars strong { color: var(--warning); }
+/* Ссылки в статистике — зелёные (включая :visited, иначе браузер
+   подсвечивает посещённые фиолетовым по умолчанию). */
+.stats-table a,
+.stats-table a:visited { color: var(--success); text-decoration: none; }
+.stats-table a:hover   { color: #5fcc7e; text-decoration: underline; }
 
 /* ── Card title row (title + button) ────────────────────────────────────────── */
 .card__title-row {
@@ -722,9 +797,15 @@ body { padding-bottom: 22px; }
   background: var(--bg-panel);
   min-height: 10rem;
   resize: vertical;
-  /* Резервируем место под скроллбар ВСЕГДА — иначе появление скроллбара
-     сужает content-area, и переносы строк в textarea ↔ overlay-подсветке
-     происходят в разных местах. Из-за этого Enter «сдвигал не те строки». */
+  /* Отключаем перенос строк — code editor convention. textarea имеет
+     wrap="off" в HTML, overlay тоже использует white-space: pre. Так
+     длинные строки скроллятся горизонтально, и каждый символ имеет
+     ОДИНАКОВУЮ координату в textarea и overlay → клик попадает точно
+     в нужный символ, выделение работает предсказуемо.
+     scrollbar-gutter: stable резервирует место под вертикальный
+     скроллбар, чтобы вертикальная позиция строк совпадала. */
+  white-space: pre;
+  overflow: auto;
   scrollbar-gutter: stable;
 }
 .program-code:not(:empty) { color: var(--text); }
@@ -750,16 +831,16 @@ body { padding-bottom: 22px; }
   font-size: 0.68rem;          /* должно совпадать с .program-code */
   line-height: 1.35;
   padding: 0.5rem;
-  /* Правый отступ компенсирует scrollbar-gutter у textarea (~10px для
-     scrollbar-width:thin). Без этого ширина контента overlay > textarea,
-     переносы строк не совпадают, Enter «сдвигает не те строки». */
-  padding-right: calc(0.5rem + 10px);
   border: 1px solid transparent;
   border-radius: 4px;
   color: var(--text);
   background: var(--bg-panel);
-  white-space: pre-wrap;
-  word-break: break-word;
+  /* white-space: pre + НЕТ wrap. textarea (wrap="off") ведёт себя так же,
+     поэтому каждая строка занимает ОДИНАКОВУЮ позицию в обоих слоях →
+     клик в textarea точно попадает на символ, который видит пользователь
+     в overlay. Горизонтальный скролл — на textarea, overlay сдвигается
+     через CSS transform (см. syncScroll в control.js). */
+  white-space: pre;
   /* Overlay не скроллится сам — внутренний <code> сдвигается через
      CSS transform по scrollTop textarea (см. JS sync). Так не получается
      второй скроллбар, и нет глюка с программным scrollTop в Webkit. */
@@ -1387,6 +1468,7 @@ body { padding-bottom: 22px; }
 .mission-card__desc {
   margin: 0; font-size: 0.82rem; color: var(--text-dim);
   line-height: 1.45; flex: 1;
+  white-space: pre-line;   /* переносы по \n из описания миссии */
 }
 /* «Набрано: N⭐» — лучший результат пользователя по миссии. Показывается
    только при наличии завершённых прохождений. */

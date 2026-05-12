@@ -270,6 +270,8 @@ class MissionRun(Base):
     stars             = Column(Integer, default=0, nullable=False)
     coefficient       = Column(Float,   default=1.0, nullable=False)
     deviations        = Column(Integer, default=0, nullable=False)
+    duration_sec      = Column(Float,   default=0.0, nullable=False)    # время задания: активация → стоп
+    algo_duration_sec = Column(Float,   default=0.0, nullable=False)    # время алгоритма: ▶ Запуск → конец очереди
     waypoints_visited = Column(Text,    default="[]", nullable=False)   # JSON: индексы
     actions_done      = Column(Text,    default="[]", nullable=False)   # JSON: индексы
     success           = Column(Boolean, default=False, nullable=False)

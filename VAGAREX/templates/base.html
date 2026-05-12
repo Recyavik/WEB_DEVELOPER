@@ -12,7 +12,6 @@
 <header class="topbar">
   <div class="topbar__brand">
     <span class="brand-vega">VEGA</span><span class="brand-rex">REX</span>
-    <span class="brand-sub">Голосовое управление роботом</span>
   </div>
   <nav class="topbar__nav">
     <a href="/" class="nav-link {% if request.url.path == '/' %}nav-link--active{% endif %}">
@@ -21,8 +20,8 @@
     <a href="/tasks" class="nav-link {% if request.url.path == '/tasks' %}nav-link--active{% endif %}">
       🎯 Миссии
     </a>
-    <a href="/missions" class="nav-link {% if request.url.path == '/missions' %}nav-link--active{% endif %}">
-      🕘 История
+    <a href="/stats" class="nav-link {% if request.url.path == '/stats' %}nav-link--active{% endif %}">
+      📊 Статистика
     </a>
     <a href="/library" class="nav-link {% if request.url.path.startswith('/library') %}nav-link--active{% endif %}">
       📚 Библиотека
@@ -36,6 +35,9 @@
     <a href="/help"
        class="nav-link {% if request.url.path in _help_paths %}nav-link--active{% endif %}">
       📖 Справка
+    </a>
+    <a href="/missions" class="nav-link {% if request.url.path == '/missions' %}nav-link--active{% endif %}">
+      🕘 История
     </a>
     {% if current_user and current_user.is_admin %}
     <a href="/admin" class="nav-link {% if request.url.path == '/admin' %}nav-link--active{% endif %}">

@@ -449,10 +449,10 @@ class RobotCanvas {
     const wpTotal = (m.waypoints || []).length;
     const acDone = (p.actions_done || []).length;
     const acTotal = (m.actions || []).length;
-    const coef = Math.round((p.coefficient ?? 1) * 100);
+    const precision = Math.round((p.coefficient ?? 1) * 100);
     let text = `⭐ ${stars}  ·  точки ${wpDone}/${wpTotal}`;
     if (acTotal) text += `  ·  действия ${acDone}/${acTotal}`;
-    text += `  ·  коэф ${coef}%`;
+    text += `  ·  точность ${precision}%`;
     if (!p.in_margin && p.in_margin !== undefined) text += '  ·  ⚠ отклонение';
 
     ctx.save();

@@ -58,8 +58,15 @@ def path_total_length(path: list[tuple[float, float]]) -> float:
 
 # ── ActiveMission ──────────────────────────────────────────────────────────
 
-# Радиус «достижения» waypoint — попадание в этот круг засчитывает посещение.
-WAYPOINT_TOLERANCE_CM = 10.0
+# Допуск попадания в waypoint = safety_margin_cm миссии (= Запас безопасности
+# пользователя на момент генерации). Это симметрично с проверкой отклонения
+# от траектории: можно отклоняться в пределах того же радиуса, в пределах
+# которого засчитывается точка. Проверяется не точка (которую робот может
+# «проскочить» между двумя кадрами на быстрой скорости), а ОТРЕЗОК движения
+# за один тик: точка засчитана, если её расстояние до отрезка
+# (prev_pos → curr_pos) ≤ safety_margin_cm.
+# Константа оставлена как fallback для миссий с safety_margin_cm = 0.
+WAYPOINT_FALLBACK_TOLERANCE_CM = 1.0
 
 # Радиус матчинга действия с зоной (для зон-действий).
 ACTION_TOLERANCE_CM = 15.0
@@ -97,7 +104,13 @@ class ActiveMission:
     coefficient:       float    = 1.0
     deviations:        int      = 0
     last_in_margin:    bool     = True
+    # Последняя позиция робота — нужна для проверки waypoint по отрезку
+    # движения (см. mark_waypoint_visits). None = первый кадр.
+    last_robot_pos:    Optional[tuple[float, float]] = None
     started_at:        datetime = field(default_factory=datetime.utcnow)
+    # Время последнего прогона программы через ▶ Запустить (с момента
+    # нажатия до опустошения очереди). Метрика «эффективность алгоритма».
+    last_algo_duration_sec: Optional[float] = None
 
     # ── Трекинг отклонения и обновление коэффициента ─────────────────────
 
@@ -126,13 +139,33 @@ class ActiveMission:
     # ── Чекпоинты и действия ─────────────────────────────────────────────
 
     def mark_waypoint_visits(self, robot_x: float, robot_y: float) -> list[int]:
-        """Отметить waypoints, в радиус которых попал робот. Возвращает
-        список индексов точек, посещённых ИМЕННО на этом тике (новые)."""
+        """Отметить waypoints, через которые робот ПРОЕХАЛ.
+
+        Допуск = safety_margin_cm миссии (Запас безопасности). Это тот же
+        радиус, в пределах которого «отклонение от траектории» считается
+        приемлемым — симметричная логика.
+
+        Проверяется не точка (текущая позиция), а ОТРЕЗОК движения за
+        один тик: точка засчитана, если расстояние от неё до отрезка
+        (prev_pos → curr_pos) ≤ допуска. Это устраняет «проскок» через
+        точку на быстрой скорости, когда между двумя push_state робот
+        может уйти на 5-10 см и при точечной проверке промахнуться.
+
+        На первом кадре отрезка ещё нет — fallback на точку."""
+        tolerance = self.safety_margin_cm if self.safety_margin_cm > 0 \
+                    else WAYPOINT_FALLBACK_TOLERANCE_CM
+        prev = self.last_robot_pos
+        self.last_robot_pos = (robot_x, robot_y)
         new = []
         for i, (wx, wy) in enumerate(self.waypoints):
             if i in self.waypoints_visited:
                 continue
-            if math.hypot(robot_x - wx, robot_y - wy) <= WAYPOINT_TOLERANCE_CM:
+            if prev is None:
+                d = math.hypot(robot_x - wx, robot_y - wy)
+            else:
+                d = _dist_point_to_segment(wx, wy, prev[0], prev[1],
+                                            robot_x, robot_y)
+            if d <= tolerance:
                 self.waypoints_visited.add(i)
                 new.append(i)
         return new
@@ -166,14 +199,51 @@ class ActiveMission:
         all_actions   = (len(self.actions_done) == len(self.actions_required))
         return all_waypoints and all_actions
 
-    def compute_stars(self) -> int:
-        """Финальное количество звёзд = (waypoints + actions) × coefficient,
-        округлено вниз. Минимум 1 звезда если миссия завершена."""
-        base = len(self.waypoints_visited) + len(self.actions_done)
-        stars = math.floor(base * self.coefficient)
-        if self.is_complete() and stars < 1:
-            stars = 1
-        return int(stars)
+    def compute_stars(self, duration_sec: Optional[float] = None) -> int:
+        """Финальное количество звёзд = факт + бонус_точности + бонус_скорости.
+
+        Факт: 1 звезда за каждую посещённую точку + 1 за каждое
+              выполненное действие. Не зависит от траектории — если робот
+              физически попал на точку, звезда гарантирована.
+
+        Бонус точности: floor(база × coefficient). При точности 100%
+              удваивает базу. При точности 0% бонуса нет.
+
+        Бонус скорости (если duration_sec задан): до +2 звёзд за быстрое
+              прохождение, см. time_bonus_stars."""
+        return (self.fact_stars()
+                + self.track_bonus_stars()
+                + self.time_bonus_stars(duration_sec))
+
+    def fact_stars(self) -> int:
+        """Звёзды-факт: по 1 за каждую посещённую точку и выполненное действие."""
+        return len(self.waypoints_visited) + len(self.actions_done)
+
+    def track_bonus_stars(self) -> int:
+        """Бонусные звёзды за точность траектории."""
+        return int(math.floor(self.fact_stars() * self.coefficient))
+
+    def time_bonus_stars(self, duration_sec: Optional[float]) -> int:
+        """Бонусные звёзды за скорость прохождения.
+
+        Шкала привязана к количеству waypoints в миссии:
+            target = 10 секунд × n_waypoints
+            ≤ target/2 → 2⭐
+            ≤ target   → 1⭐
+            > target   → 0
+        Бонус даётся только если миссия выполнена (есть посещённые точки
+        ИЛИ выполненные действия) и duration_sec известен."""
+        if duration_sec is None or duration_sec <= 0:
+            return 0
+        if self.fact_stars() == 0:
+            return 0
+        n = max(1, len(self.waypoints))
+        target_sec = 10.0 * n
+        if duration_sec <= target_sec / 2.0:
+            return 2
+        if duration_sec <= target_sec:
+            return 1
+        return 0
 
     # ── Сериализация для клиента ─────────────────────────────────────────
 
@@ -202,6 +272,8 @@ class ActiveMission:
             "deviations":        self.deviations,
             "in_margin":         self.last_in_margin,
             "stars_now":         self.compute_stars(),
+            "stars_fact":        self.fact_stars(),
+            "stars_track":       self.track_bonus_stars(),
             "complete":          self.is_complete(),
         }
 

@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+
+{% block title %}VEGAREX — Статистика{% endblock %}
+
+{% block content %}
+<div class="page-header page-header--compact">
+  <h1>📊 Статистика прохождения</h1>
+  <p class="subtitle">
+    Общий результат и лучшие показатели по каждой миссии. Считаются только
+    завершённые прохождения (включая досрочно остановленные).
+  </p>
+</div>
+
+{# Формат «MM:SS» из секунд. #}
+{% macro fmt_time(seconds) -%}
+  {%- if seconds and seconds > 0 -%}
+    {%- set mm = (seconds // 60)|int -%}
+    {%- set ss = (seconds % 60)|int -%}
+    {{ '%02d:%02d'|format(mm, ss) }}
+  {%- else -%}—{%- endif -%}
+{%- endmacro %}
+
+<section class="card">
+  <h2 class="card__title">Сводка</h2>
+  <div class="stats-grid">
+    <div class="stats-item">
+      <span class="stats-label">Завершённых прохождений</span>
+      <span class="stats-value">{{ total_runs }}</span>
+    </div>
+    <div class="stats-item">
+      <span class="stats-label">Из них успешных</span>
+      <span class="stats-value">{{ success_runs }}</span>
+    </div>
+    <div class="stats-item">
+      <span class="stats-label">⭐ Звёзд набрано</span>
+      <span class="stats-value stats-value--accent">{{ total_stars }}</span>
+    </div>
+    <div class="stats-item">
+      <span class="stats-label">Средняя точность</span>
+      <span class="stats-value">{{ avg_precision_pct }}%</span>
+    </div>
+    <div class="stats-item">
+      <span class="stats-label">⏱ Общее время заданий</span>
+      <span class="stats-value">{{ fmt_time(total_duration_sec) }}</span>
+    </div>
+    <div class="stats-item">
+      <span class="stats-label">⚙ Общее время алгоритмов</span>
+      <span class="stats-value">{{ fmt_time(total_algo_duration_sec) }}</span>
+    </div>
+  </div>
+</section>
+
+<section class="card">
+  <h2 class="card__title">Лучшие результаты по миссиям</h2>
+  {% if rows %}
+  <table class="stats-table">
+    <thead>
+      <tr>
+        <th class="stats-table__col-num">№</th>
+        <th>Миссия</th>
+        <th>Лучшие ⭐</th>
+        <th>Лучшая точность</th>
+        <th title="С активации миссии до завершения">Лучшее время задания</th>
+        <th title="Длительность последнего прогона ▶ Запустить код">Лучшее время алгоритма</th>
+        <th>Прохождений</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td class="stats-table__num">{{ loop.index }}</td>
+        <td>
+          <a href="/?mission={{ r.mission_id }}" title="Пройти заново">{{ r.title }}</a>
+        </td>
+        <td class="stats-table__stars">
+          {% if r.best_stars > 0 %}
+            <strong>{{ r.best_stars }}</strong>⭐
+          {% else %}—{% endif %}
+        </td>
+        <td>{{ r.best_prec }}%</td>
+        <td>{{ fmt_time(r.best_time) }}</td>
+        <td>{{ fmt_time(r.best_algo) }}</td>
+        <td>{{ r.runs_count }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty-hint">
+    Пока нет данных. Откройте <a href="/tasks#catalog">📋 Миссии → Каталог</a>
+    и пройдите хоть одну — здесь появится сводка.
+  </p>
+  {% endif %}
+</section>
+
+{% if current_user and current_user.is_admin %}
+<section class="card">
+  <h2 class="card__title">🛡 Администрирование</h2>
+  <p class="hint">
+    Сбросить статистику всех пользователей. Удаляются все записи
+    прохождений миссий (MissionRun). Сами миссии и их данные остаются
+    нетронутыми, карточки «Набрано: N⭐» в каталоге исчезнут.
+  </p>
+  <form method="POST" action="/stats/reset" class="settings-actions"
+        onsubmit="return confirm('Сбросить ВСЮ статистику прохождений? Это действие необратимо.');">
+    <button type="submit" class="btn btn--danger">🗑 Сбросить статистику</button>
+  </form>
+</section>
+{% endif %}
+{% endblock %}

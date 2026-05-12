@@ -99,6 +99,25 @@ class TestHelperRegistry(unittest.TestCase):
             except SyntaxError as e:
                 self.fail(f"helper {name!r} не парсится: {e}")
 
+    def test_helpers_use_only_real_1trex_api(self):
+        """Регрессия: helpers НЕ должны использовать выдуманные robot.X
+        вызовы (которых нет в 1T REX API). Список реальных примитивов —
+        см. templates/system.html. Если код попадёт на железо с такой
+        командой — сразу AttributeError. Проверяем явные «нельзя» —
+        get_gps, wait_for_charge, report_position и т.п."""
+        FORBIDDEN = [
+            "robot.get_gps",
+            "robot.wait_for_charge",
+            "report_position(",
+            "report_full_status(",
+        ]
+        for name, (_desc, code) in self.s._HELPER_CODE.items():
+            for bad in FORBIDDEN:
+                self.assertNotIn(
+                    bad, code,
+                    f"helper {name!r} использует НЕРЕАЛЬНЫЙ API {bad!r} — "
+                    f"при копировании на железо вызов упадёт. См. system.html.")
+
 
 class TestCollectHelpers(unittest.TestCase):
     """Транзитивный сбор зависимостей."""
@@ -312,7 +331,7 @@ class TestGotoOptimization(unittest.TestCase):
         helpers = self.s._helpers_for_cmd(cmd)
         self.assertEqual(helpers, ["duration"])
 
-        # Call lines: robot.move с положительной мощностью
+        # Call lines: robot.move с явным литералом мощности
         lines = self.s._python_call_lines_for_cmd(cmd)
         joined = "\n".join(lines)
         self.assertIn("robot.move(40, duration(100", joined)
@@ -668,7 +687,12 @@ class TestFaceTo(unittest.TestCase):
             "вега развернись на 90 градусов",
             "вега лицом на 70",
             "вега лицом на 137",
-            "вега повернись на -30",   # отрицательный угол
+            "вега повернись на -30",       # отрицательный угол
+            # Инфинитивы — раньше не понимались, теперь обязательно должны.
+            "вега повернуть на 70",
+            "вега повернуться на 70",
+            "вега развернуть на 70",
+            "вега развернуться на 70",
         ]
         for phrase in cases:
             with self.subTest(phrase=phrase):
@@ -676,6 +700,17 @@ class TestFaceTo(unittest.TestCase):
                 self.assertEqual(
                     intent, "face_to",
                     f"{phrase!r} → ожидался face_to, получен {intent}")
+
+    def test_infinitive_without_number_is_turn_around(self):
+        """Инфинитивы «развернуться»/«повернуться» без числа = разворот 180°,
+        как «развернись» / «разворот»."""
+        from nlu import predict
+        for phrase in ["вега развернуться", "вега повернуться",
+                       "вега повернись"]:
+            with self.subTest(phrase=phrase):
+                intent, _ = predict(phrase)
+                self.assertEqual(intent, "turn_around",
+                                 f"{phrase!r} должен быть turn_around, получен {intent}")
 
     def test_litsom_na_cardinal_still_works(self):
         """«лицом на восток/север/...» БЕЗ числа должно идти в face_X,

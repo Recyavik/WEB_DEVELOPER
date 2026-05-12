@@ -1481,16 +1481,16 @@ follow_path_cmd(path, 60, 25)          <span class="c"># помедленнее 
 <span class="k">def</span> mark_danger_cmd(x, y, radius):
     pass                                  <span class="c"># на физическом роботе: отправить в карту обстановки</span>
 
-<span class="c"># 2. Отметить «здесь» — берем текущие координаты робота.</span>
+<span class="c"># 2. Отметить «здесь» — у 1T REX нет GPS, берём координаты из нашей одометрии.</span>
 <span class="k">def</span> danger_here_cmd():
-    pos = robot.get_gps()                 <span class="c"># на 1T REX get_gps() = текущая одометрия (x, y)</span>
-    <span class="c"># карта.add_danger_zone(pos['x'], pos['y'], DANGER_RADIUS)</span>
+    odo.sync_heading()                    <span class="c"># обновить курс с гироскопа</span>
+    <span class="c"># карта.add_danger_zone(odo.x, odo.y, DANGER_RADIUS)</span>
 
 <span class="c"># 3. Алгоритмическая зона: доехать в точку и пометить.</span>
 <span class="k">def</span> attention_zone_cmd(target_x, target_y, radius):
     goto_cmd(target_x, target_y)          <span class="c"># сначала добираемся до точки</span>
-    pos = robot.get_gps()                 <span class="c"># берем фактические координаты после goto</span>
-    <span class="c"># карта.add_algo_zone(pos['x'], pos['y'], radius)</span>
+    <span class="c"># после goto_cmd одометрия знает где робот</span>
+    <span class="c"># карта.add_algo_zone(odo.x, odo.y, radius)</span>
 
 <span class="c"># 4. Снять зону любого типа, в которую попадает точка.</span>
 <span class="k">def</span> remove_zone_cmd(x, y):

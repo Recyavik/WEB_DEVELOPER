@@ -282,8 +282,29 @@ class UserSession:
                 await self.push_message(
                     f"Миссия #{mission_id} не найдена.", "error")
                 return False
-            # Сначала reset поля — стартовая точка из настроек, зоны
-            # сбрасываются, _program пустеет. Это даёт чистый старт миссии.
+            # Стартовая точка миссии = path[0] (генератор кладёт туда
+            # start_x/start_y использованного WorldGeom). Если она отличается
+            # от текущей настройки пользователя — обновляем UserSettings,
+            # чтобы не лезть в /settings руками каждый раз при смене миссии.
+            path = json.loads(row.path or "[]")
+            if path:
+                new_sx = float(path[0][0])
+                new_sy = float(path[0][1])
+                if (abs(new_sx - self.cfg.start_x_cm) > 0.1 or
+                        abs(new_sy - self.cfg.start_y_cm) > 0.1):
+                    self.cfg.start_x_cm = new_sx
+                    self.cfg.start_y_cm = new_sy
+                    us = (db.query(UserSettings)
+                            .filter(UserSettings.user_id == self.user_id).first())
+                    if us is not None:
+                        us.start_x_cm = new_sx
+                        us.start_y_cm = new_sy
+                        db.commit()
+                    await self.push_message(
+                        f"📍 Стартовая точка миссии: ({new_sx:.0f}, {new_sy:.0f}).",
+                        "info")
+            # Сброс поля — теперь робот встанет в обновлённую стартовую точку,
+            # зоны сбрасываются, _program пустеет.
             # keep_mode=True — режим «осторожно» сохраняется через активацию,
             # иначе action-кнопки моргают между синим и жёлтым.
             await self._run_reset(db, keep_mode=True)
@@ -318,6 +339,61 @@ class UserSession:
         await self.push_state()
         return True
 
+    async def run_check(self) -> bool:
+        """Прогон программы для активной миссии — без автозавершения.
+
+        Сбрасываем счётчики прохождения (каждый прогон оценивает только
+        ПОСЛЕДНЕЕ исполнение по точкам и точности — иначе старый успех
+        даёт звёзды даже если код испортили), запускаем _program через
+        очередь, ждём опустошения, замеряем время и НАКАПЛИВАЕМ его в
+        last_algo_duration_sec — суммарное время алгоритма по всем
+        прогонам в этой миссии. Это лёгкий штраф за «попытки методом
+        подбора»: чем больше раз запустил, тем хуже метрика эффективности.
+
+        Финал — отдельным действием через finalize_mission (кнопка
+        «🏁 Проверка задания»). До тех пор миссия активна, можно жать ▶
+        повторно, править код, делать новые прогоны."""
+        if self._mission is None:
+            return False
+        if not self._program:
+            await self.push_message(
+                "Программа пуста — нечего запускать.", "warning")
+            return False
+        m = self._mission
+        m.waypoints_visited.clear()
+        m.actions_done.clear()
+        m.coefficient        = 1.0
+        m.deviations         = 0
+        m.last_in_margin     = True
+        m.last_robot_pos     = None
+        algo_start_t = time.monotonic()
+        await self._run_program()
+        while self._pending or self._executing is not None:
+            await asyncio.sleep(0.1)
+        run_dur = time.monotonic() - algo_start_t
+        if self._mission is not None:
+            cumulative = (self._mission.last_algo_duration_sec or 0.0) + run_dur
+            self._mission.last_algo_duration_sec = round(cumulative, 2)
+            wp_done = len(self._mission.waypoints_visited)
+            wp_total = len(self._mission.waypoints)
+            prec = int(round(self._mission.coefficient * 100))
+            await self.push_message(
+                f"✓ Прогон завершён за {run_dur:.1f} с "
+                f"(всего {cumulative:.1f} с). "
+                f"Точки {wp_done}/{wp_total}, точность {prec}%. "
+                f"Жми 🏁 Проверка задания для финала.",
+                "info")
+        return True
+
+    async def finalize_mission(self) -> bool:
+        """Финальная оценка миссии — фиксирует результат последнего прогона.
+        Если все цели достигнуты → success. Иначе → не выполнено (0 звёзд).
+        Время задания (с активации) и накопленное время алгоритма сохраняются."""
+        if self._mission is None:
+            return False
+        await self.stop_mission(success=self._mission.is_complete())
+        return True
+
     def _mission_check_action(self, action_type: str,
                               x: float, y: float) -> None:
         """Если идёт миссия — проверить, не удовлетворяет ли это действие
@@ -346,16 +422,26 @@ class UserSession:
         m = self._mission
         if success is None:
             success = m.is_complete()
-        stars = m.compute_stars() if success else 0
+        ended_at = datetime.utcnow()
+        duration_sec = max(0.0, (ended_at - m.started_at).total_seconds())
+        # Финальная разбивка звёзд: факт + точность + скорость (только при успехе).
+        fact_stars  = m.fact_stars()
+        track_stars = m.track_bonus_stars()
+        time_stars  = m.time_bonus_stars(duration_sec) if success else 0
+        stars = (fact_stars + track_stars + time_stars) if success else 0
+        precision_pct = int(round(m.coefficient * 100))
+        algo_duration = round(m.last_algo_duration_sec or 0.0, 2)
         if m.run_id is not None:
             db = SessionLocal()
             try:
                 run = db.query(MissionRun).filter(MissionRun.id == m.run_id).first()
                 if run:
-                    run.completed_at      = datetime.utcnow()
+                    run.completed_at      = ended_at
                     run.stars             = stars
                     run.coefficient       = round(m.coefficient, 4)
                     run.deviations        = m.deviations
+                    run.duration_sec      = round(duration_sec, 2)
+                    run.algo_duration_sec = algo_duration
                     run.waypoints_visited = json.dumps(sorted(m.waypoints_visited))
                     run.actions_done      = json.dumps(sorted(m.actions_done))
                     run.success           = bool(success)
@@ -375,13 +461,28 @@ class UserSession:
             "title":       m.title or "",
             "success":     bool(success),
             "stars":       stars,
+            "stars_fact":  fact_stars,
+            "stars_track": track_stars,
+            "stars_time":  time_stars,
             "coefficient": round(m.coefficient, 3),
+            "precision_pct": precision_pct,
             "deviations":  m.deviations,
+            "duration_sec": round(duration_sec, 1),
+            "algo_duration_sec": algo_duration,
         })
+        # Форматирование времени для журнала.
+        def _fmt(sec):
+            mm = int(sec // 60); ss = int(sec % 60)
+            return f"{mm:02d}:{ss:02d}"
+        time_str = _fmt(duration_sec)
+        algo_str = _fmt(algo_duration) if algo_duration > 0 else "—"
         await self.push_message(
             f"🏁 Задание {mission_label} завершено: "
             f"{'✓ успех' if success else '✗ не выполнено'}. "
-            f"⭐ {stars}, коэф. {m.coefficient:.2f}, отклонений: {m.deviations}.",
+            f"⭐ {stars} (точки {fact_stars} + точность {track_stars} "
+            f"+ скорость {time_stars}), "
+            f"точность {precision_pct}%, время задания {time_str}, "
+            f"время алгоритма {algo_str}, отклонений: {m.deviations}.",
             "success" if success else "warning")
         self._mission = None
 
@@ -491,13 +592,16 @@ class UserSession:
             "lines": self._program_lines(),
             "text":  self._program_text(),
         })
-        # Если уже идёт миссия (например пользователь обновил страницу) —
-        # доставим её состояние новому подключению.
+        # Явный сигнал о статусе миссии: либо активная (с данными), либо
+        # «нет миссии». Это нужно, чтобы клиент после рестарта сервера
+        # не зависал в «миссия есть, а на сервере её нет» и понятно сбросил UI.
         if self._mission is not None:
             await ws.send_json({
                 "type":    "mission_active",
                 "mission": self._mission.to_client_dict(),
             })
+        else:
+            await ws.send_json({"type": "mission_inactive"})
 
     def remove_ws(self, ws: WebSocket):
         if ws in self._connections:
@@ -571,8 +675,11 @@ class UserSession:
     async def push_state(self):
         # Mission tracking: на каждый push_state — обновляем коэффициент и
         # отмечаем посещённые waypoints. Если миссия завершилась — авто-стоп.
+        # Во время K-turn (s.turning_in_place) робот съезжает с прямой
+        # waypoint→waypoint по геометрии Reeds-Shepp — игнорируем эти
+        # кадры, чтобы развороты на месте не штрафовали оценку миссии.
         mission_progress = None
-        if self._mission is not None:
+        if self._mission is not None and not self.robot_state.turning_in_place:
             s = self.robot_state
             self._mission.update_coefficient(s.x, s.y)
             new_visits = self._mission.mark_waypoint_visits(s.x, s.y)
@@ -582,9 +689,10 @@ class UserSession:
                     f"✓ Точка {idx + 1} ({wp[0]:.0f}, {wp[1]:.0f}) посещена.",
                     "success")
             mission_progress = self._mission.progress_dict()
-            if self._mission.is_complete():
-                await self.stop_mission(success=True)
-                mission_progress = None
+            # Авто-стоп при is_complete УБРАН: финал миссии теперь только
+            # через явное действие пользователя — кнопка «🏁 Проверка
+            # задания» или «⏹ Стоп миссия». Это позволяет пробовать
+            # программу несколько раз без потери активного состояния.
         payload = {
             "type":  "state",
             "robot": self._state_dict_with_effective(),
@@ -1757,7 +1865,11 @@ class UserSession:
                   При этом курс может слегка сбиться.
           Фаза 3: если курс сбился больше TOL_HDG — короткий доразворот
                   мелкими дугами (по 5..8° каждая), чтобы вернуть точный курс.
-        Фазы 2+3 повторяются итеративно до сходимости либо MAX_ITER раз."""
+        Фазы 2+3 повторяются итеративно до сходимости либо MAX_ITER раз.
+
+        Флаг `s.turning_in_place` поднимается на весь манёвр — оценка
+        миссии (update_coefficient) игнорирует отклонения, пока он True,
+        потому что K-turn по геометрии съезжает с прямой waypoint→waypoint."""
         s = self.robot_state
         target_deg = float(target_deg) % 360
         diff = (target_deg - s.heading + 540.0) % 360.0 - 180.0
@@ -1765,6 +1877,7 @@ class UserSession:
             s.heading = target_deg
             await self.push_state()
             return
+        s.turning_in_place = True
 
         spd       = self.cfg.move_speed
         STEER     = 36
@@ -1829,11 +1942,20 @@ class UserSession:
             s.speed     = 0
             s.steer     = 0.0
             s.dist_left = 0
+            s.turning_in_place = False
             await self.robot.stop()
             await self.robot.set_servo_center()
 
         # Финальный мягкий снэп ТОЛЬКО курса (позиция уже корректирована Фазой 2).
         s.heading = target_deg
+        # При сбросе флага последняя позиция в mission_state могла
+        # «застрять» где-то на дуге K-turn. Без сброса первая же проверка
+        # отрезка (last_pos → новая позиция) пересечёт всю кривую и могла
+        # бы засчитать ложное отклонение или waypoint. Сбрасываем
+        # last_robot_pos — следующая проверка пойдёт от текущей позиции.
+        if self._mission is not None:
+            self._mission.last_robot_pos = None
+            self._mission.last_in_margin = True
         await self.push_state()
 
     async def _k_turn_arcs(self, total_deg: float, STEER: int, spd: int,
@@ -2429,10 +2551,11 @@ class UserSession:
         "bypass_cmd":             [],
         "course_cmd":         [],
         "mark_danger_cmd":        [],
-        "danger_here_cmd":   [],
-        "attention_zone_cmd": ["goto_cmd"],
+        # У 1T REX нет GPS — для «здесь» (under-robot) хелперов нужна Odometry.
+        "danger_here_cmd":   ["Odometry"],
+        "attention_zone_cmd": ["goto_cmd"],   # goto_cmd транзитивно тянет Odometry
         "remove_zone_cmd":        [],
-        "clear_here_cmd":   [],
+        "clear_here_cmd":   ["Odometry"],
     }
 
     # Каждый helper — пара (русский заголовок-комментарий, код).
@@ -2592,22 +2715,24 @@ odo = Odometry()    # глобальный экземпляр одометрии
 '''),
         "to_wall_cmd": (
             "Движение вперёд до препятствия по дальномеру",
-            r'''def to_wall_cmd(power_pct=DEFAULT_SPEED, stop_margin_mm=150):
+            r'''def to_wall_cmd(power_pct=DEFAULT_SPEED, stop_margin_cm=15):
+    # robot.get_laser() возвращает расстояние в сантиметрах.
     robot.move(power_pct)
     while True:
         dist = robot.get_laser()
-        if dist is None or dist <= stop_margin_mm:
+        if dist is None or dist <= stop_margin_cm:
             robot.stop()
             break
         time.sleep(0.05)
 '''),
         "back_to_wall_cmd": (
             "Движение назад до препятствия по дальномеру",
-            r'''def back_to_wall_cmd(power_pct=DEFAULT_SPEED, stop_margin_mm=150):
+            r'''def back_to_wall_cmd(power_pct=DEFAULT_SPEED, stop_margin_cm=15):
+    # robot.get_laser() возвращает расстояние в сантиметрах.
     robot.move(-power_pct)
     while True:
         dist = robot.get_laser()
-        if dist is None or dist <= stop_margin_mm:
+        if dist is None or dist <= stop_margin_cm:
             robot.stop()
             break
         time.sleep(0.05)
@@ -2691,17 +2816,18 @@ odo = Odometry()    # глобальный экземпляр одометрии
     pass
 '''),
         "danger_here_cmd": (
-            "Отметить опасную зону под текущей позицией робота",
-            r'''def danger_here_cmd():
-    pos = robot.get_gps()
-    # отметить (pos['x'], pos['y']) на карте
+            "Отметить опасную зону под текущей позицией робота (по одометрии)",
+            r'''def danger_here_cmd(radius=10):
+    # У 1T REX нет GPS — текущую позицию берём из нашей одометрии (odo).
+    odo.sync_heading()
+    # отметить (odo.x, odo.y, radius) на карте
 '''),
         "attention_zone_cmd": (
-            "Доехать в точку и пометить зону внимания",
+            "Доехать в точку и пометить зону внимания (по одометрии после goto)",
             r'''def attention_zone_cmd(target_x, target_y, radius):
     goto_cmd(target_x, target_y)
-    pos = robot.get_gps()
-    # отметить зону: (pos['x'], pos['y'], radius)
+    # После goto_cmd одометрия знает где робот — используем её.
+    # отметить зону: (odo.x, odo.y, radius)
 '''),
         "remove_zone_cmd": (
             "Удалить зону любого типа по координатам",
@@ -2709,10 +2835,11 @@ odo = Odometry()    # глобальный экземпляр одометрии
     pass
 '''),
         "clear_here_cmd": (
-            "Удалить зону под текущей позицией робота",
+            "Удалить зону под текущей позицией робота (по одометрии)",
             r'''def clear_here_cmd():
-    pos = robot.get_gps()
-    # удалить зону под (pos['x'], pos['y'])
+    # У 1T REX нет GPS — текущую позицию берём из нашей одометрии (odo).
+    odo.sync_heading()
+    # удалить зону под (odo.x, odo.y)
 '''),
     }
 
@@ -2775,6 +2902,10 @@ odo = Odometry()    # глобальный экземпляр одометрии
             "face_w":             ["face_cmd"],
             "face_nw":            ["face_cmd"],
             "face_to":            ["face_cmd"],
+            # report_pos/report_status печатают позицию из одометрии —
+            # одометрию надо определить даже если команда не двигает робота.
+            "report_pos":         ["Odometry"],
+            "report_status":      ["Odometry"],
         }
         if intent in static:
             return list(static[intent])
@@ -2818,24 +2949,31 @@ odo = Odometry()    # глобальный экземпляр одометрии
             "# Python-скрипт для 1T REX. Описание системы команд — раздел «Справка → API 1T REX».\n"
             "import math, time\n"
             "\n"
-            f"DEFAULT_SPEED         = {c.move_speed}\n"
-            f"DEFAULT_TURN_ANGLE    = {c.turn_angle}\n"
-            f"SPEED_CM_PER_S_AT_100 = {c.speed_at_100:.1f}\n"
-            f"WHEEL_CIRC_CM         = {c.wheel_circ_cm:.2f}\n"
-            f"HEADING_DEG_PER_ROT   = {c.heading_per_rot:.2f}\n"
-            f"WALL_THICKNESS_CM     = {c.wall_thickness_cm:.1f}\n"
-            f"ROBOT_LENGTH_CM       = {c.robot_length_cm:.1f}\n"
-            f"ROBOT_WIDTH_CM        = {c.robot_width_cm:.1f}\n"
+            "# ── Параметры движения по умолчанию ──────────────────────────\n"
+            f"DEFAULT_SPEED         = {c.move_speed}     # мощность мотора по умолчанию, % (диапазон -100..+100)\n"
+            f"DEFAULT_TURN_ANGLE    = {c.turn_angle}     # угол руля по умолчанию, ° (диапазон -45..+45; 0 = прямо)\n"
             "\n"
-            f"LIGHT_INDEX           = {LIGHT_INDEX}\n"
-            f"LIGHT_COUNT           = {LIGHT_COUNT}\n"
-            f"LIGHT_DEFAULT_COLOR   = {LIGHT_DEFAULT_COLOR}\n"
+            "# ── Калибровка одометрии (зависит от шасси и батареи) ────────\n"
+            f"SPEED_CM_PER_S_AT_100 = {c.speed_at_100:.1f}   # реальная скорость при 100% мощности, см/с\n"
+            f"WHEEL_CIRC_CM         = {c.wheel_circ_cm:.2f}  # длина окружности колеса, см (для D90 ≈ π × 9 ≈ 28.3)\n"
+            f"HEADING_DEG_PER_ROT   = {c.heading_per_rot:.2f}  # изменение курса за оборот колеса при max угле руля, °\n"
             "\n"
-            "# Стартовая точка робота — используется как «домой» и для сброса одометрии.\n"
-            "# Координаты — числа в системе мира (без единиц измерения).\n"
-            f"START_X               = {c.start_x_cm:.1f}\n"
-            f"START_Y               = {c.start_y_cm:.1f}\n"
-            f"START_HEADING_DEG     = {c.start_heading_deg:.1f}\n"
+            "# ── Геометрия мира и робота (для проверки проходимости) ──────\n"
+            f"WALL_THICKNESS_CM     = {c.wall_thickness_cm:.1f}    # толщина стен арены, см\n"
+            f"ROBOT_LENGTH_CM       = {c.robot_length_cm:.1f}   # длина робота от носа до кормы, см\n"
+            f"ROBOT_WIDTH_CM        = {c.robot_width_cm:.1f}   # ширина робота, см\n"
+            "\n"
+            "# ── RGB-индикатор на плате ───────────────────────────────────\n"
+            f"LIGHT_INDEX           = {LIGHT_INDEX}      # индекс первого LED в ленте (0 = первый)\n"
+            f"LIGHT_COUNT           = {LIGHT_COUNT}      # сколько LED подряд зажигать одной командой\n"
+            f"LIGHT_DEFAULT_COLOR   = {LIGHT_DEFAULT_COLOR}  # цвет «по умолчанию», кортеж (R, G, B) 0..255\n"
+            "\n"
+            "# ── Стартовая точка робота — «домой» и сброс одометрии ──────\n"
+            "# X/Y — координаты в системе мира (числа, без единиц).\n"
+            "# Курс 0° = «север» (вверх по экрану).\n"
+            f"START_X               = {c.start_x_cm:.1f}     # стартовая X\n"
+            f"START_Y               = {c.start_y_cm:.1f}     # стартовая Y\n"
+            f"START_HEADING_DEG     = {c.start_heading_deg:.1f}     # стартовый курс, ° (0=N, 90=E, 180=S, 270=W)\n"
         )
 
     def _python_code_preamble(self, cmds=None) -> str:
@@ -3074,9 +3212,20 @@ odo = Odometry()    # глобальный экземпляр одометрии
         elif intent == "reset":
             code_lines += [f"{stop()}  # сброс — остановка"]
         elif intent == "report_pos":
-            code_lines += ["report_position()  # вывести текущие координаты и курс"]
+            # У 1T REX нет GPS — позиция из нашей одометрии, курс с гироскопа.
+            code_lines += [
+                "odo.sync_heading()",
+                "print(f'позиция: ({odo.x:.1f}, {odo.y:.1f}) курс: {odo.heading:.0f}°')",
+            ]
         elif intent == "report_status":
-            code_lines += ["report_full_status()  # полный статус: позиция, скорость, режим, заряд"]
+            # Тоже только через реальные API: позиция/курс из одометрии,
+            # дальномер и цвет с датчиков. Скорости/заряда у платы не вытащить.
+            code_lines += [
+                "odo.sync_heading()",
+                "laser = robot.get_laser()",
+                "print(f'позиция: ({odo.x:.1f}, {odo.y:.1f}) курс: {odo.heading:.0f}° '",
+                "      f'лазер: {laser} см')",
+            ]
         elif intent == "light_on":
             code_lines += [f"{light('LIGHT_DEFAULT_COLOR')}  # включить световой индикатор"]
         elif intent == "light_off":
@@ -3365,7 +3514,7 @@ odo = Odometry()    # глобальный экземпляр одометрии
             await self._run_reset(db, keep_mode=bool(cmd.playback))
             msg = "Поле очищено."
         elif intent == "report_pos":
-            msg = f"X={s.x:.0f} см, Y={s.y:.0f} см, курс={s.heading:.0f}°."
+            msg = f"X={s.x:.0f}, Y={s.y:.0f}, курс={s.heading:.0f}°."
         elif intent == "report_status":
             laser_lbl = (f"{s.laser_dist:.0f} см"
                          if (self.cfg.laser_enabled and s.laser_dist > 0)
@@ -3381,7 +3530,7 @@ odo = Odometry()    # глобальный экземпляр одометрии
                 cur_lbl = f"{s.speed:+.0f}%"
             msg = (
                 f"📊 Статус робота:\n"
-                f"  • координаты: X={s.x:.1f} см, Y={s.y:.1f} см\n"
+                f"  • координаты: X={s.x:.1f}, Y={s.y:.1f}\n"
                 f"  • курс: {s.heading:.0f}°\n"
                 f"  • руль: {s.steer:+.0f}°\n"
                 f"  • скорость установленная: {c.move_speed}%\n"
@@ -3832,6 +3981,20 @@ odo = Odometry()    # глобальный экземпляр одометрии
         if cmd is None:
             msg = "Команда не распознана." if not intent else f"Намерение «{intent}» не поддерживается."
             await self.push_message(msg, "warning")
+            return
+
+        # При активной миссии команды управления НЕ двигают робота, а
+        # только собирают программу (Python-код). Робот двигается только
+        # через ▶ Запустить код, который запускает проверку миссии.
+        # _NO_RECORD команды (mode_*, path_*) — UI-команды, выполняются
+        # как обычно.
+        if self._mission is not None and intent not in _NO_RECORD:
+            self._program.append(cmd)
+            self._save_program()
+            await self.push_program()
+            await self.push_message(
+                f"➕ {cmd.label} — добавлено в программу. "
+                f"Для проверки кода нажми ▶ Запустить.", "info")
             return
 
         self._pending.append(cmd)

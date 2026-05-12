@@ -137,16 +137,37 @@
         break;
 
       case 'mission_finished':
-        // Завершена миссия — таймер стоп, карточка задания (если была
-        // вставлена в журнал) удаляется, дальше идёт серверное сообщение
-        // «🏁 Миссия завершена...», модалка результата.
+        // Завершена миссия — таймер стоп, модалка результата.
+        // Карточку задания НЕ удаляем — пользователь хочет видеть
+        // условие, чтобы проанализировать что не сошлось. Деактивируем
+        // кнопки в ней (миссия уже не активна, нажимать бессмысленно).
         _stopMissionTimer();
-        document.querySelectorAll('#cmd-log .log-task-card')
-                .forEach(el => el.remove());
         showMissionResultModal(msg);
         if (canvas) canvas.setMission(null);
         window._currentMission = null;
         hideMissionButton();
+        document.querySelectorAll('#cmd-log .log-task-card').forEach(card => {
+          card.classList.add('log-task-card--finalized');
+          card.querySelectorAll('button').forEach(b => { b.disabled = true; });
+          // Бейдж с вердиктом в заголовок карточки.
+          const title = card.querySelector('.log-task-card__title');
+          if (title && !title.querySelector('.task-verdict')) {
+            const v = document.createElement('span');
+            v.className = 'task-verdict ' +
+              (msg.success ? 'task-verdict--ok' : 'task-verdict--fail');
+            v.textContent = msg.success ? '✓ выполнено' : '✗ не выполнено';
+            title.appendChild(v);
+          }
+        });
+        break;
+
+      case 'mission_inactive':
+        // Серверный сигнал «миссии нет» — обычно при подключении WS
+        // после рестарта сервера. Сбрасываем клиентское состояние,
+        // чтобы UI не остался в «думает что миссия идёт».
+        if (window._currentMission) {
+          _resetMissionClientState();
+        }
         break;
 
       case 'pong':
@@ -235,15 +256,50 @@
     // кнопка всегда видна — клик вставляет карточку задания в журнал
     // (либо описание миссии, либо подсказку «миссия не загружена»).
     const btn = document.getElementById('btn-show-mission');
-    if (!btn) return;
-    const title = mission ? (mission.title || `Миссия #${mission.mission_id}`) : null;
-    btn.title = title ? `Задание: ${title}` : 'Показать задание (миссия не загружена)';
+    if (btn) {
+      const title = mission ? (mission.title || `Миссия #${mission.mission_id}`) : null;
+      btn.title = title ? `Задание: ${title}` : 'Показать задание (миссия не загружена)';
+    }
   }
 
   function hideMissionButton() {
-    // Кнопка остаётся видимой — просто сбрасываем tooltip.
+    // Кнопка «📋» остаётся видимой — просто сбрасываем tooltip.
     const btn = document.getElementById('btn-show-mission');
     if (btn) btn.title = 'Показать задание (миссия не загружена)';
+  }
+
+  async function _requestMissionHint() {
+    try {
+      const r = await fetch('/missions/active/hint', {method: 'POST'});
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        if (err.error === 'no active mission' ||
+            err.error === 'no active session') {
+          _resetMissionClientState();
+          logMsg('⚠ Миссия не активна на сервере (перезагрузка?). '
+               + 'Откройте каталог и нажмите ▶ Пройти заново.', 'warning');
+        } else {
+          logMsg(`Подсказка недоступна: ${err.error || r.status}`, 'error');
+        }
+      }
+      // Серверный push_message сам положит подсказку в журнал.
+    } catch (e) {
+      logMsg(`Ошибка подсказки: ${e.message}`, 'error');
+    }
+  }
+
+  function _resetMissionClientState() {
+    // Полный сброс клиентского состояния миссии — используется, когда
+    // обнаруживаем рассинхрон (например, сервер перезагрузился и потерял
+    // активную миссию). Чтобы UI не оставался в «думает что миссия идёт».
+    _stopMissionTimer();
+    if (canvas && typeof canvas.setMission === 'function') {
+      canvas.setMission(null);
+    }
+    window._currentMission = null;
+    hideMissionButton();
+    document.querySelectorAll('#cmd-log .log-task-card')
+            .forEach(el => el.remove());
   }
 
   function _clearLogPanel() {
@@ -257,8 +313,14 @@
   function _appendTaskCard() {
     const log = document.getElementById('cmd-log');
     if (!log) return;
-    // Удаляем предыдущую карточку — не плодим дубликаты в журнале.
-    log.querySelectorAll('.log-task-card').forEach(el => el.remove());
+    // Если карточка уже есть (например осталась после finalize — мы
+    // её сохраняем как «архив задания»), просто прокрутим к ней,
+    // не плодя дубликаты и не затирая описание подсказкой «нет миссии».
+    const existing = log.querySelector('.log-task-card');
+    if (existing) {
+      existing.scrollIntoView({block: 'nearest', behavior: 'smooth'});
+      return;
+    }
     const card = document.createElement('div');
     card.className = 'log-task-card';
     const m = window._currentMission;
@@ -268,12 +330,26 @@
         `<div class="log-task-card__title">📋 ${escHtml(title)}</div>` +
         `<pre class="log-task-card__body">${escHtml(m.description || '')}</pre>` +
         `<div class="log-task-card__actions">` +
+        `  <button type="button" class="btn btn--xs js-mission-hint"` +
+        `          title="Показать угол и расстояние до ближайшей непосещённой точки">` +
+        `    💡 Подсказка</button>` +
+        `  <button type="button" class="btn btn--xs btn--success js-mission-finalize"` +
+        `          title="Зафиксировать результат: оценка по последнему прогону + суммарное время алгоритма">` +
+        `    🏁 Проверка задания</button>` +
         `  <button type="button" class="btn btn--xs js-mission-stop"` +
-        `          style="background:#3d1a1a;color:var(--danger);border-color:rgba(248,81,73,0.35)">` +
-        `    ⏹ Завершить миссию</button>` +
+        `          style="background:#3d1a1a;color:var(--danger);border-color:rgba(248,81,73,0.35)"` +
+        `          title="Отказаться от миссии — 0 звёзд">` +
+        `    ⏹ Стоп миссия</button>` +
         `</div>`;
+      card.querySelector('.js-mission-hint').addEventListener('click', _requestMissionHint);
+      card.querySelector('.js-mission-finalize').addEventListener('click', async () => {
+        if (!confirm('Зафиксировать результат миссии?\n\n'
+            + 'Звёзды считаются по ПОСЛЕДНЕМУ прогону программы.\n'
+            + 'После этого миссию можно будет запустить заново через каталог.')) return;
+        await fetch('/missions/active/finalize', {method: 'POST'});
+      });
       card.querySelector('.js-mission-stop').addEventListener('click', async () => {
-        if (!confirm('Завершить миссию досрочно (без звёзд)?')) return;
+        if (!confirm('Отказаться от миссии? Звёзд не будет.')) return;
         await fetch('/missions/active/stop', {method: 'POST'});
       });
     } else {
@@ -332,12 +408,34 @@
       which ? `Задание ${which} ${verdict}` : `Задание ${verdict}`;
     const stars = msg.stars || 0;
     const starsStr = '⭐'.repeat(Math.max(0, Math.min(10, stars)));
-    const coef = Math.round((msg.coefficient || 0) * 100);
+    const factStars  = (msg.stars_fact  != null) ? msg.stars_fact  : null;
+    const trackStars = (msg.stars_track != null) ? msg.stars_track : null;
+    const timeStars  = (msg.stars_time  != null) ? msg.stars_time  : null;
+    const precision  = (msg.precision_pct != null)
+                       ? msg.precision_pct
+                       : Math.round((msg.coefficient || 0) * 100);
+    const duration   = (msg.duration_sec != null) ? msg.duration_sec : null;
+    const algoDur    = (msg.algo_duration_sec != null) ? msg.algo_duration_sec : null;
+    const _fmt = sec => `${String(Math.floor(sec/60)).padStart(2,'0')}:${String(Math.floor(sec%60)).padStart(2,'0')}`;
+    const timeStr = duration != null ? _fmt(duration) : null;
+    const algoStr = (algoDur != null && algoDur > 0) ? _fmt(algoDur) : null;
+    let breakdown = `<div>Звёзд: <strong>${stars}</strong></div>`;
+    if (factStars != null && trackStars != null) {
+      breakdown =
+        `<div>⭐ Всего: <strong>${stars}</strong></div>` +
+        `<div style="color:var(--text-dim); font-size:0.85rem; margin-top:0.3rem">` +
+        `  За точки и действия: <strong>${factStars}</strong><br>` +
+        `  За точность траектории: <strong>${trackStars}</strong>` +
+        (timeStars != null ? `<br>  За скорость прохождения: <strong>${timeStars}</strong>` : '') +
+        `</div>`;
+    }
     modal.querySelector('.mission-result-body').innerHTML =
       `<div style="text-align:center; font-size:1.4rem; margin-bottom:0.6rem">${starsStr || '—'}</div>` +
-      `<div>Звёзд: <strong>${stars}</strong></div>` +
-      `<div>Коэффициент точности: <strong>${coef}%</strong></div>` +
-      `<div>Отклонений от траектории: <strong>${msg.deviations || 0}</strong></div>`;
+      breakdown +
+      `<div style="margin-top:0.5rem">Точность траектории: <strong>${precision}%</strong></div>` +
+      (timeStr ? `<div>Время задания: <strong>${timeStr}</strong></div>` : '') +
+      (algoStr ? `<div>Время алгоритма: <strong>${algoStr}</strong></div>` : '') +
+      `<div>Отклонений: <strong>${msg.deviations || 0}</strong></div>`;
     modal.hidden = false;
   }
 
@@ -724,15 +822,30 @@
 
   async function runPythonCode() {
     // Если активна миссия — нажатие ▶ означает «проверь моё прохождение»,
-    // а не «запусти код заново». Сервер сейчас отвечает заглушкой; завтра
-    // там появится реальная логика оценки.
+    // а не «запусти код заново».
     if (window._currentMission) {
       logMsg('🧪 Проверка миссии…', 'info');
+      const textareaEl = document.getElementById('python-code');
+      const codeText = textareaEl ? textareaEl.value : '';
       try {
-        const r = await fetch('/missions/active/check', {method: 'POST'});
+        const r = await fetch('/missions/active/check', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({code: codeText}),
+        });
         if (!r.ok) {
           const err = await r.json().catch(() => ({}));
-          logMsg(`Ошибка проверки: ${err.error || r.status}`, 'error');
+          // Если сервер говорит «нет активной миссии» — клиент держит
+          // устаревшее состояние (обычно после рестарта сервера).
+          // Сбрасываем UI и подсказываем перезапустить миссию.
+          if (err.error === 'no active mission' ||
+              err.error === 'no active session') {
+            _resetMissionClientState();
+            logMsg('⚠ Миссия не активна на сервере (перезагрузка?). '
+                 + 'Откройте каталог и нажмите ▶ Пройти заново.', 'warning');
+          } else {
+            logMsg(`Ошибка проверки: ${err.error || r.status}`, 'error');
+          }
         }
       } catch (e) {
         logMsg(`Ошибка проверки: ${e.message}`, 'error');
@@ -1115,8 +1228,13 @@
       const editable = t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT' || t.isContentEditable);
       if (!editable) e.preventDefault();
     });
-    // Клик по фону модалки — закрывает (но не на сам редактор и не внутри панели)
-    modal?.addEventListener('click', (e) => {
+    // Клик по фону модалки — закрывает (но не на сам редактор и не внутри панели).
+    // Используем mousedown, а не click: иначе выделение текста с тащением мыши
+    // из textarea на фон (mouseup на бэкдропе) синтезирует click с target=modal
+    // и закрывает окно прямо посреди выделения. Через mousedown это работает
+    // надёжно — клик-старт по фону = закрыть, клик-старт внутри textarea =
+    // никаких эффектов на модалку, даже если палец доехал до фона.
+    modal?.addEventListener('mousedown', (e) => {
       if (e.target === modal) closeCodeModal();
     });
     // Кнопки в модалке делегируют в основные обработчики, синхронизируя текст

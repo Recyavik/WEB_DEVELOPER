@@ -332,7 +332,8 @@
         <tr>
           <td><code>danger_here_cmd()</code></td>
           <td>Отметить опасную зону под текущей позицией робота
-              (<code>robot.get_gps()</code>).</td>
+              (берёт <code>odo.x, odo.y</code> из нашей одометрии —
+              у 1T REX нет встроенного GPS).</td>
         </tr>
         <tr>
           <td><code>attention_zone_cmd(target_x, target_y, radius)</code></td>
@@ -400,8 +401,8 @@ robot.set_rgb(0, (0, 255, 0), 1)             # зелёный = «движени
 robot.set_angle(0)                           # руль прямо
 robot.move(50)                               # вперёд 50% без duration
 while True:
-    dist = robot.get_laser()                 # дальность в мм до препятствия
-    if dist is not None and dist &lt;= 200:     # ближе 20 см — стоп!
+    dist = robot.get_laser()                 # дальность в СМ до препятствия
+    if dist is not None and dist &lt;= 20:      # ближе 20 см — стоп!
         break
     time.sleep(0.05)                         # 50 мс между опросами
 robot.stop()                                 # остановка перед препятствием

@@ -41,6 +41,10 @@ class RobotStateXY:
     #   "planning" — фиолетовая иконка 🖥, идет A*-поиск пути
     #   "failed"   — красная иконка, путь не найден, нужен ручной режим
     thinking:   str   = "idle"
+    # True пока идёт K-turn (разворот на месте Reeds-Shepp). На этом
+    # участке робот делает forward/back и физически уходит со связи
+    # waypoint-to-waypoint — оценка миссии должна игнорировать отклонения.
+    turning_in_place: bool = False
 
 
 @dataclass

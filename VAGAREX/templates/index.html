@@ -246,7 +246,7 @@
       <div id="python-code-description" class="code-desc">Код будет автоматически формироваться по командам. Можно редактировать и запускать.</div>
       <div class="code-wrap">
         <pre class="code-overlay" aria-hidden="true"><code id="python-code-overlay"></code></pre>
-        <textarea id="python-code" class="program-code program-code--editor" rows="18"># После выполнения команды здесь появится Python-код для реального устройства</textarea>
+        <textarea id="python-code" class="program-code program-code--editor" rows="18" wrap="off" spellcheck="false"># После выполнения команды здесь появится Python-код для реального устройства</textarea>
       </div>
     </section>
 
@@ -255,8 +255,8 @@
         <h3 class="card__title">Журнал</h3>
         <div class="program-actions">
           <span id="mission-timer" class="mission-timer" hidden title="Время прохождения активной миссии">⏱ 00:00</span>
-          <button id="btn-show-mission" class="btn btn--xs" title="Показать задание текущей миссии в журнале">📋 Задание</button>
-          <button id="btn-clear-log" class="btn btn--xs">✕ Очистить</button>
+          <button id="btn-show-mission" class="btn btn--xs" title="Показать задание текущей миссии в журнале" aria-label="Задание">📋</button>
+          <button id="btn-clear-log" class="btn btn--xs" title="Очистить журнал" aria-label="Очистить">✕</button>
         </div>
       </div>
       <div id="cmd-log" class="cmd-log"></div>
@@ -281,7 +281,7 @@
       </div>
       <div class="code-wrap code-wrap--modal">
         <pre class="code-overlay code-overlay--modal" aria-hidden="true"><code id="python-code-modal-overlay"></code></pre>
-        <textarea id="python-code-modal-area" class="program-code program-code--modal program-code--editor"></textarea>
+        <textarea id="python-code-modal-area" class="program-code program-code--modal program-code--editor" wrap="off" spellcheck="false"></textarea>
       </div>
     </div>
   </div>

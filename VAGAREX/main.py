@@ -128,6 +128,10 @@ def _ensure_schema_migrations():
         "missions": {
             "path": "TEXT NOT NULL DEFAULT '[]'",
         },
+        "mission_runs": {
+            "duration_sec":      "REAL NOT NULL DEFAULT 0.0",
+            "algo_duration_sec": "REAL NOT NULL DEFAULT 0.0",
+        },
     }
     for table, columns in additions.items():
         if table not in existing_tables:
@@ -902,25 +906,114 @@ async def missions_start(mission_id: int,
     return JSONResponse({"ok": True, "mission_id": mission_id})
 
 
-@app.post("/missions/active/check")
-async def missions_check_active(current_user: User = Depends(require_user)):
-    """Заглушка проверки прохождения миссии. Завтра здесь будет логика:
-    запустить _program, отследить посещение waypoints / выполнение actions
-    относительно эталонной траектории, посчитать звёзды и завершить.
-    Сейчас — просто возвращает текущий progress, чтобы клиент мог
-    обозначить «проверка нажата»."""
+@app.post("/missions/active/hint")
+async def missions_hint_active(current_user: User = Depends(require_user)):
+    """Подсказка для активной миссии: куда ехать к следующей непосещённой
+    waypoint. Возвращает угол поворота относительно текущего курса
+    (направо/налево/прямо) и расстояние, плюс шлёт сообщение в журнал."""
+    import math as _math
     sess = get_session(current_user.id)
     if sess is None:
         return JSONResponse({"error": "no active session"}, status_code=400)
     if sess._mission is None:
         return JSONResponse({"error": "no active mission"}, status_code=400)
+    m = sess._mission
+    target = None
+    for i, (wx, wy) in enumerate(m.waypoints):
+        if i not in m.waypoints_visited:
+            target = (i, wx, wy)
+            break
+    if target is None:
+        await sess.push_message(
+            "💡 Все контрольные точки пройдены. Жмите ▶ для проверки.",
+            "success")
+        return JSONResponse({"ok": True, "complete": True})
+    idx, tx, ty = target
+    s = sess.robot_state
+    dx, dy = tx - s.x, ty - s.y
+    distance = _math.hypot(dx, dy)
+    # Курс к цели (0=север, по часовой). atan2(dx, dy) даёт нужный
+    # знак в системе VEGAREX, где dy=cos(h), dx=sin(h).
+    bearing_abs = _math.degrees(_math.atan2(dx, dy)) % 360
+    relative = (bearing_abs - s.heading + 540.0) % 360.0 - 180.0
+    # Подсказка — формулируется как готовые голосовые команды, которые
+    # NLU гарантированно распознаёт:
+    #   «Вега развернись на N» → face_to(N) (абсолютный курс)
+    #   «Вега вперёд D см»     → forward(D)
+    # «Налево/направо» неоднозначно (на роботе это руль), поэтому
+    # используем абсолютный курс. «Развернуться»/«ехать» — инфинитивы,
+    # NLU их не понимает, нужно повелительное наклонение.
+    target_heading = int(round(bearing_abs)) % 360
+    dist_int = max(5, int(round(distance)))
+    if abs(relative) < 3:
+        cmds = f"«Вега вперёд {dist_int}»"
+    else:
+        cmds = (f"«Вега развернись на {target_heading}», "
+                f"затем «Вега вперёд {dist_int}»")
     await sess.push_message(
-        "🧪 Проверка миссии (заглушка — логика будет завтра).", "info")
+        f"💡 Точка #{idx + 1} ({tx:.0f}, {ty:.0f}): {cmds}.",
+        "info")
     return JSONResponse({
-        "ok":       True,
-        "stub":     True,
-        "progress": sess._mission.progress_dict(),
+        "ok":           True,
+        "target_index": idx,
+        "target_x":     round(tx, 1),
+        "target_y":     round(ty, 1),
+        "distance_cm":  round(distance, 1),
+        "turn_deg":     round(relative, 1),
+        "bearing_deg":  round(bearing_abs, 1),
     })
+
+
+@app.post("/missions/active/check")
+async def missions_check_active(request: Request,
+                                current_user: User = Depends(require_user)):
+    """Прогон программы для активной миссии — БЕЗ автозавершения.
+
+    Текст из textarea приходит в body — это источник истины: если
+    пользователь удалил/изменил команду в коде, мы перепарсиваем и
+    подменяем self._program перед запуском, иначе старая команда
+    выполнится повторно.
+
+    Запускает _program через очередь, замеряет время и НАКАПЛИВАЕТ его
+    к суммарному времени алгоритма (штраф за множественные пробы).
+    Финал — отдельным действием через /missions/active/finalize."""
+    import asyncio as _aio
+    sess = get_session(current_user.id)
+    if sess is None:
+        return JSONResponse({"error": "no active session"}, status_code=400)
+    if sess._mission is None:
+        return JSONResponse({"error": "no active mission"}, status_code=400)
+    code_text = ""
+    try:
+        body = await request.json()
+        code_text = (body or {}).get("code", "") or ""
+    except Exception:
+        code_text = ""
+    if code_text.strip():
+        new_program = sess._parse_program_text(code_text)
+        if not new_program:
+            return JSONResponse({"error": "empty program"}, status_code=400)
+        sess._program = new_program
+        sess._save_program()
+    if not sess._program:
+        return JSONResponse({"error": "empty program"}, status_code=400)
+    await sess.push_message("▶ Запуск программы…", "info")
+    _aio.create_task(sess.run_check())
+    return JSONResponse({"ok": True})
+
+
+@app.post("/missions/active/finalize")
+async def missions_finalize_active(current_user: User = Depends(require_user)):
+    """Финальная проверка задания — фиксирует результат и завершает миссию.
+    Звёзды считаются по результату ПОСЛЕДНЕГО прогона + суммарному
+    времени алгоритма по всем прогонам."""
+    sess = get_session(current_user.id)
+    if sess is None:
+        return JSONResponse({"error": "no active session"}, status_code=400)
+    if sess._mission is None:
+        return JSONResponse({"error": "no active mission"}, status_code=400)
+    await sess.finalize_mission()
+    return JSONResponse({"ok": True})
 
 
 @app.post("/missions/active/stop")
@@ -934,6 +1027,106 @@ async def missions_stop_active(current_user: User = Depends(require_user)):
         return JSONResponse({"ok": True, "was_active": False})
     await sess.stop_mission(success=False)
     return JSONResponse({"ok": True, "was_active": True})
+
+
+@app.get("/stats", response_class=HTMLResponse)
+async def stats_page(request: Request, db: Session = Depends(get_db),
+                     current_user: User = Depends(require_user)):
+    """Сводная статистика пользователя по прохождениям миссий.
+
+    Общий блок:
+      - сколько прохождений / сколько успешных
+      - всего звёзд, средняя точность, общее время в миссиях
+    По миссиям (агрегат лучших):
+      - название миссии, лучшие звёзды, лучшая точность, лучшее время.
+    """
+    from sqlalchemy import func
+    # Общие счётчики.
+    total_runs = (db.query(func.count(MissionRun.id))
+                    .filter(MissionRun.user_id == current_user.id)
+                    .filter(MissionRun.completed_at.isnot(None)).scalar() or 0)
+    success_runs = (db.query(func.count(MissionRun.id))
+                    .filter(MissionRun.user_id == current_user.id)
+                    .filter(MissionRun.success == True).scalar() or 0)
+    total_stars = (db.query(func.sum(MissionRun.stars))
+                    .filter(MissionRun.user_id == current_user.id)
+                    .filter(MissionRun.completed_at.isnot(None)).scalar() or 0)
+    avg_precision = (db.query(func.avg(MissionRun.coefficient))
+                    .filter(MissionRun.user_id == current_user.id)
+                    .filter(MissionRun.success == True).scalar() or 0.0)
+    total_duration_sec = (db.query(func.sum(MissionRun.duration_sec))
+                    .filter(MissionRun.user_id == current_user.id)
+                    .filter(MissionRun.completed_at.isnot(None)).scalar() or 0.0)
+    total_algo_duration_sec = (db.query(func.sum(MissionRun.algo_duration_sec))
+                    .filter(MissionRun.user_id == current_user.id)
+                    .filter(MissionRun.completed_at.isnot(None)).scalar() or 0.0)
+    # Лучшее по каждой миссии: best_stars + best_precision + best_time.
+    # Для best_time нужно min duration_sec ИМЕННО среди успешных и > 0.
+    best_per_mission = (db.query(
+                            MissionRun.mission_id,
+                            func.max(MissionRun.stars).label("best_stars"),
+                            func.max(MissionRun.coefficient).label("best_prec"),
+                            func.count(MissionRun.id).label("runs_count"),
+                        )
+                        .filter(MissionRun.user_id == current_user.id)
+                        .filter(MissionRun.completed_at.isnot(None))
+                        .group_by(MissionRun.mission_id).all())
+    # Лучшее время отдельно — только для успешных прогонов.
+    best_time_per_mission = dict(
+        db.query(MissionRun.mission_id, func.min(MissionRun.duration_sec))
+          .filter(MissionRun.user_id == current_user.id)
+          .filter(MissionRun.success == True)
+          .filter(MissionRun.duration_sec > 0)
+          .group_by(MissionRun.mission_id).all())
+    best_algo_per_mission = dict(
+        db.query(MissionRun.mission_id, func.min(MissionRun.algo_duration_sec))
+          .filter(MissionRun.user_id == current_user.id)
+          .filter(MissionRun.success == True)
+          .filter(MissionRun.algo_duration_sec > 0)
+          .group_by(MissionRun.mission_id).all())
+    # Подтянем названия миссий одним запросом.
+    mission_ids = [r.mission_id for r in best_per_mission]
+    titles = {}
+    if mission_ids:
+        for mid, mtitle in (db.query(Mission.id, Mission.title)
+                              .filter(Mission.id.in_(mission_ids)).all()):
+            titles[mid] = mtitle
+    # Собираем строки для таблицы — отсортируем по best_stars desc.
+    rows = []
+    for r in best_per_mission:
+        rows.append({
+            "mission_id":  r.mission_id,
+            "title":       titles.get(r.mission_id, f"Миссия #{r.mission_id}"),
+            "best_stars":  r.best_stars or 0,
+            "best_prec":   round((r.best_prec or 0.0) * 100),
+            "best_time":   best_time_per_mission.get(r.mission_id),
+            "best_algo":   best_algo_per_mission.get(r.mission_id),
+            "runs_count":  r.runs_count or 0,
+        })
+    rows.sort(key=lambda x: (-x["best_stars"], -x["best_prec"]))
+    return templates.TemplateResponse(request, "stats.html", {
+        "current_user":       current_user,
+        "total_runs":         int(total_runs),
+        "success_runs":       int(success_runs),
+        "total_stars":        int(total_stars),
+        "avg_precision_pct":  int(round((avg_precision or 0.0) * 100)),
+        "total_duration_sec":      float(total_duration_sec or 0.0),
+        "total_algo_duration_sec": float(total_algo_duration_sec or 0.0),
+        "rows":                    rows,
+    })
+
+
+@app.post("/stats/reset")
+async def stats_reset(admin: User = Depends(require_admin),
+                      db: Session = Depends(get_db)):
+    """Админ-сброс ВСЕЙ статистики: удаляются все MissionRun (всех
+    пользователей). Карточки «Набрано: N⭐» в каталоге миссий пропадут,
+    страница /stats обнулится. Сами миссии и их waypoints не трогаются."""
+    deleted = db.query(MissionRun).delete()
+    db.commit()
+    log.info("Admin %s reset stats: %d MissionRun records deleted",
+             admin.username, deleted)
+    return RedirectResponse("/stats", status_code=303)
 
 
 @app.get("/missions", response_class=HTMLResponse)
