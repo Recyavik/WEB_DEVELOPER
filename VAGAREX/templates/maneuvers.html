@@ -240,8 +240,8 @@ robot.stop()                                    <span class="c"># останов
       <h4>Идея</h4>
       <p>Включаем мотор без аргумента <code>duration</code> (бесконечно)
       и в цикле читаем дальномер. Как только расстояние до препятствия
-      опустится до <code>stop_margin_mm</code> (по умолчанию 150 мм =
-      15 см) — останавливаемся.</p>
+      опустится до <code>stop_margin_cm</code> (по умолчанию 15 см) —
+      останавливаемся.</p>
       <p>Шаг опроса 50 мс — компромисс между реакцией и нагрузкой
       на I²C-шину дальномера.</p>
     </div>
@@ -250,21 +250,22 @@ robot.stop()                                    <span class="c"># останов
   <h4>Параметры</h4>
   <ul class="params-list">
     <li><code>power_pct</code> — мощность мотора (по умолчанию <code>DEFAULT_SPEED</code>).</li>
-    <li><code>stop_margin_mm</code> — минимальный «зазор» до препятствия в миллиметрах (150 мм по умолчанию).</li>
+    <li><code>stop_margin_cm</code> — минимальный «зазор» до препятствия, см (15 см по умолчанию).
+        <code>robot.get_laser()</code> возвращает дальность в см — единицы совпадают.</li>
   </ul>
 
-<pre class="alg-code"><span class="k">def</span> to_wall_cmd(power_pct=DEFAULT_SPEED, stop_margin_mm=150):
+<pre class="alg-code"><span class="k">def</span> to_wall_cmd(power_pct=DEFAULT_SPEED, stop_margin_cm=15):
     robot.move(power_pct)                                  <span class="c"># мотор без duration — едет до явного stop</span>
     <span class="k">while</span> True:                                        <span class="c"># бесконечный цикл, выход — break внутри</span>
-        dist = robot.get_laser()                           <span class="c"># расстояние в мм (или None — нет данных)</span>
-        <span class="k">if</span> dist <span class="k">is</span> None <span class="k">or</span> dist <= stop_margin_mm:    <span class="c"># нет данных или подъехали слишком близко</span>
+        dist = robot.get_laser()                           <span class="c"># расстояние в СМ (или None — нет данных)</span>
+        <span class="k">if</span> dist <span class="k">is</span> None <span class="k">or</span> dist <= stop_margin_cm:    <span class="c"># нет данных или подъехали слишком близко</span>
             robot.stop()                                   <span class="c"># экстренная остановка</span>
             <span class="k">break</span>                                      <span class="c"># выйти из цикла</span>
         time.sleep(0.05)                                   <span class="c"># 50 мс между опросами дальномера</span></pre>
 
   <h4 class="example-title">Пример вызова</h4>
-<pre class="alg-code">to_wall_cmd()                  <span class="c"># до 150 мм перед стеной на DEFAULT_SPEED</span>
-to_wall_cmd(60, 300)           <span class="c"># помедленнее (60%) и с большим зазором (30 см)</span></pre>
+<pre class="alg-code">to_wall_cmd()                  <span class="c"># до 15 см перед стеной на DEFAULT_SPEED</span>
+to_wall_cmd(60, 30)            <span class="c"># помедленнее (60%) и с большим зазором (30 см)</span></pre>
 
   <p class="note"><strong>Замечание.</strong> Зеркальная функция
   <code>back_to_wall_cmd</code> — то же самое, но с
@@ -379,8 +380,8 @@ robot.set_rgb(0, (0, 0, 0), 1)     <span class="c"># погасить</span></pr
 
 <pre class="alg-code"><span class="k">class</span> Odometry:
     <span class="k">def</span> __init__(self, x=START_X, y=START_Y, heading=START_HEADING_DEG):
-        self.x = float(x)                       <span class="c"># текущая координата по оси X в см</span>
-        self.y = float(y)                       <span class="c"># текущая координата по оси Y в см</span>
+        self.x = float(x)                       <span class="c"># текущая координата по оси X (число в системе мира)</span>
+        self.y = float(y)                       <span class="c"># текущая координата по оси Y (число в системе мира)</span>
         self.heading = float(heading)           <span class="c"># курс: 0=север (+y), 90=восток (+x)</span>
 
     <span class="k">def</span> sync_heading(self):
@@ -1236,9 +1237,9 @@ bypass_cmd(+1, 30, 60, 0.7)  <span class="c"># помягче (30°), помед
 
   <h4>Параметры</h4>
   <ul class="params-list">
-    <li><code>target_x</code>, <code>target_y</code> — координаты цели в см от старта.</li>
+    <li><code>target_x</code>, <code>target_y</code> — координаты цели (числа в системе мира).</li>
     <li><code>power_pct</code> — мощность мотора (по умолчанию <code>DEFAULT_SPEED</code>).</li>
-    <li><code>tolerance_cm</code> — допустимая ошибка в см (по умолчанию 5 см).</li>
+    <li><code>tolerance_cm</code> — допустимая ошибка по расстоянию, см (по умолчанию 5 см).</li>
   </ul>
 
 <pre class="alg-code"><span class="c"># Closed-loop проезд: едем короткими шагами и подруливаем по гироскопу.</span>
@@ -1604,17 +1605,18 @@ ok = kturn_smart_cmd(180, zones)         <span class="c"># попробоват�
   <ul class="params-list">
     <li><code>distance_cm</code> — целевое расстояние в см.</li>
     <li><code>power_pct</code> — мощность мотора.</li>
-    <li><code>stop_margin_mm</code> — минимальный зазор до препятствия (по умолчанию 200 мм).</li>
+    <li><code>stop_margin_cm</code> — минимальный зазор до препятствия, см (по умолчанию 20 см).
+        <code>robot.get_laser()</code> возвращает в см — единицы совпадают.</li>
   </ul>
 
-<pre class="alg-code"><span class="k">def</span> safe_forward(distance_cm, power_pct=DEFAULT_SPEED, stop_margin_mm=200):
+<pre class="alg-code"><span class="k">def</span> safe_forward(distance_cm, power_pct=DEFAULT_SPEED, stop_margin_cm=20):
     micro_sec = 0.1                                                       <span class="c"># шаг управления 100 мс</span>
     target    = duration(distance_cm, power_pct)             <span class="c"># общее время на всю дистанцию</span>
     elapsed   = 0.0                                                       <span class="c"># уже потраченное время</span>
     robot.move(power_pct)                                                 <span class="c"># едем без duration — крутим до явного stop</span>
     <span class="k">while</span> elapsed < target:                                           <span class="c"># пока не пройдено всё запланированное время</span>
-        d = robot.get_laser()                                             <span class="c"># расстояние до препятствия в мм</span>
-        <span class="k">if</span> d <span class="k">is</span> <span class="k">not</span> None <span class="k">and</span> d <= stop_margin_mm:                    <span class="c"># слишком близко — препятствие!</span>
+        d = robot.get_laser()                                             <span class="c"># расстояние до препятствия в СМ</span>
+        <span class="k">if</span> d <span class="k">is</span> <span class="k">not</span> None <span class="k">and</span> d <= stop_margin_cm:                    <span class="c"># слишком близко — препятствие!</span>
             robot.stop()                                                  <span class="c"># экстренная остановка</span>
             <span class="c"># Зафиксировать препятствие как опасную зону на 30 см впереди робота:</span>
             mark_danger_cmd(odo.x + 30 * math.sin(math.radians(odo.heading)),  <span class="c"># X препятствия (по курсу)</span>

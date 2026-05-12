@@ -119,6 +119,30 @@ class TestHelperRegistry(unittest.TestCase):
                     f"при копировании на железо вызов упадёт. См. system.html.")
 
 
+class TestCircleVoicePhrases(unittest.TestCase):
+    """«Вега круг» (одно слово) должно распознаваться как circle.
+    При этом «вега кругом» — это turn_around (разворот на 180°), не circle."""
+
+    def test_short_krug(self):
+        from nlu import predict
+        intent, _ = predict("вега круг")
+        self.assertEqual(intent, "circle",
+                         "«круг» должно быть circle (одиночное слово)")
+
+    def test_krugom_still_turn_around(self):
+        """Регрессия: «кругом» НЕ должно перехватываться правилом circle
+        через substring «круг» — это команда разворота."""
+        from nlu import predict
+        intent, _ = predict("вега кругом")
+        self.assertEqual(intent, "turn_around",
+                         "«кругом» должно остаться turn_around, не circle")
+
+    def test_vokrug_still_circle(self):
+        from nlu import predict
+        intent, _ = predict("вега вокруг")
+        self.assertEqual(intent, "circle")
+
+
 class TestCollectHelpers(unittest.TestCase):
     """Транзитивный сбор зависимостей."""
 

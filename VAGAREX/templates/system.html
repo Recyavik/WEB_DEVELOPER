@@ -214,12 +214,13 @@
       <thead><tr><th>Функция</th><th>Что делает</th></tr></thead>
       <tbody>
         <tr>
-          <td><code>to_wall_cmd(power_pct=DEFAULT_SPEED, stop_margin_mm=150)</code></td>
+          <td><code>to_wall_cmd(power_pct=DEFAULT_SPEED, stop_margin_cm=15)</code></td>
           <td>Движение вперёд до препятствия по дальномеру. Останавливается
-              когда <code>robot.get_laser()</code> вернёт ≤ <code>stop_margin_mm</code>.</td>
+              когда <code>robot.get_laser()</code> вернёт ≤ <code>stop_margin_cm</code>
+              (значение и сравнение в одних единицах — см).</td>
         </tr>
         <tr>
-          <td><code>back_to_wall_cmd(power_pct=DEFAULT_SPEED, stop_margin_mm=150)</code></td>
+          <td><code>back_to_wall_cmd(power_pct=DEFAULT_SPEED, stop_margin_cm=15)</code></td>
           <td>Зеркальная функция — движение назад до препятствия (если есть
               задний дальномер; иначе по одометрии).</td>
         </tr>
