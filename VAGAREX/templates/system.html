@@ -457,20 +457,27 @@
     <h2 class="card__title">Минимальный пример программы</h2>
     <pre class="library-code"><code>import math, time
 
-# Едем 100 см вперёд на 40% мощности
-duration = 100 / (80 * 40 / 100)   # SPEED_CM_PER_S_AT_100 × power / 100 = 3.13 с
+# Едем 100 см вперёд на 40% мощности — duration() считает секунды
 robot.set_angle(0)
-robot.move(40, duration)
+robot.move(40, duration(100, 40))   # 100 см на 40% ≈ 3.13 с
 robot.stop()
 
-# Поворачиваем руль вправо на максимум и описываем дугу
+# Поворачиваем руль вправо на максимум и описываем дугу 2.5 секунды
 robot.set_angle(36)
-robot.move(40, 2.5)
+robot.move(40, 2.5)                 # таймаут задан напрямую — 2.5 с
 robot.stop()
 robot.set_servo_center()
 
 # Включаем зелёный светодиод мгновенно (delay=0)
 robot.set_rgb(0, (0, 255, 0), 0.0)</code></pre>
+    <p class="note">
+      Параметр <code>timeout_sec</code> у <code>robot.move</code> — это
+      <strong>секунды</strong> работы мотора. Чтобы задать движение «N см»,
+      используем нашу функцию-обёртку <code>duration(distance_cm, power_pct)</code>
+      из преамбулы — она переводит см в секунды через калибровку
+      <code>SPEED_CM_PER_S_AT_100</code>. Если хочется задать время напрямую —
+      пишем число секунд во второй аргумент (например <code>2.5</code>).
+    </p>
   </section>
 
   <!-- ── Расширенный пример (демо ассортимента примитивов) ─────────────── -->

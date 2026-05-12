@@ -135,6 +135,12 @@
         logMsg(msg.output || 'Выполнено.', 'info');
         break;
 
+      case 'exec_cursor':
+        // Подсветка текущей строки выполнения. msg.line — 0-based индекс
+        // строки в textarea; null — стираем (очередь пуста).
+        _setExecCursorLine(typeof msg.line === 'number' ? msg.line : null);
+        break;
+
       // ── Миссии ────────────────────────────────────────────────────────
       case 'mission_active':
         // Активирована миссия: overlay на холсте, кнопка «Задание» и
@@ -535,6 +541,57 @@
     catch (_) {}
   }
 
+  // ── Подсветка текущей строки исполнения (▶ слева от textarea) ──────────
+  // Сервер шлёт `exec_cursor: {line: N}` перед каждой командой и `line: null`
+  // когда очередь пустеет. Мы вычисляем top по lineHeight × N и абсолютно
+  // позиционируем стрелку рядом с textarea. При прокрутке textarea стрелка
+  // следует за строкой (через -scrollTop).
+  let _execCursorLine = null;   // 0-based номер строки в textarea
+  const _ARROW_ID = 'exec-cursor-arrow';
+
+  function _ensureExecArrow(ta) {
+    if (!ta) return null;
+    let arrow = document.getElementById(_ARROW_ID);
+    if (!arrow) {
+      arrow = document.createElement('div');
+      arrow.id = _ARROW_ID;
+      arrow.className = 'exec-cursor-arrow';
+      arrow.textContent = '▶';
+      arrow.hidden = true;
+      // Кладём стрелку в тот же wrap, что и textarea, чтобы абсолютные
+      // координаты считались относительно него.
+      const wrap = ta.closest('.code-wrap') || ta.parentElement;
+      wrap.style.position = wrap.style.position || 'relative';
+      wrap.appendChild(arrow);
+    }
+    return arrow;
+  }
+
+  function _positionExecArrow() {
+    const ta = document.getElementById('python-code');
+    const arrow = document.getElementById(_ARROW_ID);
+    if (!ta || !arrow) return;
+    if (_execCursorLine === null) {
+      arrow.hidden = true;
+      return;
+    }
+    // Высоту строки определяем по computed style (line-height в px).
+    const cs = window.getComputedStyle(ta);
+    let lh = parseFloat(cs.lineHeight);
+    if (!isFinite(lh)) lh = parseFloat(cs.fontSize) * 1.35;
+    const padTop = parseFloat(cs.paddingTop) || 0;
+    const top = padTop + _execCursorLine * lh - ta.scrollTop;
+    arrow.style.top = `${top}px`;
+    arrow.hidden = false;
+  }
+
+  function _setExecCursorLine(line) {
+    _execCursorLine = line;
+    const ta = document.getElementById('python-code');
+    _ensureExecArrow(ta);
+    _positionExecArrow();
+  }
+
   function attachCodeHighlight(textareaId, overlayId) {
     const ta = document.getElementById(textareaId);
     const ov = document.getElementById(overlayId);
@@ -556,13 +613,15 @@
     // чтобы reload не стёр правки. Применяется к обоим редакторам
     // (боковая панель + модальное окно «во весь экран»).
     const saveDraft = () => _saveCodeDraft(ta.value || '');
+    // Скролл textarea должен двигать и overlay, и индикатор ▶ исполнения.
+    const onScroll = () => { syncScroll(); _positionExecArrow(); };
     ta.addEventListener('input',  syncContent);
     ta.addEventListener('input',  saveDraft);
-    ta.addEventListener('scroll', syncScroll);
+    ta.addEventListener('scroll', onScroll);
     // Стрелки/PageDown/PageUp могут двигать каретку без срабатывания scroll —
     // на них тоже досинхронизируем сразу.
-    ta.addEventListener('keyup', syncScroll);
-    ta.addEventListener('click', syncScroll);
+    ta.addEventListener('keyup', onScroll);
+    ta.addEventListener('click', onScroll);
     // Первоначальная подсветка
     syncContent();
     // Программные изменения value (например, server append) не дают input —
@@ -876,10 +935,7 @@
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({code: codeText}),
         });
-        if (r.ok) {
-          // Правки приняты сервером — черновик в localStorage больше не нужен.
-          _clearCodeDraft();
-        } else {
+        if (!r.ok) {
           const err = await r.json().catch(() => ({}));
           // Если сервер говорит «нет активной миссии» — клиент держит
           // устаревшее состояние (обычно после рестарта сервера).
@@ -905,8 +961,10 @@
     const textarea = document.getElementById('python-code');
     if (!textarea) return;
     ws.send(JSON.stringify({ type: 'run_python_code', code: textarea.value }));
-    // Правки уехали на сервер — черновик можно стереть.
-    _clearCodeDraft();
+    // Черновик НЕ стираем: сервер при reload пришлёт пересборку из _program
+    // (стандартный layout без пользовательских правок). Если черновик
+    // стереть, F5 покажет server-pересборку и правки визуально «пропадут».
+    // Стираем только при явном ✕ Очистить — там пользователь сам этого хочет.
     logMsg('▶ Выполняется Python-код…', 'info');
   }
 

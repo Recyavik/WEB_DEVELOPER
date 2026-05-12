@@ -77,6 +77,11 @@ class RobotCmd:
     end_x:       Optional[float] = None
     end_y:       Optional[float] = None
     end_heading: Optional[float] = None
+    # Номер строки в textarea (0-based), из которой родилась команда при
+    # парсинге _parse_program_text. Используется для подсветки текущей
+    # строки в редакторе кода во время воспроизведения. None — команда
+    # создана не из текстареи (голос/текст-форма).
+    source_line: Optional[int] = None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -729,6 +734,14 @@ class UserSession:
             "type":  "program",
             "lines": self._program_lines(),
             "text":  self._program_text(),
+        })
+
+    async def push_exec_cursor(self, line: Optional[int]):
+        """Сообщить клиенту какую строку сейчас исполняем (для подсветки ▶
+        слева от textarea). None — стираем подсветку (очередь пуста)."""
+        await self.broadcast({
+            "type": "exec_cursor",
+            "line": line,
         })
 
     # ═══════════════════════════════════════════════════════════════════════════
@@ -2401,6 +2414,9 @@ class UserSession:
         elif intent == "set_speed":
             spd = nlu.extract_speed(raw, c.move_speed)
             code, label = f"set_speed({spd})", f"Скорость {spd}%"
+        elif intent == "set_turn_angle":
+            ang = nlu.extract_default_turn_angle(raw, c.turn_angle)
+            code, label = f"set_turn_angle({ang})", f"Угол руля {ang}°"
         elif intent == "turn_around":
             n = nlu.norm(raw)
             side = "влево" if any(w in n for w in ("налево", "влево", "против")) else "вправо"
@@ -3014,7 +3030,7 @@ odo = Odometry()    # глобальный экземпляр одометрии
     _ATOMIC_INTENTS = frozenset({
         "forward", "back",
         "steer_right", "steer_left", "steer_right_small", "steer_left_small",
-        "steer_center", "brake", "stop", "set_speed",
+        "steer_center", "brake", "stop", "set_speed", "set_turn_angle",
         "pause", "light_on", "light_off", "light_color", "recharge",
         "mode_inspector", "mode_cautious", "path_show", "path_hide",
         "reset", "report_pos", "report_status",
@@ -3087,6 +3103,9 @@ odo = Odometry()    # глобальный экземпляр одометрии
         elif intent == "set_speed":
             spd = nlu.extract_speed(raw, default_speed)
             code_lines += [f"DEFAULT_SPEED = {spd}  # установить скорость по умолчанию"]
+        elif intent == "set_turn_angle":
+            ang = nlu.extract_default_turn_angle(raw, c.turn_angle)
+            code_lines += [f"DEFAULT_TURN_ANGLE = {ang}  # установить угол руля по умолчанию"]
         elif intent == "turn_around":
             direction = -1 if "налево" in nlu.norm(raw) or "влево" in nlu.norm(raw) or "против" in nlu.norm(raw) else 1
             side = "налево" if direction < 0 else "направо"
@@ -3314,6 +3333,10 @@ odo = Odometry()    # глобальный экземпляр одометрии
                 await self.robot.move(sign * spd)
                 s.speed = float(sign * spd)
             msg = f"Скорость {spd}%."
+        elif intent == "set_turn_angle":
+            ang = nlu.extract_default_turn_angle(raw, c.turn_angle)
+            self.cfg.turn_angle = ang
+            msg = f"Угол руля по умолчанию {ang}°."
         elif intent == "turn_around":
             n = nlu.norm(raw)
             direction = -1 if any(w in n for w in ("налево", "влево", "против")) else 1
@@ -3590,6 +3613,10 @@ odo = Odometry()    # глобальный экземпляр одометрии
                 cmd = self._pending.pop(0)
                 self._executing = cmd
                 await self.push_queue()
+                # Подсветка строки в textarea: треугольник ▶ слева
+                # от строки кода, которая сейчас выполняется.
+                if cmd.source_line is not None:
+                    await self.push_exec_cursor(cmd.source_line)
                 db = SessionLocal()
                 success = False
                 try:
@@ -3612,6 +3639,9 @@ odo = Odometry()    # глобальный экземпляр одометрии
                     self._executing = None
                     self._exec_task = None
                     await self.push_queue()
+                    # Если очередь пустеет — стираем подсветку строки.
+                    if not self._pending:
+                        await self.push_exec_cursor(None)
                     # Фиксируем заряд в БД после каждой команды — на случай
                     # внезапного рестарта сервера. Зарядка переживает рестарты.
                     self._save_battery_pct()
@@ -3658,6 +3688,10 @@ odo = Odometry()    # глобальный экземпляр одометрии
                 intent=recorded.intent, label=recorded.label,
                 code=recorded.code, raw=recorded.raw,
                 playback=True,
+                # Сохраняем source_line — это позволяет _queue_runner подсветить
+                # текущую строку выполнения в редакторе кода (▶ слева от
+                # textarea). Без этого индикатор не появляется при воспроизведении.
+                source_line=recorded.source_line,
             ))
         brake_cmd = self._build_cmd("brake", "Вега тормоз")
         if brake_cmd:
@@ -3700,6 +3734,11 @@ odo = Odometry()    # глобальный экземпляр одометрии
         r'^\s*robot\.set_rgb\(\s*[\w_]+\s*,\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)')
     # time.sleep(T) — пауза
     _RE_BODY_TIME_SLEEP      = re.compile(r'^\s*time\.sleep\(\s*(\d+(?:\.\d+)?)\s*\)')
+    # Присваивания констант на top-level — пользовательские «перенастройки»
+    # на лету. DEFAULT_SPEED = N → команда set_speed,
+    # DEFAULT_TURN_ANGLE = N → команда set_turn_angle.
+    _RE_BODY_ASSIGN_SPEED    = re.compile(r'^DEFAULT_SPEED\s*=\s*(-?\d+)')
+    _RE_BODY_ASSIGN_TURN     = re.compile(r'^DEFAULT_TURN_ANGLE\s*=\s*(-?\d+)')
 
     @staticmethod
     def _parse_dsl_line(fn: str, args: str) -> Optional[tuple[str, str]]:
@@ -3761,6 +3800,9 @@ odo = Odometry()    # глобальный экземпляр одометрии
         if fn == "set_speed":
             if args.isdigit():
                 return ("set_speed", f"Вега скорость {int(args)} процентов")
+        if fn == "set_turn_angle":
+            if args.isdigit():
+                return ("set_turn_angle", f"Вега угол руля {int(args)} градусов")
             return None
         if fn == "turn_around":      return ("turn_around", "Вега разворот")
         if fn == "turn_around_place":
@@ -3909,7 +3951,7 @@ odo = Odometry()    # глобальный экземпляр одометрии
         cmds: list[RobotCmd] = []
         last_steer = 0
 
-        for raw_line in text.split("\n"):
+        for line_idx, raw_line in enumerate(text.split("\n")):
             line = raw_line.strip()
             if not line:
                 continue
@@ -3924,6 +3966,7 @@ odo = Odometry()    # глобальный экземпляр одометрии
             #    Маркер `# CMD:` пропускаем без обработки (декоративный).
             body_cmd, new_steer = self._parse_body_line(line, last_steer)
             if body_cmd is not None:
+                body_cmd.source_line = line_idx
                 cmds.append(body_cmd)
                 last_steer = new_steer
                 continue
@@ -3951,6 +3994,7 @@ odo = Odometry()    # глобальный экземпляр одометрии
                 continue
             cmd = self._build_cmd(intent, cmd_raw)
             if cmd:
+                cmd.source_line = line_idx
                 cmds.append(cmd)
                 last_steer = self._steer_after_cmd(intent, cmd_raw, last_steer)
         return cmds
@@ -4000,9 +4044,9 @@ odo = Odometry()    # глобальный экземпляр одометрии
             return (cmd, last_steer)
 
         # robot.move(P, T) с T-секундами без duration() — continuous N сек.
-        # Преобразуем в forward без distance + pause T + brake (упрощённо
-        # генерируем forward как continuous; время поездки контролирует
-        # сам мотор на железе аргументом duration_sec).
+        # forward/back без distance (continuous). Точное расстояние неизвестно
+        # без обращения к калибровке — codegen генерирует именно через
+        # duration(D, P), а ручная форма с числом обрабатывается как continuous.
         m = self._RE_BODY_MOVE_SECONDS.match(line)
         if m:
             power = int(m.group(1))
@@ -4042,6 +4086,20 @@ odo = Odometry()    # глобальный экземпляр одометрии
         if m:
             secs = float(m.group(1))
             cmd = self._build_cmd("pause", f"вега пауза {secs}")
+            return (cmd, last_steer)
+
+        # DEFAULT_SPEED = N — перенастройка скорости по умолчанию.
+        m = self._RE_BODY_ASSIGN_SPEED.match(line)
+        if m:
+            spd = max(5, min(100, int(m.group(1))))
+            cmd = self._build_cmd("set_speed", f"вега скорость {spd}")
+            return (cmd, last_steer)
+
+        # DEFAULT_TURN_ANGLE = N — перенастройка угла руля по умолчанию.
+        m = self._RE_BODY_ASSIGN_TURN.match(line)
+        if m:
+            ang = max(1, min(45, abs(int(m.group(1)))))
+            cmd = self._build_cmd("set_turn_angle", f"вега угол руля {ang}")
             return (cmd, last_steer)
 
         return (None, last_steer)
@@ -4199,7 +4257,21 @@ odo = Odometry()    # глобальный экземпляр одометрии
 
         cmd = self._build_cmd(intent, raw_text)
         if cmd is None:
-            msg = "Команда не распознана." if not intent else f"Намерение «{intent}» не поддерживается."
+            # Чаще всего _build_cmd возвращает None когда intent распознан,
+            # но не хватает обязательного аргумента (координат, угла, …).
+            # Подсказываем пользователю в зависимости от типа намерения.
+            if not intent:
+                msg = "Команда не распознана."
+            elif intent in ("goto", "set_algorithm_zone", "remove_zone",
+                            "mark_danger"):
+                msg = (f"Не удалось извлечь координаты для «{intent}». "
+                       f"Используй формат: <X Y> через пробел, например "
+                       f"«-50 -50» или «100 50».")
+            elif intent in ("face_to", "set_course"):
+                msg = (f"Не удалось извлечь угол для «{intent}». "
+                       f"Используй формат: «поверни на 90» или «курс 45».")
+            else:
+                msg = f"Намерение «{intent}» не поддерживается."
             await self.push_message(msg, "warning")
             return
 

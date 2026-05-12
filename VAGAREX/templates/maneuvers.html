@@ -205,18 +205,21 @@
   </ul>
 
   <h4 class="example-title">Пример вызова</h4>
-<pre class="alg-code"><span class="c"># Едем 100 см вперед на 40% мощности.</span>
-robot.set_angle(0)                              <span class="c"># руль прямо — поедем строго вперед</span>
-duration = duration(100, 40)       <span class="c"># 100 / (80 * 0.4) ≈ 3.13 с</span>
-robot.move(40, duration)                        <span class="c"># включить мотор на расчетное время</span>
+<pre class="alg-code"><span class="c"># Едем 100 см вперёд на 40% мощности — duration() вычисляет секунды.</span>
+robot.set_angle(0)                              <span class="c"># руль прямо — поедем строго вперёд</span>
+robot.move(40, duration(100, 40))               <span class="c"># 100 см на 40% ≈ 3.13 с</span>
 robot.stop()                                    <span class="c"># явная остановка после длительности</span>
 
 <span class="c"># Едем 100 см назад на 40% — отрицательная мощность.</span>
 robot.set_angle(0)                              <span class="c"># руль прямо</span>
-robot.move(-40, duration(100, 40)) <span class="c"># минус → задний ход, длительность та же</span>
+robot.move(-40, duration(100, 40))              <span class="c"># минус → задний ход, длительность та же</span>
 robot.stop()                                    <span class="c"># остановиться</span>
 
-<span class="c"># Без duration — едем «бесконечно» до явного stop().</span>
+<span class="c"># Можно задать секунды напрямую без duration():</span>
+robot.move(40, 2.5)                             <span class="c"># 2.5 секунды на 40% — таймаут известен</span>
+robot.stop()
+
+<span class="c"># Совсем без таймаута — едем «бесконечно» до явного stop().</span>
 robot.move(40)                                  <span class="c"># поехали (мотор не выключится сам)</span>
 time.sleep(2.0)                                 <span class="c"># едем 2 секунды</span>
 robot.stop()                                    <span class="c"># остановились</span></pre>
@@ -422,10 +425,10 @@ odo = Odometry()                                                     <span class
 
   <h4 class="example-title">Пример использования</h4>
 <pre class="alg-code"><span class="c"># Едем 50 см вперёд на 60% мощности и сами обновляем одометрию.</span>
-duration = duration(50, 60)     <span class="c"># расчёт длительности по дистанции и мощности</span>
+secs = duration(50, 60)                      <span class="c"># расчёт длительности по дистанции и мощности</span>
 robot.set_angle(0)                           <span class="c"># руль прямо</span>
-robot.move(60, duration)                     <span class="c"># едем 60% на расчётное время</span>
-odo.move_step(60, duration, 0)               <span class="c"># обновить (x, y) после движения</span>
+robot.move(60, secs)                         <span class="c"># едем 60% на расчётное время</span>
+odo.move_step(60, secs, 0)                   <span class="c"># обновить (x, y) после движения</span>
 robot.stop()                                 <span class="c"># явная остановка</span>
 print(odo.x, odo.y, odo.heading)             <span class="c"># где мы теперь — координаты и курс</span></pre>
 

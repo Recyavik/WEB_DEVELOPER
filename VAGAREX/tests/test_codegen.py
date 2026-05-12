@@ -119,6 +119,58 @@ class TestHelperRegistry(unittest.TestCase):
                     f"при копировании на железо вызов упадёт. См. system.html.")
 
 
+class TestExtractCoordinates(unittest.TestCase):
+    """⛯ extract_coordinates должен робастно понимать отрицательные координаты,
+    запятые, скобки, пробелы вокруг минуса, ASR-«минус» словом.
+
+    Регрессия v4.x: regex `(-?\\d+)\\s+(-?\\d+)` ломался на «- 50 -50» —
+    минус отделялся пробелом от числа, group(1) захватывала «50» без знака,
+    и goto уходил в (50, -50) вместо (-50, -50)."""
+
+    def test_simple_negative(self):
+        from nlu import extract_coordinates
+        self.assertEqual(extract_coordinates("вега в точку -50 -50"),
+                         (-50.0, -50.0))
+
+    def test_space_after_minus(self):
+        """Главный bug: «- 50» с пробелом должно сохранять знак."""
+        from nlu import extract_coordinates
+        self.assertEqual(extract_coordinates("в точку - 50 -50"),
+                         (-50.0, -50.0))
+        self.assertEqual(extract_coordinates("в точку - 50 - 50"),
+                         (-50.0, -50.0))
+
+    def test_comma_separator(self):
+        from nlu import extract_coordinates
+        self.assertEqual(extract_coordinates("в точку -50, -50"),
+                         (-50.0, -50.0))
+        self.assertEqual(extract_coordinates("в точку -50,-50"),
+                         (-50.0, -50.0))
+
+    def test_parens(self):
+        from nlu import extract_coordinates
+        self.assertEqual(extract_coordinates("в точку (-50, -50)"),
+                         (-50.0, -50.0))
+
+    def test_minus_as_word_asr(self):
+        """ASR может распознавать знак минуса как слово «минус»."""
+        from nlu import extract_coordinates
+        self.assertEqual(extract_coordinates("в точку минус 50 минус 50"),
+                         (-50.0, -50.0))
+
+    def test_mixed_signs(self):
+        from nlu import extract_coordinates
+        self.assertEqual(extract_coordinates("в точку 100 -50"),
+                         (100.0, -50.0))
+        self.assertEqual(extract_coordinates("в точку -100 50"),
+                         (-100.0, 50.0))
+
+    def test_positive_unchanged(self):
+        from nlu import extract_coordinates
+        self.assertEqual(extract_coordinates("в точку 100 50"),
+                         (100.0, 50.0))
+
+
 class TestCircleVoicePhrases(unittest.TestCase):
     """«Вега круг» (одно слово) должно распознаваться как circle.
     При этом «вега кругом» — это turn_around (разворот на 180°), не circle."""
@@ -183,6 +235,9 @@ class TestCollectHelpers(unittest.TestCase):
         self.assertEqual(helpers, ["circle_cmd"])
 
     def test_forward_with_dist_pulls_duration(self):
+        """forward/back с дистанцией используют helper duration(D, P) для
+        расчёта секунд на лету — пользователь видит явное соответствие
+        дистанция ↔ время и может легко править."""
         c = _cmd("forward", raw="Вега вперед 100 см", code="forward(100)")
         helpers = self.s._collect_helpers([c])
         self.assertEqual(helpers, ["duration"])
@@ -346,21 +401,21 @@ class TestGotoOptimization(unittest.TestCase):
 
     def test_aligned_forward_emits_simple_forward(self):
         """Робот в (0,0) heading=0 (N), цель (0, 100) — курс совпадает.
-        Должен генерироваться простой forward, без goto_cmd."""
+        Должен генерироваться простой forward через duration(), без goto_cmd."""
         self.s.robot_state.x, self.s.robot_state.y = 0, 0
         self.s.robot_state.heading = 0   # north
         cmd = self._goto(0, 100)
 
-        # Helpers: только duration, не goto_cmd
+        # Helpers: только duration, не goto_cmd.
         helpers = self.s._helpers_for_cmd(cmd)
         self.assertEqual(helpers, ["duration"])
 
-        # Call lines: robot.move с явным литералом мощности
+        # Call lines: robot.move с явным литералом мощности.
         lines = self.s._python_call_lines_for_cmd(cmd)
         joined = "\n".join(lines)
         self.assertIn("robot.move(40, duration(100", joined)
         self.assertNotIn("goto_cmd", joined)
-        self.assertNotIn("-40", joined)   # не задом
+        self.assertNotIn("-40", joined)         # не задом
 
     def test_opposite_heading_emits_backward(self):
         """Робот в (0,100) heading=0 (N), цель (0, 0) — курс противоположен.
@@ -448,7 +503,7 @@ class TestGotoOptimization(unittest.TestCase):
 
         lines = self.s._python_call_lines_for_cmd(cmd)
         joined = "\n".join(lines)
-        # Должна быть РЕАЛЬНАЯ команда движения, не «уже в точке»
+        # Должна быть РЕАЛЬНАЯ команда движения, не «уже в точке».
         self.assertIn("robot.move(40, duration(", joined)
         self.assertNotIn("уже в точке", joined,
                          "Если бы codegen видел post-state (50,50), было бы skip")
@@ -540,6 +595,22 @@ robot.stop()
         self.assertEqual(len(cmds), 2)
         self.assertEqual(cmds[0].intent, "steer_left")
         self.assertIn("20", cmds[0].raw)
+
+    def test_body_assign_default_speed(self):
+        """⛯ Присваивание `DEFAULT_SPEED = N` распознаётся как set_speed."""
+        text = "DEFAULT_SPEED = 80\nrobot.set_angle(0)\n"
+        cmds = self.s._parse_program_text(text)
+        self.assertEqual(len(cmds), 1)
+        self.assertEqual(cmds[0].intent, "set_speed")
+        self.assertIn("80", cmds[0].raw)
+
+    def test_body_assign_default_turn_angle(self):
+        """⛯ Присваивание `DEFAULT_TURN_ANGLE = N` → set_turn_angle."""
+        text = "DEFAULT_TURN_ANGLE = 25\n"
+        cmds = self.s._parse_program_text(text)
+        self.assertEqual(len(cmds), 1)
+        self.assertEqual(cmds[0].intent, "set_turn_angle")
+        self.assertIn("25", cmds[0].raw)
 
     def test_body_steer_zero_no_extra_cmd(self):
         """Если в теле `set_angle(0)` — лишняя steer-команда НЕ нужна
@@ -690,6 +761,8 @@ class TestProgramTextRoundTrip(unittest.TestCase):
                          "ожидаем 1 def + 2 вызова circle_cmd")
 
     def test_forward_then_circle_emits_both_helpers(self):
+        """forward с дистанцией тянет duration(), а circle тянет circle_cmd —
+        оба helper'a должны попасть в преамбулу."""
         self.s._program = [
             _cmd("forward", raw="Вега вперед 100 см", code="forward(100)"),
             _cmd("circle"),
