@@ -77,11 +77,6 @@ class RobotCmd:
     end_x:       Optional[float] = None
     end_y:       Optional[float] = None
     end_heading: Optional[float] = None
-    # Номер строки в textarea (0-based), из которой родилась команда при
-    # парсинге _parse_program_text. Используется для подсветки текущей
-    # строки в редакторе кода во время воспроизведения. None — команда
-    # создана не из текстареи (голос/текст-форма).
-    source_line: Optional[int] = None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -734,14 +729,6 @@ class UserSession:
             "type":  "program",
             "lines": self._program_lines(),
             "text":  self._program_text(),
-        })
-
-    async def push_exec_cursor(self, line: Optional[int]):
-        """Сообщить клиенту какую строку сейчас исполняем (для подсветки ▶
-        слева от textarea). None — стираем подсветку (очередь пуста)."""
-        await self.broadcast({
-            "type": "exec_cursor",
-            "line": line,
         })
 
     # ═══════════════════════════════════════════════════════════════════════════
@@ -3613,10 +3600,6 @@ odo = Odometry()    # глобальный экземпляр одометрии
                 cmd = self._pending.pop(0)
                 self._executing = cmd
                 await self.push_queue()
-                # Подсветка строки в textarea: треугольник ▶ слева
-                # от строки кода, которая сейчас выполняется.
-                if cmd.source_line is not None:
-                    await self.push_exec_cursor(cmd.source_line)
                 db = SessionLocal()
                 success = False
                 try:
@@ -3639,9 +3622,6 @@ odo = Odometry()    # глобальный экземпляр одометрии
                     self._executing = None
                     self._exec_task = None
                     await self.push_queue()
-                    # Если очередь пустеет — стираем подсветку строки.
-                    if not self._pending:
-                        await self.push_exec_cursor(None)
                     # Фиксируем заряд в БД после каждой команды — на случай
                     # внезапного рестарта сервера. Зарядка переживает рестарты.
                     self._save_battery_pct()
@@ -3688,10 +3668,6 @@ odo = Odometry()    # глобальный экземпляр одометрии
                 intent=recorded.intent, label=recorded.label,
                 code=recorded.code, raw=recorded.raw,
                 playback=True,
-                # Сохраняем source_line — это позволяет _queue_runner подсветить
-                # текущую строку выполнения в редакторе кода (▶ слева от
-                # textarea). Без этого индикатор не появляется при воспроизведении.
-                source_line=recorded.source_line,
             ))
         brake_cmd = self._build_cmd("brake", "Вега тормоз")
         if brake_cmd:
@@ -3951,7 +3927,7 @@ odo = Odometry()    # глобальный экземпляр одометрии
         cmds: list[RobotCmd] = []
         last_steer = 0
 
-        for line_idx, raw_line in enumerate(text.split("\n")):
+        for raw_line in text.split("\n"):
             line = raw_line.strip()
             if not line:
                 continue
@@ -3966,7 +3942,6 @@ odo = Odometry()    # глобальный экземпляр одометрии
             #    Маркер `# CMD:` пропускаем без обработки (декоративный).
             body_cmd, new_steer = self._parse_body_line(line, last_steer)
             if body_cmd is not None:
-                body_cmd.source_line = line_idx
                 cmds.append(body_cmd)
                 last_steer = new_steer
                 continue
@@ -3994,7 +3969,6 @@ odo = Odometry()    # глобальный экземпляр одометрии
                 continue
             cmd = self._build_cmd(intent, cmd_raw)
             if cmd:
-                cmd.source_line = line_idx
                 cmds.append(cmd)
                 last_steer = self._steer_after_cmd(intent, cmd_raw, last_steer)
         return cmds

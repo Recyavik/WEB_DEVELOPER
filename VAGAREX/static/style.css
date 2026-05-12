@@ -824,28 +824,6 @@ body { padding-bottom: 22px; }
   min-height: 0;
 }
 
-/* ── Индикатор текущей строки исполнения (▶ слева от текста) ───────────── */
-/* Стрелка помещается в зону внутреннего padding overlay/textarea (8px = 0.5rem),
-   где нет текста. Не сдвигаем textarea/overlay — выравнивание клик↔символ
-   при выделении остаётся точным. */
-.exec-cursor-arrow {
-  position: absolute;
-  left: 1px;
-  width: 6px;
-  color: #f0c020;                 /* жёлтый — заметно на тёмном фоне */
-  font-size: 0.55rem;             /* мельче кода, чтобы не лезла на буквы */
-  line-height: 1.35;              /* совпадает с .program-code/.code-overlay */
-  pointer-events: none;
-  user-select: none;
-  z-index: 3;                     /* поверх overlay (z:1) и textarea (z:2) */
-  transition: top 0.12s ease-out; /* плавный переход между строками */
-}
-/* В модальном окне padding overlay больше (0.6rem 0.8rem) — двигаем стрелку
-   правее, чтобы тоже сидела внутри своего padding. */
-.code-wrap--modal .exec-cursor-arrow {
-  left: 2px;
-  font-size: 0.7rem;              /* код в модалке крупнее */
-}
 .code-overlay {
   position: absolute;
   inset: 0;
