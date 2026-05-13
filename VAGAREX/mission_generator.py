@@ -115,16 +115,19 @@ _HEADINGS_15_DEG   = tuple(range(0, 360, 15))   # 0, 15, 30, ..., 345
 # Шаги по уровням (передаются в _generate_trajectory).
 _LEVEL_HEADING_STEP_DEG = {1: 45, 2: 15, 3: 45}   # L3 снова кратно 45°
 
-# Параметры bypass_cmd (S-волна объезда) — должны совпадать с
-# session.py `_HELPER_CODE["bypass_cmd"]`. Используются _simulate_bypass()
-# для предсказания траектории на этапе генерации миссии.
+# Параметры bypass_cmd (S-волна) и course_cmd (встать на курс на ходу) —
+# совпадают с session.py `_HELPER_CODE`. Используются для предсказания
+# траектории на этапе генерации миссии.
 _BYPASS_DEFAULT_SPEED_PCT      = 40
-_BYPASS_QUARTER_SEC            = 0.5
+_BYPASS_QUARTER_SEC            = 0.5     # дефолт, как в helper-коде
 _BYPASS_MAX_STEER              = 36
 _BYPASS_SPEED_AT_100           = 80.0   # см/с, дефолт UserCfg
 _BYPASS_WHEEL_CIRC_CM          = 28.30
 _BYPASS_HEADING_DEG_PER_ROT    = 25.0
 _BYPASS_TURN_SPEED_REF         = 40     # % — turn_speed_ref
+# Минимальное расстояние между waypoint'ами Level 3 — чтобы маршрут
+# не «клубком» в одном углу поля.
+_LEVEL3_MIN_WAYPOINT_DIST_CM   = 70.0
 
 # Русские названия + helper-команды для каждого из 8 курсов. Используется
 # в face-кандидате (вместо литеральных списков в коде).
@@ -380,38 +383,66 @@ def _candidate_back(state: dict, g: WorldGeom, rng: random.Random, *,
     return None
 
 
-def _simulate_bypass(state: dict, start_dir: int
-                       ) -> tuple[dict, list[list[float]]]:
-    """Численно симулирует bypass_cmd (S-волна, 4 четверть-арки) с дефолтными
-    параметрами. Возвращает (end_state, path_points).
+def _sim_arc(state: dict, steer_deg: float, dist_cm: float
+              ) -> tuple[dict, list[list[float]]]:
+    """Прокручивает один прямой сегмент с постоянным углом руля на dist_cm
+    форвард (steer_deg ∈ [-45, +45]). Используется как примитив для
+    bypass и course симуляций.
 
-    Использует те же формулы, что и `update_physics` в session.py:
+    Применяет ту же физику что и `update_physics`:
         d_head = (step/wheel_circ) * heading_per_rot * (steer/45) * trf * sign
-    с trf=1.0 при дефолтных скоростях (speed=40%, turn_speed_ref=40)."""
-    cm_per_s     = _BYPASS_SPEED_AT_100 * _BYPASS_DEFAULT_SPEED_PCT / 100.0   # 32
-    quarter_dist = cm_per_s * _BYPASS_QUARTER_SEC                              # 16
-    ref          = _BYPASS_TURN_SPEED_REF / 100.0
-    spd          = _BYPASS_DEFAULT_SPEED_PCT / 100.0
-    trf          = max(0.25, min(3.0, ref / max(0.05, spd)))                  # 1.0
-
+    """
+    if dist_cm < 0.5:
+        return state, [[round(state["x"], 1), round(state["y"], 1)]]
+    ref = _BYPASS_TURN_SPEED_REF / 100.0
+    spd = _BYPASS_DEFAULT_SPEED_PCT / 100.0
+    trf = max(0.25, min(3.0, ref / max(0.05, spd)))
     x = float(state["x"]); y = float(state["y"]); h = float(state["heading"])
     pts = [[round(x, 1), round(y, 1)]]
-    MICRO = 30
-    micro_d = quarter_dist / MICRO
+    MICRO = max(10, int(dist_cm))
+    micro_d = dist_cm / MICRO
+    for _ in range(MICRO):
+        d_head = (micro_d / _BYPASS_WHEEL_CIRC_CM) \
+                 * _BYPASS_HEADING_DEG_PER_ROT \
+                 * (steer_deg / 45.0) * trf
+        h = (h + d_head) % 360.0
+        hr = math.radians(h)
+        x += math.sin(hr) * micro_d
+        y += math.cos(hr) * micro_d
+        pts.append([round(x, 1), round(y, 1)])
+    return ({"x": x, "y": y, "heading": h}, pts)
 
+
+def _simulate_bypass(state: dict, start_dir: int
+                       ) -> tuple[dict, list[list[float]]]:
+    """Численно симулирует bypass_cmd (S-волна, 4 четверть-арки) с дефолтным
+    quarter_sec. Возвращает (end_state, path_points)."""
+    cm_per_s     = _BYPASS_SPEED_AT_100 * _BYPASS_DEFAULT_SPEED_PCT / 100.0
+    quarter_dist = cm_per_s * _BYPASS_QUARTER_SEC
+    cur_state = state
+    all_pts: list[list[float]] = [[round(state["x"], 1), round(state["y"], 1)]]
     for phase in range(4):
         sign  = start_dir if phase in (0, 3) else -start_dir
         steer = sign * _BYPASS_MAX_STEER
-        for _ in range(MICRO):
-            d_head = (micro_d / _BYPASS_WHEEL_CIRC_CM) \
-                     * _BYPASS_HEADING_DEG_PER_ROT \
-                     * (steer / 45.0) * trf
-            h = (h + d_head) % 360.0
-            hr = math.radians(h)
-            x += math.sin(hr) * micro_d
-            y += math.cos(hr) * micro_d
-            pts.append([round(x, 1), round(y, 1)])
-    return ({"x": x, "y": y, "heading": h}, pts)
+        cur_state, pts = _sim_arc(cur_state, steer, quarter_dist)
+        # Пропускаем дубликат старта между фазами
+        all_pts.extend(pts[1:] if len(pts) > 1 else pts)
+    return cur_state, all_pts
+
+
+def _simulate_set_course(state: dict, target_deg: float
+                          ) -> tuple[dict, list[list[float]]]:
+    """Симулирует course_cmd: при заданном target_deg выставляет руль
+    на min(diff, max_turn_angle), едет вперёд время = |diff|/30 сек.
+    Результат — дугообразная траектория со сменой курса."""
+    diff = (target_deg - state["heading"] + 540.0) % 360.0 - 180.0
+    if abs(diff) < 3.0:
+        return state, [[round(state["x"], 1), round(state["y"], 1)]]
+    steer = max(-_BYPASS_MAX_STEER, min(_BYPASS_MAX_STEER, diff))
+    duration_sec = abs(diff) / 30.0
+    cm_per_s     = _BYPASS_SPEED_AT_100 * _BYPASS_DEFAULT_SPEED_PCT / 100.0
+    dist = cm_per_s * duration_sec
+    return _sim_arc(state, steer, dist)
 
 
 def _candidate_bypass(state: dict, g: WorldGeom, rng: random.Random, *,
@@ -421,13 +452,11 @@ def _candidate_bypass(state: dict, g: WorldGeom, rng: random.Random, *,
                        min_gap_cm: Optional[float] = None,
                        heading_step_deg: int = 45):     # noqa: ARG001
     """Объезд препятствия S-волной. start_dir=+1 — объезд справа,
-    start_dir=-1 — слева. Сама команда детерминирована (фиксированные
-    параметры в session.py), генератор только подставляет start_dir
-    и проверяет, что траектория не задевает уже пройденное."""
+    start_dir=-1 — слева. Использует дефолтный quarter_sec (0.5 сек) —
+    те же параметры, что и голосовая команда «Вега объезд слева/справа»."""
     new, path_seg = _simulate_bypass(state, start_dir)
     if not _inside_field(new["x"], new["y"], g):
         return None
-    # Все промежуточные точки тоже в поле
     for px, py in path_seg:
         if not _inside_field(px, py, g):
             return None
@@ -446,6 +475,44 @@ def _candidate_bypass_right(state, g, rng, **kw):
 
 def _candidate_bypass_left(state, g, rng, **kw):
     return _candidate_bypass(state, g, rng, start_dir=-1, **kw)
+
+
+def _candidate_set_course(state: dict, g: WorldGeom, rng: random.Random, *,
+                            align_to_grid: bool = False,   # noqa: ARG001
+                            prior_path: Optional[list] = None,
+                            min_gap_cm: Optional[float] = None,
+                            heading_step_deg: int = 45):
+    """Команда «встать на курс на ходу» (`course_cmd(target_deg)`):
+    робот рулит на target_deg при движении вперёд, описывая дугу.
+    Объединяет в себе и поворот, и движение — поэтому отдельный
+    face_cardinal перед ней НЕ нужен.
+
+    Выбирается случайный target кратно heading_step_deg, в пределах
+    ±90° от текущего курса (резкие развороты исключены — для них есть
+    face_cardinal/turn_around)."""
+    cur = state["heading"]
+    candidates: list[int] = []
+    for delta_abs in (45, 90):
+        for sign in (+1, -1):
+            new_h = int(round((cur + sign * delta_abs) % 360))
+            if heading_step_deg > 0 and new_h % heading_step_deg != 0:
+                continue
+            candidates.append(new_h)
+    rng.shuffle(candidates)
+    for target in candidates:
+        new, path_seg = _simulate_set_course(state, float(target))
+        if not _inside_field(new["x"], new["y"], g):
+            continue
+        if not all(_inside_field(px, py, g) for px, py in path_seg):
+            continue
+        if (prior_path is not None and min_gap_cm is not None
+                and not _path_seg_clears_prior(path_seg, prior_path, min_gap_cm)):
+            continue
+        new["heading"] = float(target)   # snap для согласованности с реальным cmd
+        voice = f"Вега курс {target}"
+        code  = f"course_cmd({target})"
+        return (new, voice, code, path_seg)
+    return None
 
 
 def _candidate_face_cardinal(state: dict, g: WorldGeom, rng: random.Random, *,
@@ -618,7 +685,11 @@ def _generate_trajectory(n_waypoints: int, geom: WorldGeom,
             vertices.append(v)
 
     linear_candidates = [_candidate_forward, _candidate_back]
+    # Кривые: bypass (S-волна, малое смещение) и set_course (дуга на ходу).
+    # course объединяет turn+move в один шаг — поэтому ему НЕ нужен
+    # предварительный face_cardinal.
     curved_candidates = [_candidate_bypass_left, _candidate_bypass_right]
+    combined_candidates = [_candidate_set_course]   # сам и поворачивает, и едет
     movement_candidates = list(linear_candidates)
     if include_bypass:
         movement_candidates = movement_candidates + curved_candidates
@@ -633,6 +704,22 @@ def _generate_trajectory(n_waypoints: int, geom: WorldGeom,
     # Счётчик использованных кривых — гарантируем min_curved для L3.
     curved_used = 0
 
+    # Минимальное расстояние между новой и любой предыдущей waypoint —
+    # для уровней с include_bypass=True (Level 3) выставляем 70 см,
+    # чтобы маршрут не «клубком» в одном углу.
+    min_wp_dist = _LEVEL3_MIN_WAYPOINT_DIST_CM if include_bypass else 0.0
+
+    def _waypoint_too_close(x: float, y: float) -> bool:
+        if min_wp_dist <= 0:
+            return False
+        for wx, wy in waypoints:
+            if math.hypot(x - wx, y - wy) < min_wp_dist:
+                return True
+        # Стартовая точка тоже считается
+        if math.hypot(x - start_x, y - start_y) < min_wp_dist:
+            return True
+        return False
+
     waypoints_created = 0
     # Поднял лимит: жёсткие ограничения (кардиналы + зазор + grid)
     # отбраковывают больше кандидатов, нужно больше попыток.
@@ -640,9 +727,12 @@ def _generate_trajectory(n_waypoints: int, geom: WorldGeom,
     safety_iter = 0
     while waypoints_created < n_waypoints and safety_iter < safety_iter_max:
         safety_iter += 1
-        # 1/3 шансов на goto, 2/3 — на turn+move (goto отключаем на L3).
+        # На L3 (include_bypass=True) добавляем стиль 'curve_combined'
+        # (set_course — сам поворачивает и едет, без отдельного face).
         if allow_goto:
             style = rng.choice(['turn_move', 'turn_move', 'goto'])
+        elif include_bypass:
+            style = rng.choice(['turn_move', 'turn_move', 'curve_combined'])
         else:
             style = 'turn_move'
 
@@ -651,6 +741,10 @@ def _generate_trajectory(n_waypoints: int, geom: WorldGeom,
             if result is None:
                 continue
             state, voice, code, path_seg = result
+            if _waypoint_too_close(state["x"], state["y"]):
+                # Откатываем (восстанавливать сложно — для goto не сохраняем).
+                # Просто пропускаем: следующая итерация попробует другой кандидат.
+                continue
             voice_steps.append(voice)
             code_steps.append(code)
             heading_steps.append(state["heading"])
@@ -658,6 +752,33 @@ def _generate_trajectory(n_waypoints: int, geom: WorldGeom,
             _add_vertex((state["x"], state["y"]))
             waypoints.append([round(state["x"], 1), round(state["y"], 1)])
             waypoints_created += 1
+            continue
+
+        if style == 'curve_combined':
+            # set_course объединяет turn+move в одно действие.
+            saved_state     = dict(state)
+            saved_voice_n   = len(voice_steps)
+            saved_code_n    = len(code_steps)
+            saved_path_n    = len(full_path)
+            saved_verts_n   = len(vertices)
+            saved_heading_n = len(heading_steps)
+
+            cv_fn = rng.choice(combined_candidates)
+            result = cv_fn(state, geom, rng, **cand_kw)
+            if result is None:
+                continue
+            new_state, voice, code, path_seg = result
+            if _waypoint_too_close(new_state["x"], new_state["y"]):
+                continue
+            state = new_state
+            voice_steps.append(voice)
+            code_steps.append(code)
+            heading_steps.append(state["heading"])
+            _extend_path(path_seg)
+            _add_vertex((state["x"], state["y"]))
+            waypoints.append([round(state["x"], 1), round(state["y"], 1)])
+            waypoints_created += 1
+            curved_used += 1
             continue
 
         # turn + move — с откатом, если после поворота никуда не двинулись.
@@ -697,7 +818,10 @@ def _generate_trajectory(n_waypoints: int, geom: WorldGeom,
             result = mv_fn(state, geom, rng, **cand_kw)
             if result is None:
                 continue
-            state, voice, code, path_seg = result
+            new_state, voice, code, path_seg = result
+            if _waypoint_too_close(new_state["x"], new_state["y"]):
+                continue
+            state = new_state
             voice_steps.append(voice)
             code_steps.append(code)
             heading_steps.append(state["heading"])
