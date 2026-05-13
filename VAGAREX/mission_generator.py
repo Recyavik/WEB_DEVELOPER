@@ -1255,10 +1255,10 @@ def _generate_level_2(geom: WorldGeom, rng: random.Random) -> dict:
 # ── Генератор уровня 3 (бывший L1 «Ознакомительный») ──────────────────────
 
 def _generate_level_3(geom: WorldGeom, rng: random.Random) -> dict:
-    """5 waypoints + поворотные команды между ними. Без зон.
-    Старт генерируется случайно (_random_start_xy), и в geom-копию
-    подкладывается — чтобы трекинг траектории шёл от него."""
-    n_waypoints = 5
+    """3 waypoints на сетке 50×50, курсы кратны 45°. Эталонная траектория
+    из прямых движений и поворотов на месте — отклонение учитывается
+    в точности. Старт генерируется случайно (_random_start_xy)."""
+    n_waypoints = 3
     s_x, s_y = _random_start_xy(rng)
     geom = dataclasses.replace(geom, start_x=s_x, start_y=s_y)
     desc_start_x = _snap_to_grid(geom.start_x)

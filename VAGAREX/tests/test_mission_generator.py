@@ -55,14 +55,14 @@ class TestLevel1Shape(unittest.TestCase):
     """Структура сгенерированной миссии level 1."""
 
     def test_level_1_has_2_or_3_waypoints(self):
-        # После рестракта уровней: бывший L1 «Ознакомительный»
-        # стал L3 «Базовый» и теперь генерирует ровно 5 точек.
+        # v4.5+: L3 «Базовый» (бывший L1) генерирует ровно 3 точки на
+        # сетке 50×50.
         for seed in range(20):
             with self.subTest(seed=seed):
                 m = generate_mission(level=3, geom=_geom_default(), seed=seed)
                 wp = json.loads(m["waypoints"])
-                self.assertEqual(len(wp), 5,
-                                  f"seed={seed}: L3 теперь должен генерировать 5 точек")
+                self.assertEqual(len(wp), 3,
+                                  f"seed={seed}: L3 должен генерировать 3 точки")
 
     def test_level_1_no_zones(self):
         for seed in range(10):

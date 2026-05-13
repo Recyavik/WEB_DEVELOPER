@@ -36,7 +36,7 @@
         {% set levels = [
           (1, 'Ознакомительный', 'Инспектор: 3 точки разбросаны по полю. Посетите их любой траекторией — путь не проверяется, только сбор точек.'),
           (2, 'Начальный',       'Инспектор: 4 точки + 3 опасные зоны (10/20/30 см) на пути. Обходите их как хотите. Дополнительно: установить 2 зоны внимания и удалить все опасные. Каждый наезд на опасную −5%.'),
-          (3, 'Базовый',         '2-3 точки на сетке 50×50, курсы кратны 45°. Эталонная траектория из прямых движений и поворотов на месте — отклонение от неё учитывается в точности.'),
+          (3, 'Базовый',         'Инспектор: 3 точки на сетке 50×50, курсы кратны 45°. Эталонная траектория из прямых движений и поворотов на месте — отклонение от неё учитывается в точности.'),
           (4, 'Углублённый',     'Осторожно: 4-5 точек, курсы кратны 15° (более плавная геометрия), 2 опасные зоны. Эталонная траектория.'),
           (5, 'Продвинутый',     'Осторожно: 5 точек, 2 опасные зоны + 1 зона внимания на финальной точке. Траектория из 3 линейных и кривых манёвров.'),
         ] %}
@@ -70,7 +70,13 @@
   <div id="preview-container" class="card preview-card" style="display:none">
     <div class="card__title-row">
       <h2 class="card__title">
-        Превью миссии <span id="preview-id" class="preview-id-chip"></span>
+        Превью миссии
+        <span id="preview-level-chip"
+              style="display:inline-block; margin-left:0.5rem; padding:2px 8px;
+                     border-radius:10px; font-size:0.75em; font-weight:600;
+                     background:rgba(88,166,255,0.15); color:#58a6ff;
+                     border:1px solid rgba(88,166,255,0.4); vertical-align:middle"></span>
+        <span id="preview-id" class="preview-id-chip"></span>
       </h2>
       <div class="program-actions">
         <span data-when="unsaved" style="display:inline-flex; gap:0.4rem">
@@ -298,6 +304,16 @@
     document.getElementById('preview-id').textContent =
       saved ? '#' + _previewMissionId : '(не сохранено)';
   }
+  // Названия уровней (по тому же порядку что в select сверху).
+  const LEVEL_NAMES = {
+    0: 'Кастомная',
+    1: 'Ознакомительный',
+    2: 'Начальный',
+    3: 'Базовый',
+    4: 'Углублённый',
+    5: 'Продвинутый',
+  };
+
   function showPreview(data, level) {
     _previewMissionId = data.id;             // null до сохранения
     _savePayload      = data._save_payload;
@@ -307,6 +323,13 @@
       // Предзаполнение генератор-default'ом; пользователь может стереть.
       titleInput.value = data.title || '';
       titleInput.readOnly = false;
+    }
+    // Чип уровня в заголовке превью.
+    const chip = document.getElementById('preview-level-chip');
+    if (chip) {
+      const lvl = (level !== undefined && level !== null) ? level : (data.level ?? 0);
+      const nm  = LEVEL_NAMES[lvl] || 'Кастомная';
+      chip.textContent = (lvl === 0) ? 'Кастомная' : `Уровень ${lvl} · ${nm}`;
     }
     document.getElementById('preview-description').textContent = data.description;
     drawPreviewSvg(data);
