@@ -433,6 +433,12 @@ class RobotCanvas {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(String(i + 1), c.x, c.y);
+      // Координаты — серым полупрозрачным под маркером,
+      // чтобы не нужно было каждый раз открывать «условие задачи».
+      ctx.fillStyle = 'rgba(150, 162, 175, 0.7)';
+      ctx.font = '10px sans-serif';
+      ctx.textBaseline = 'top';
+      ctx.fillText(`(${Math.round(x)}, ${Math.round(y)})`, c.x, c.y + 10);
       ctx.restore();
     });
 

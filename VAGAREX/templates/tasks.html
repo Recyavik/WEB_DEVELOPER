@@ -513,6 +513,13 @@
         'font-size':'10', 'font-family':'monospace', 'font-weight':'600'});
       t.textContent = (i+1) + '';
       svg.appendChild(t);
+      // Координаты точки серым полупрозрачным под маркером —
+      // чтобы видеть условие задачи прямо на превью без открытия деталей.
+      const coord = mk('text', {x:x+8, y:-y+16,
+        fill:'rgba(150,162,175,0.7)',
+        'font-size':'9', 'font-family':'monospace'});
+      coord.textContent = `(${Math.round(x)}, ${Math.round(y)})`;
+      svg.appendChild(coord);
     });
     // Стартовая позиция (зелёный кружок) — поверх всего.
     // Берём из path[0] чтобы учесть пользовательскую настройку start_x/y.
