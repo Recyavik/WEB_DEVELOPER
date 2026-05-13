@@ -425,9 +425,18 @@ class UserSession:
                               x: float, y: float) -> None:
         """Если идёт миссия — проверить, не удовлетворяет ли это действие
         одному из обязательных actions_required (place/remove зон).
-        No-op если миссии нет."""
+        No-op если миссии нет.
+
+        Для инспектор-режима (L1/L2): любое action прощает наезд на
+        ту опасную зону, внутри которой сейчас находится робот. Без
+        этого игрок, который остановился внутри опасной зоны чтобы
+        её убрать (или поставить attention рядом), получал бы −5% при
+        выезде — что неверно, действие как раз и нейтрализует наезд."""
         if self._mission is None:
             return
+        if self._mission.is_inspector:
+            s = self.robot_state
+            self._mission.forgive_current_zone_hits(s.x, s.y)
         idx = self._mission.try_match_action(action_type, x, y)
         if idx is not None:
             # Уведомим пользователя, что засчитали действие миссии.

@@ -106,6 +106,48 @@ class TestCoefficientUpdate(unittest.TestCase):
         self.assertEqual(m.deviations, 2)
 
 
+class TestDangerZoneHitsInspector(unittest.TestCase):
+    """Инспектор-режим: −5% начисляется только когда робот ВЫЕХАЛ из
+    опасной зоны без действия внутри. Действие (place_attention или
+    remove_danger), выполненное пока робот внутри зоны, прощает наезд."""
+
+    def _inspector(self, danger_zones):
+        return _mk_mission(level=2, danger_zones=danger_zones)
+
+    def test_no_hit_while_only_inside(self):
+        # Заехали в зону → коэффициент не падает, finalize ещё нет
+        m = self._inspector([(0.0, 0.0, 15.0)])
+        m.update_coefficient(5, 5)
+        self.assertEqual(m.coefficient, 1.0)
+        self.assertIn(0, m.danger_zones_inside)
+        self.assertEqual(m.danger_zones_finalized, set())
+
+    def test_hit_fires_on_exit(self):
+        # Заехали → выехали → −5%
+        m = self._inspector([(0.0, 0.0, 15.0)])
+        m.update_coefficient(5, 5)       # внутри
+        m.update_coefficient(50, 0)      # выехали
+        self.assertAlmostEqual(m.coefficient, 0.95, places=4)
+        self.assertIn(0, m.danger_zones_finalized)
+
+    def test_hit_forgiven_when_action_performed_inside(self):
+        # Заехали → выполнили действие → выехали → штрафа НЕТ
+        m = self._inspector([(0.0, 0.0, 15.0)])
+        m.update_coefficient(5, 5)        # внутри
+        m.forgive_current_zone_hits(5, 5) # выполнил remove/place внутри
+        m.update_coefficient(50, 0)       # выехали
+        self.assertAlmostEqual(m.coefficient, 1.0, places=4)
+        self.assertIn(0, m.danger_zones_finalized)
+
+    def test_forgive_outside_zone_no_effect(self):
+        # forgive вызван снаружи зоны → ничего не прощается
+        m = self._inspector([(0.0, 0.0, 15.0)])
+        m.forgive_current_zone_hits(100, 100)   # робот далеко от зоны
+        m.update_coefficient(5, 5)               # внутри
+        m.update_coefficient(50, 0)              # выехали — штраф
+        self.assertAlmostEqual(m.coefficient, 0.95, places=4)
+
+
 class TestWaypointVisits(unittest.TestCase):
     """Точное прохождение (1 см) с проверкой по отрезку движения."""
 

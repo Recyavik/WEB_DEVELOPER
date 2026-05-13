@@ -107,11 +107,19 @@ class ActiveMission:
     last_robot_pos:    Optional[tuple[float, float]] = None
     started_at:        datetime = field(default_factory=datetime.utcnow)
     last_algo_duration_sec: Optional[float] = None
-    # Индексы danger-зон, на которые робот уже наезжал (по индексу в
-    # self.danger_zones). Нужно для штрафа −5%/наезд в инспектор-режиме:
-    # без этого набора каждый кадр пребывания внутри зоны давал бы повторный
-    # штраф (десятки −5% за секунду стоянки).
-    danger_zones_hit:  set[int] = field(default_factory=set)
+    # Учёт наездов на опасные зоны (инспектор-режим L2). Используется
+    # state-машина «exit-only counting»:
+    #   inside       — робот ВПРЯМО СЕЙЧАС внутри этой зоны
+    #   forgiven     — игрок выполнил действие (remove_danger/place_attention)
+    #                  пока находился внутри → при выходе наезд не штрафуется
+    #   finalized    — финальное решение принято (либо −5%, либо прощено),
+    #                  больше эту зону не учитываем
+    # Логика: −5% начисляется только когда робот ПОКИДАЕТ зону, в которой
+    # не было действия. Это даёт игроку возможность сначала зайти в зону
+    # и убрать/установить, а потом выйти без штрафа.
+    danger_zones_inside:    set[int] = field(default_factory=set)
+    danger_zones_forgiven:  set[int] = field(default_factory=set)
+    danger_zones_finalized: set[int] = field(default_factory=set)
 
     # ── Режим миссии ─────────────────────────────────────────────────────
 
@@ -157,23 +165,48 @@ class ActiveMission:
         return transitioned
 
     def _mark_danger_zone_hits(self, robot_x: float, robot_y: float) -> int:
-        """Инспектор-режим: при первом наезде на каждую опасную зону —
-        штраф −5% к коэффициенту. Повторное пребывание в той же зоне
-        НЕ штрафуется (нужно выехать и заехать заново для нового штрафа,
-        но это уже логика клиента — у нас сейчас «один наезд = один минус»).
+        """Exit-only state-машина:
+          • Робот ВНУТРИ зоны i, ранее не был → добавляем i в inside.
+          • Робот ВЫШЕЛ из зоны i:
+              если зона в forgiven → finalize без штрафа (игрок выполнил
+                действие внутри);
+              иначе → finalize со штрафом −5%.
 
-        Возвращает число новых засчитанных наездов в этом тике."""
+        Зоны в finalized больше не учитываются (повторные заезды бесплатны
+        — у нас «один наезд = один минус», как и раньше).
+
+        Возвращает число штрафных наездов в этом тике."""
         if not self.danger_zones:
             return 0
         new_hits = 0
         for i, (zx, zy, zr) in enumerate(self.danger_zones):
-            if i in self.danger_zones_hit:
+            if i in self.danger_zones_finalized:
+                continue
+            inside_now = math.hypot(robot_x - zx, robot_y - zy) <= zr
+            was_inside = i in self.danger_zones_inside
+            if inside_now and not was_inside:
+                self.danger_zones_inside.add(i)
+            elif was_inside and not inside_now:
+                # Вышел из зоны — момент решения.
+                self.danger_zones_inside.discard(i)
+                self.danger_zones_finalized.add(i)
+                if i in self.danger_zones_forgiven:
+                    self.danger_zones_forgiven.discard(i)
+                else:
+                    self.coefficient = max(0.0, self.coefficient - 0.05)
+                    new_hits += 1
+        return new_hits
+
+    def forgive_current_zone_hits(self, robot_x: float, robot_y: float) -> None:
+        """Помечает все опасные зоны, в которых сейчас находится робот,
+        как «прощённые» — при выходе из них штраф −5% не начисляется.
+        Вызывается ровно в момент выполнения действия (remove_danger /
+        place_attention), чтобы наезд во время действия не учитывался."""
+        for i, (zx, zy, zr) in enumerate(self.danger_zones):
+            if i in self.danger_zones_finalized:
                 continue
             if math.hypot(robot_x - zx, robot_y - zy) <= zr:
-                self.danger_zones_hit.add(i)
-                self.coefficient = max(0.0, self.coefficient - 0.05)
-                new_hits += 1
-        return new_hits
+                self.danger_zones_forgiven.add(i)
 
     # ── Чекпоинты и действия ─────────────────────────────────────────────
 
