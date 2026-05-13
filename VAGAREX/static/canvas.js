@@ -436,7 +436,7 @@ class RobotCanvas {
       // Координаты — серым полупрозрачным под маркером,
       // чтобы не нужно было каждый раз открывать «условие задачи».
       ctx.fillStyle = 'rgba(150, 162, 175, 0.7)';
-      ctx.font = '10px sans-serif';
+      ctx.font = '9px sans-serif';
       ctx.textBaseline = 'top';
       ctx.fillText(`(${Math.round(x)}, ${Math.round(y)})`, c.x, c.y + 10);
       ctx.restore();
@@ -611,8 +611,9 @@ class RobotCanvas {
       ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
     }
 
-    // Метки сетки
-    ctx.fillStyle = 'rgba(139,148,158,0.5)';
+    // Метки сетки (мельче и прозрачней — не должны конкурировать с
+    // координатами waypoints и трассой)
+    ctx.fillStyle = 'rgba(139,148,158,0.28)';
     ctx.font = '9px monospace';
     for (let x = startX; x < W; x += step) {
       const wx = Math.round((x - this.originX) / this.scale);

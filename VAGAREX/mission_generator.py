@@ -113,7 +113,18 @@ _CARDINAL_HEADINGS = (0, 45, 90, 135, 180, 225, 270, 315)
 _HEADINGS_15_DEG   = tuple(range(0, 360, 15))   # 0, 15, 30, ..., 345
 
 # Шаги по уровням (передаются в _generate_trajectory).
-_LEVEL_HEADING_STEP_DEG = {1: 45, 2: 15}
+_LEVEL_HEADING_STEP_DEG = {1: 45, 2: 15, 3: 45}   # L3 снова кратно 45°
+
+# Параметры bypass_cmd (S-волна объезда) — должны совпадать с
+# session.py `_HELPER_CODE["bypass_cmd"]`. Используются _simulate_bypass()
+# для предсказания траектории на этапе генерации миссии.
+_BYPASS_DEFAULT_SPEED_PCT      = 40
+_BYPASS_QUARTER_SEC            = 0.5
+_BYPASS_MAX_STEER              = 36
+_BYPASS_SPEED_AT_100           = 80.0   # см/с, дефолт UserCfg
+_BYPASS_WHEEL_CIRC_CM          = 28.30
+_BYPASS_HEADING_DEG_PER_ROT    = 25.0
+_BYPASS_TURN_SPEED_REF         = 40     # % — turn_speed_ref
 
 # Русские названия + helper-команды для каждого из 8 курсов. Используется
 # в face-кандидате (вместо литеральных списков в коде).
@@ -369,6 +380,74 @@ def _candidate_back(state: dict, g: WorldGeom, rng: random.Random, *,
     return None
 
 
+def _simulate_bypass(state: dict, start_dir: int
+                       ) -> tuple[dict, list[list[float]]]:
+    """Численно симулирует bypass_cmd (S-волна, 4 четверть-арки) с дефолтными
+    параметрами. Возвращает (end_state, path_points).
+
+    Использует те же формулы, что и `update_physics` в session.py:
+        d_head = (step/wheel_circ) * heading_per_rot * (steer/45) * trf * sign
+    с trf=1.0 при дефолтных скоростях (speed=40%, turn_speed_ref=40)."""
+    cm_per_s     = _BYPASS_SPEED_AT_100 * _BYPASS_DEFAULT_SPEED_PCT / 100.0   # 32
+    quarter_dist = cm_per_s * _BYPASS_QUARTER_SEC                              # 16
+    ref          = _BYPASS_TURN_SPEED_REF / 100.0
+    spd          = _BYPASS_DEFAULT_SPEED_PCT / 100.0
+    trf          = max(0.25, min(3.0, ref / max(0.05, spd)))                  # 1.0
+
+    x = float(state["x"]); y = float(state["y"]); h = float(state["heading"])
+    pts = [[round(x, 1), round(y, 1)]]
+    MICRO = 30
+    micro_d = quarter_dist / MICRO
+
+    for phase in range(4):
+        sign  = start_dir if phase in (0, 3) else -start_dir
+        steer = sign * _BYPASS_MAX_STEER
+        for _ in range(MICRO):
+            d_head = (micro_d / _BYPASS_WHEEL_CIRC_CM) \
+                     * _BYPASS_HEADING_DEG_PER_ROT \
+                     * (steer / 45.0) * trf
+            h = (h + d_head) % 360.0
+            hr = math.radians(h)
+            x += math.sin(hr) * micro_d
+            y += math.cos(hr) * micro_d
+            pts.append([round(x, 1), round(y, 1)])
+    return ({"x": x, "y": y, "heading": h}, pts)
+
+
+def _candidate_bypass(state: dict, g: WorldGeom, rng: random.Random, *,
+                       start_dir: int,
+                       align_to_grid: bool = False,    # noqa: ARG001
+                       prior_path: Optional[list] = None,
+                       min_gap_cm: Optional[float] = None,
+                       heading_step_deg: int = 45):     # noqa: ARG001
+    """Объезд препятствия S-волной. start_dir=+1 — объезд справа,
+    start_dir=-1 — слева. Сама команда детерминирована (фиксированные
+    параметры в session.py), генератор только подставляет start_dir
+    и проверяет, что траектория не задевает уже пройденное."""
+    new, path_seg = _simulate_bypass(state, start_dir)
+    if not _inside_field(new["x"], new["y"], g):
+        return None
+    # Все промежуточные точки тоже в поле
+    for px, py in path_seg:
+        if not _inside_field(px, py, g):
+            return None
+    if (prior_path is not None and min_gap_cm is not None
+            and not _path_seg_clears_prior(path_seg, prior_path, min_gap_cm)):
+        return None
+    side  = "справа" if start_dir > 0 else "слева"
+    voice = f"Вега объезд {side}"
+    code  = f"bypass_cmd(start_dir={start_dir})"
+    return (new, voice, code, path_seg)
+
+
+def _candidate_bypass_right(state, g, rng, **kw):
+    return _candidate_bypass(state, g, rng, start_dir=+1, **kw)
+
+
+def _candidate_bypass_left(state, g, rng, **kw):
+    return _candidate_bypass(state, g, rng, start_dir=-1, **kw)
+
+
 def _candidate_face_cardinal(state: dict, g: WorldGeom, rng: random.Random, *,
                                align_to_grid: bool = False,
                                prior_path: Optional[list] = None,
@@ -474,7 +553,10 @@ def _candidate_goto(state: dict, g: WorldGeom, rng: random.Random, *,
 def _generate_trajectory(n_waypoints: int, geom: WorldGeom,
                           rng: random.Random, *,
                           align_to_grid: bool = False,
-                          heading_step_deg: int = 45) -> dict:
+                          heading_step_deg: int = 45,
+                          include_bypass: bool = False,
+                          min_curved: int = 0,
+                          allow_goto: bool = True) -> dict:
     """Сгенерировать траекторию из n_waypoints чекпоинтов чередованием
     «turn + forward/back» и «goto».
 
@@ -535,7 +617,11 @@ def _generate_trajectory(n_waypoints: int, geom: WorldGeom,
         if not vertices or vertices[-1] != v:
             vertices.append(v)
 
-    movement_candidates = [_candidate_forward, _candidate_back]
+    linear_candidates = [_candidate_forward, _candidate_back]
+    curved_candidates = [_candidate_bypass_left, _candidate_bypass_right]
+    movement_candidates = list(linear_candidates)
+    if include_bypass:
+        movement_candidates = movement_candidates + curved_candidates
     # Только face_cardinal — face_to (произвольный угол) больше не
     # используется: курсы строго кратны 45°.
     turn_candidates     = [_candidate_face_cardinal]
@@ -544,6 +630,9 @@ def _generate_trajectory(n_waypoints: int, geom: WorldGeom,
                    prior_path=vertices, min_gap_cm=min_gap,
                    heading_step_deg=heading_step_deg)
 
+    # Счётчик использованных кривых — гарантируем min_curved для L3.
+    curved_used = 0
+
     waypoints_created = 0
     # Поднял лимит: жёсткие ограничения (кардиналы + зазор + grid)
     # отбраковывают больше кандидатов, нужно больше попыток.
@@ -551,8 +640,11 @@ def _generate_trajectory(n_waypoints: int, geom: WorldGeom,
     safety_iter = 0
     while waypoints_created < n_waypoints and safety_iter < safety_iter_max:
         safety_iter += 1
-        # 1/3 шансов на goto, 2/3 — на turn+move
-        style = rng.choice(['turn_move', 'turn_move', 'goto'])
+        # 1/3 шансов на goto, 2/3 — на turn+move (goto отключаем на L3).
+        if allow_goto:
+            style = rng.choice(['turn_move', 'turn_move', 'goto'])
+        else:
+            style = 'turn_move'
 
         if style == 'goto':
             result = _candidate_goto(state, geom, rng, **cand_kw)
@@ -589,8 +681,19 @@ def _generate_trajectory(n_waypoints: int, geom: WorldGeom,
         _extend_path(path_seg)
 
         moved = False
-        for _ in range(8):
-            mv_fn = rng.choice(movement_candidates)
+        # Если ещё не набрали обязательный минимум кривых траекторий
+        # (min_curved), и осталось мало шагов — принудительно тянем
+        # bypass-кандидат на первую попытку.
+        force_curve = (include_bypass and curved_used < min_curved
+                       and (n_waypoints - waypoints_created) <= (min_curved - curved_used))
+        for attempt_i in range(8):
+            if force_curve and attempt_i == 0:
+                mv_fn = rng.choice(curved_candidates)
+            elif force_curve and attempt_i < 4:
+                # Ещё несколько раз пытаемся кривыми, потом — что угодно.
+                mv_fn = rng.choice(curved_candidates)
+            else:
+                mv_fn = rng.choice(movement_candidates)
             result = mv_fn(state, geom, rng, **cand_kw)
             if result is None:
                 continue
@@ -602,6 +705,8 @@ def _generate_trajectory(n_waypoints: int, geom: WorldGeom,
             _add_vertex((state["x"], state["y"]))
             waypoints.append([round(state["x"], 1), round(state["y"], 1)])
             waypoints_created += 1
+            if mv_fn in curved_candidates:
+                curved_used += 1
             moved = True
             break
         if not moved:
@@ -807,7 +912,10 @@ def _generate_trajectory_best_of(n_waypoints: int, geom: WorldGeom,
                                    heading_step_deg: int,
                                    attempts: int = 10,
                                    ref_start_x: Optional[float] = None,
-                                   ref_start_y: Optional[float] = None) -> dict:
+                                   ref_start_y: Optional[float] = None,
+                                   include_bypass: bool = False,
+                                   min_curved: int = 0,
+                                   allow_goto: bool = True) -> dict:
     """Сгенерировать `attempts` траекторий и вернуть лучшую по разбросу
     waypoints по квадрантам вокруг (ref_start_x, ref_start_y). Без этого
     почти все seed'ы дают «слипшиеся в один угол» миссии."""
@@ -819,7 +927,10 @@ def _generate_trajectory_best_of(n_waypoints: int, geom: WorldGeom,
         sub_rng = random.Random(rng.randrange(2 ** 31))
         traj = _generate_trajectory(n_waypoints, geom, sub_rng,
                                       align_to_grid=align_to_grid,
-                                      heading_step_deg=heading_step_deg)
+                                      heading_step_deg=heading_step_deg,
+                                      include_bypass=include_bypass,
+                                      min_curved=min_curved,
+                                      allow_goto=allow_goto)
         wp = traj["waypoints"]
         if len(wp) < n_waypoints:
             # Неполная — учитываем хуже полной (но не отбрасываем целиком,
@@ -920,6 +1031,62 @@ def _generate_level_2(geom: WorldGeom, rng: random.Random) -> dict:
     }
 
 
+# ── Генератор уровня 3 ─────────────────────────────────────────────────────
+
+def _generate_level_3(geom: WorldGeom, rng: random.Random) -> dict:
+    """4 контрольные точки, 2 опасные зоны (радиусы 10 и 20 см),
+    1 действие «установить зону внимания». Курсы кратны 45° (8 кардиналов),
+    расстояния кратные 10. Траектория уже не только линейная: смешана из
+    3 линейных (forward/back) и 2 кривых (bypass-left / bypass-right).
+
+    Команды строятся из набора `курс → forward/back/bypass-left/bypass-right`.
+    Каждый шаг ведёт к следующей точке маршрута. Кривые гарантируются
+    счётчиком min_curved=2 в `_generate_trajectory`."""
+    n_waypoints = 4
+    traj = _generate_trajectory_best_of(
+        n_waypoints, geom, rng,
+        align_to_grid=False,
+        heading_step_deg=_LEVEL_HEADING_STEP_DEG[3],
+        include_bypass=True,
+        min_curved=2,
+        allow_goto=False)
+
+    # Две опасные зоны разного радиуса (10 см и 20 см).
+    clearance = geom.safety_margin_cm + max(geom.robot_w_cm, geom.robot_l_cm) / 2.0
+    zones_r10 = _place_danger_zones(
+        1, traj["full_path"], geom, rng,
+        zone_radius_cm=10.0, clearance_cm=clearance)
+    zones_r20 = _place_danger_zones(
+        1, traj["full_path"], geom, rng,
+        zone_radius_cm=20.0, clearance_cm=clearance)
+    zones = zones_r10 + zones_r20
+
+    # Действие «установить зону внимания» — на одной из waypoint-точек
+    # (генератор для простоты ставит её на первую точку маршрута).
+    actions: list[dict] = []
+    if traj["waypoints"]:
+        ax, ay = traj["waypoints"][rng.randrange(len(traj["waypoints"]))]
+        actions.append({"type": "place_attention",
+                         "x": float(ax), "y": float(ay), "radius": 15.0})
+
+    return {
+        "level":            3,
+        "title":            "",
+        "description":      _format_description(
+                                level=3, waypoints=traj["waypoints"],
+                                actions=actions,
+                                start_x=geom.start_x, start_y=geom.start_y,
+                                danger_zones=zones),
+        "waypoints":        json.dumps(traj["waypoints"]),
+        "path":             json.dumps(traj["full_path"]),
+        "danger_zones":     json.dumps(zones),
+        "actions_required": json.dumps(actions),
+        "reference_voice":  json.dumps(traj["voice_steps"]),
+        "reference_code":   _format_reference_code(traj["code_steps"]),
+        "safety_margin_cm": geom.safety_margin_cm,
+    }
+
+
 # ── Текст описания миссии ──────────────────────────────────────────────────
 
 def _format_description(level: int, waypoints: list[list[float]],
@@ -1002,6 +1169,8 @@ def generate_mission(level: int = 1,
         return _generate_level_1(geom, rng)
     if level == 2:
         return _generate_level_2(geom, rng)
+    if level == 3:
+        return _generate_level_3(geom, rng)
     # Заглушка для пока-не-реализованных уровней
     result = _generate_level_1(geom, rng)
     result["level"] = level

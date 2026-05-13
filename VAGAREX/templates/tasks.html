@@ -36,7 +36,7 @@
         {% set levels = [
           (1, 'Ознакомительный', '2-3 точки, без опасных зон. Свободное поле, только стены.'),
           (2, 'Начальный',       '4-5 точек, 1-2 опасные зоны.'),
-          (3, 'Базовый',         '6-7 точек, 2 опасные зоны (10см) + 3 зоны внимания.'),
+          (3, 'Базовый',         '4 точки, 2 опасные зоны (10 и 20 см) + 1 зона внимания. Кроме прямых — объезд слева/справа.'),
           (4, 'Углублённый',     '8-9 точек, 3-4 опасные (10-20см) + 3-4 зоны внимания + удаление всех опасных.'),
           (5, 'Продвинутый',     '10 точек, 5 опасных (10-20см) + 4 зоны внимания + удаление всех опасных.'),
         ] %}
@@ -56,7 +56,7 @@
           ✨ Сгенерировать миссию
         </button>
         <span class="hint" style="margin-left:0.7rem; color:var(--text-dim); font-size:0.8rem;">
-          Уровни 2-5 пока в разработке (возвращают level-1).
+          Уровни 1-3 готовы. Уровни 4-5 пока в разработке.
         </span>
       </div>
     </div>
@@ -450,16 +450,17 @@
       stroke:'#30363d', 'stroke-width':0.8}));
     svg.appendChild(mk('line', {x1:-300, y1:0, x2:300, y2:0,
       stroke:'#30363d', 'stroke-width':0.8}));
-    // Подписи шкалы по осям — каждые 100 см.
+    // Подписи шкалы по осям — каждые 100 см. Полупрозрачные, чтобы не
+    // конкурировать с координатами waypoint'ов.
     for (let v = -200; v <= 200; v += 100) {
       if (v === 0) continue;
       // X-ось (горизонталь)
-      const tx = mk('text', {x:v, y:11, fill:'#6e7681',
+      const tx = mk('text', {x:v, y:11, fill:'rgba(110,118,129,0.45)',
         'font-size':'9', 'font-family':'monospace', 'text-anchor':'middle'});
       tx.textContent = v;
       svg.appendChild(tx);
       // Y-ось (вертикаль; SVG y инвертирован)
-      const ty = mk('text', {x:5, y:-v + 3, fill:'#6e7681',
+      const ty = mk('text', {x:5, y:-v + 3, fill:'rgba(110,118,129,0.45)',
         'font-size':'9', 'font-family':'monospace'});
       ty.textContent = v;
       svg.appendChild(ty);
@@ -515,9 +516,9 @@
       svg.appendChild(t);
       // Координаты точки серым полупрозрачным под маркером —
       // чтобы видеть условие задачи прямо на превью без открытия деталей.
-      const coord = mk('text', {x:x+8, y:-y+16,
+      const coord = mk('text', {x:x+8, y:-y+15,
         fill:'rgba(150,162,175,0.7)',
-        'font-size':'9', 'font-family':'monospace'});
+        'font-size':'8', 'font-family':'monospace'});
       coord.textContent = `(${Math.round(x)}, ${Math.round(y)})`;
       svg.appendChild(coord);
     });
