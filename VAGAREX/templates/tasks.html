@@ -71,10 +71,9 @@
     <div class="card__title-row">
       <h2 class="card__title">
         Превью миссии
-        <span id="preview-level-chip"
-              style="display:inline-block; margin-left:0.5rem; padding:2px 10px;
-                     border-radius:10px; font-size:0.75em; font-weight:600;
-                     vertical-align:middle"></span>
+        <span id="preview-level-chips"
+              style="display:inline-flex; gap:4px; margin-left:0.5rem;
+                     vertical-align:middle; align-items:center"></span>
         <span id="preview-id" class="preview-id-chip"></span>
       </h2>
       <div class="program-actions">
@@ -302,6 +301,11 @@
       e => e.style.display = saved ? 'inline-flex' : 'none');
     document.getElementById('preview-id').textContent =
       saved ? '#' + _previewMissionId : '(не сохранено)';
+    // В saved-режиме клик по другому чипу больше не должен переключать
+    // уровень (миссия уже зафиксирована). Перерисовываем как индикацию.
+    if (saved && _previewLevel !== null && _previewLevel !== undefined) {
+      renderLevelChips(_previewLevel, false);
+    }
   }
   // Названия уровней (по тому же порядку что в select сверху).
   const LEVEL_NAMES = {
@@ -323,6 +327,60 @@
     5: '#d2392f',   // красный
   };
 
+  // Ряд чипов уровней в заголовке превью. interactive=true в режиме
+  // unsaved (только что сгенерированная миссия) — клик по неактивному
+  // чипу немедленно регенерирует миссию на этом уровне. В режиме saved
+  // (открыта из каталога) показываем только индикацию.
+  function renderLevelChips(currentLevel, interactive) {
+    const wrap = document.getElementById('preview-level-chips');
+    if (!wrap) return;
+    wrap.innerHTML = '';
+    const lvl = (currentLevel !== undefined && currentLevel !== null) ? currentLevel : 0;
+    // Кастомная миссия — отдельный фиолетовый чип, без выбора уровня.
+    if (lvl === 0) {
+      const single = document.createElement('span');
+      single.style.cssText =
+        'padding:2px 10px; border-radius:10px; font-size:0.75em;' +
+        ' font-weight:600; background:#8b5cf6; color:#fff;' +
+        ' border:1px solid #8b5cf6';
+      single.textContent = 'Кастомная';
+      wrap.appendChild(single);
+      return;
+    }
+    for (let n = 1; n <= 5; n++) {
+      const isActive = (n === lvl);
+      const col = LEVEL_COLORS[n] || '#8b949e';
+      const tag = interactive ? 'button' : 'span';
+      const chip = document.createElement(tag);
+      if (interactive) chip.type = 'button';
+      chip.title = `Уровень ${n} · ${LEVEL_NAMES[n] || ''}`;
+      const baseStyle =
+        'border-radius:10px; font-size:0.75em; font-weight:600;' +
+        ' font-family:inherit; line-height:1.2;' +
+        ' display:inline-flex; align-items:center;';
+      chip.style.cssText = isActive
+        ? baseStyle +
+          ` padding:2px 10px; background:${col}; color:#fff;` +
+          ` border:1px solid ${col}; cursor:default;`
+        : baseStyle +
+          ` padding:2px 7px; background:transparent; color:${col};` +
+          ` border:1px solid ${col}; opacity:0.55;` +
+          ` cursor:${interactive ? 'pointer' : 'default'};`;
+      chip.textContent = isActive
+        ? `${n} · ${LEVEL_NAMES[n] || ''}`
+        : `${n}`;
+      if (interactive && !isActive) {
+        chip.addEventListener('mouseenter', () => { chip.style.opacity = '1'; });
+        chip.addEventListener('mouseleave', () => { chip.style.opacity = '0.55'; });
+        chip.addEventListener('click', () => {
+          if (btnGen?.disabled) return;          // уже идёт другая генерация
+          generate(n);
+        });
+      }
+      wrap.appendChild(chip);
+    }
+  }
+
   function showPreview(data, level) {
     _previewMissionId = data.id;             // null до сохранения
     _savePayload      = data._save_payload;
@@ -333,17 +391,9 @@
       titleInput.value = data.title || '';
       titleInput.readOnly = false;
     }
-    // Чип уровня в заголовке превью — цвет совпадает с каталогом.
-    const chip = document.getElementById('preview-level-chip');
-    if (chip) {
-      const lvl = (level !== undefined && level !== null) ? level : (data.level ?? 0);
-      const nm  = LEVEL_NAMES[lvl] || 'Кастомная';
-      const col = LEVEL_COLORS[lvl] || '#8b949e';
-      chip.textContent = (lvl === 0) ? 'Кастомная' : `Уровень ${lvl} · ${nm}`;
-      chip.style.background = col;
-      chip.style.color      = '#fff';
-      chip.style.border     = `1px solid ${col}`;
-    }
+    // Чипы уровней в заголовке превью — в режиме unsaved активны:
+    // клик по другому уровню сразу регенерирует миссию.
+    renderLevelChips(level !== undefined && level !== null ? level : (data.level ?? 0), true);
     document.getElementById('preview-description').textContent = data.description;
     drawPreviewSvg(data);
     setPreviewState(false);                  // unsaved
@@ -735,6 +785,8 @@
       }
       document.getElementById('preview-description').textContent = data.description;
       drawPreviewSvg(data);
+      // Чипы уровня — индикация без интерактивности (миссия сохранена).
+      renderLevelChips(data.level ?? 0, false);
       setPreviewState(true);                // saved-режим
       // Если миссия НЕ моя — скрыть владельческие действия (publish/delete).
       // Кнопка «▶ Пройти» доступна всем (для опубликованных миссий).

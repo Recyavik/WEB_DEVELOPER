@@ -2665,6 +2665,29 @@ class UserSession:
             zone.db_id = dz.id
         await self.push_world()
 
+    async def _run_place_attention_here(self, radius: Optional[float] = None,
+                                        db: Session = None):
+        """Поставить зону внимания (жёлтая пунктирная) в ТЕКУЩЕЙ позиции
+        робота — без поездки. Используется UI-кнопкой «🟡 Установить зону»:
+        пользователь сначала вручную едет в нужное место, потом помечает."""
+        s = self.robot_state
+        r = float(radius) if radius is not None else float(self.cfg.danger_zone_radius)
+        await self.push_message(
+            f"🟡 Зона внимания в ({s.x:.0f}, {s.y:.0f}), радиус {r:.0f}.",
+            "info")
+        zone = self.world.add_danger_zone(s.x, s.y,
+                                          radius=r,
+                                          label="Зона внимания",
+                                          kind="algorithm")
+        if db:
+            dz = DangerZone(user_id=self.user_id, label=zone.label,
+                            x=zone.x, y=zone.y, radius=zone.radius,
+                            kind="algorithm")
+            db.add(dz)
+            db.commit()
+            zone.db_id = dz.id
+        await self.push_world()
+
     async def _run_reset(self, db: Session = None, keep_mode: bool = False):
         """Сброс поля.
 
@@ -2817,16 +2840,25 @@ class UserSession:
             code, label = f"pause({secs:g})", f"⏸ Пауза {secs:g} с"
         elif intent == "set_algorithm_zone":
             xy = nlu.extract_coordinates(raw)
-            if xy is None:
-                return None
-            tx, ty = xy
             r = nlu.extract_radius(raw)
-            if r is not None:
-                code  = f"set_algorithm_zone({tx:.0f}, {ty:.0f}, {r:.0f})"
-                label = f"📍 Зона внимания ({tx:.0f}, {ty:.0f}) r={r:.0f}"
+            if xy is None:
+                # UI-кнопка «🟡 Установить зону» / голос «установи зону»
+                # без координат → зона рисуется в текущей позиции робота
+                # (без поездки). Координаты подставит _dispatch.
+                if r is not None:
+                    code  = f"set_algorithm_zone({r:.0f})"
+                    label = f"🟡 Зона внимания здесь, r={r:.0f}"
+                else:
+                    code  = "set_algorithm_zone()"
+                    label = "🟡 Зона внимания здесь"
             else:
-                code  = f"set_algorithm_zone({tx:.0f}, {ty:.0f})"
-                label = f"📍 Зона внимания ({tx:.0f}, {ty:.0f})"
+                tx, ty = xy
+                if r is not None:
+                    code  = f"set_algorithm_zone({tx:.0f}, {ty:.0f}, {r:.0f})"
+                    label = f"📍 Зона внимания ({tx:.0f}, {ty:.0f}) r={r:.0f}"
+                else:
+                    code  = f"set_algorithm_zone({tx:.0f}, {ty:.0f})"
+                    label = f"📍 Зона внимания ({tx:.0f}, {ty:.0f})"
         elif intent == "remove_zone":
             xy = nlu.extract_coordinates(raw)
             if xy is not None:
@@ -3204,6 +3236,13 @@ odo = Odometry()    # глобальный экземпляр одометрии
     # После goto_cmd одометрия знает где робот — используем её.
     # отметить зону: (odo.x, odo.y, radius)
 '''),
+        "attention_here_cmd": (
+            "Пометить зону внимания под текущей позицией робота (по одометрии)",
+            r'''def attention_here_cmd(radius=10):
+    # У 1T REX нет GPS — текущую позицию берём из нашей одометрии (odo).
+    odo.sync_heading()
+    # отметить зону внимания: (odo.x, odo.y, radius)
+'''),
         "remove_zone_cmd": (
             "Удалить зону любого типа по координатам",
             r'''def remove_zone_cmd(x, y):
@@ -3298,7 +3337,9 @@ odo = Odometry()    # глобальный экземпляр одометрии
         if intent == "mark_danger":
             return ["mark_danger_cmd"] if nlu.extract_coordinates(raw) is not None else ["danger_here_cmd"]
         if intent == "set_algorithm_zone":
-            return ["attention_zone_cmd"] if nlu.extract_coordinates(raw) is not None else []
+            return (["attention_zone_cmd"]
+                    if nlu.extract_coordinates(raw) is not None
+                    else ["attention_here_cmd"])
         if intent == "remove_zone":
             return ["remove_zone_cmd"] if nlu.extract_coordinates(raw) is not None else ["clear_here_cmd"]
         return []
@@ -3569,11 +3610,13 @@ odo = Odometry()    # глобальный экземпляр одометрии
         elif intent == "set_algorithm_zone":
             xy = nlu.extract_coordinates(raw)
             r  = nlu.extract_radius(raw)
+            radius_arg = f"{r:g}" if r is not None else f"{c.danger_zone_radius:g}"
             if xy is None:
-                code_lines += ["# координаты не указаны"]
+                # UI-кнопка «🟡 Установить зону»: ставим зону внимания
+                # в текущей позиции робота (без поездки).
+                code_lines += [f"attention_here_cmd({radius_arg})  # зона внимания здесь, радиус {radius_arg}"]
             else:
                 tx, ty = xy
-                radius_arg = f"{r:g}" if r is not None else f"{c.danger_zone_radius:g}"
                 code_lines += [f"attention_zone_cmd({tx:g}, {ty:g}, {radius_arg})  # доехать в ({tx:g}, {ty:g}) и пометить зону внимания"]
         elif intent == "remove_zone":
             xy = nlu.extract_coordinates(raw)
@@ -3789,21 +3832,30 @@ odo = Odometry()    # глобальный экземпляр одометрии
             await self._run_bypass(start_dir=-1)
             msg = "Объезд слева завершен."
         elif intent == "goto":
-            xy = nlu.extract_coordinates(raw)
-            if xy is None:
-                msg, ok = "Координаты не распознаны (нужно: 'в точку X Y').", False
+            # Во время миссии «в точку» запрещено: обучающийся должен
+            # программировать маршрут через forward/turn, а не телепортировать
+            # робота одной командой. Играть с командой можно только в
+            # свободном режиме.
+            if self._mission is not None and not cmd.playback:
+                msg, ok = ("Команда «в точку» отключена во время миссии — "
+                           "составьте маршрут из forward/поворотов в коде.",
+                           False)
             else:
-                tx, ty = xy
-                # Запоминаем дистанцию ДО запуска: если робот уже в tolerance
-                # от цели — _run_goto ничего не сделает, нужна другая формулировка.
-                pre_dist = math.hypot(tx - s.x, ty - s.y)
-                await self._run_goto(tx, ty)
-                if pre_dist < 5.0:
-                    # Робот не двигался — показываем его реальную позицию,
-                    # а не цель (иначе пользователь видит ложное «я в (tx,ty)»).
-                    msg = f"Остался в точке ({s.x:.0f}, {s.y:.0f})."
+                xy = nlu.extract_coordinates(raw)
+                if xy is None:
+                    msg, ok = "Координаты не распознаны (нужно: 'в точку X Y').", False
                 else:
-                    msg = f"Прибыл в окрестность ({tx:.0f}, {ty:.0f})."
+                    tx, ty = xy
+                    # Запоминаем дистанцию ДО запуска: если робот уже в tolerance
+                    # от цели — _run_goto ничего не сделает, нужна другая формулировка.
+                    pre_dist = math.hypot(tx - s.x, ty - s.y)
+                    await self._run_goto(tx, ty)
+                    if pre_dist < 5.0:
+                        # Робот не двигался — показываем его реальную позицию,
+                        # а не цель (иначе пользователь видит ложное «я в (tx,ty)»).
+                        msg = f"Остался в точке ({s.x:.0f}, {s.y:.0f})."
+                    else:
+                        msg = f"Прибыл в окрестность ({tx:.0f}, {ty:.0f})."
         elif intent == "home":
             await self._run_home()
             msg = "🏠 Возврат в стартовую точку завершен."
@@ -3872,16 +3924,22 @@ odo = Odometry()    # глобальный экземпляр одометрии
             msg = f"Пауза {secs:g} с завершена."
         elif intent == "set_algorithm_zone":
             xy = nlu.extract_coordinates(raw)
+            r = nlu.extract_radius(raw)
             if xy is None:
-                msg, ok = "Координаты не распознаны (нужно: 'установи зону X Y').", False
+                # Без координат — ставим зону в текущей позиции робота
+                # (без goto). Это режим UI-кнопки «🟡 Установить зону».
+                tx, ty = s.x, s.y
+                await self._run_place_attention_here(r, db)
+                msg = (f"Зона внимания установлена в текущей позиции "
+                       f"({tx:.0f}, {ty:.0f})"
+                       + (f", радиус {r:.0f}." if r is not None else "."))
             else:
                 tx, ty = xy
-                r = nlu.extract_radius(raw)
                 await self._run_set_algorithm_zone(tx, ty, r, db)
                 msg = (f"Алгоритмическая зона установлена в ({tx:.0f}, {ty:.0f})"
                        + (f", радиус {r:.0f}." if r is not None else "."))
-                # Mission tracking: матч с обязательным place_attention
-                self._mission_check_action("place_attention", tx, ty)
+            # Mission tracking: матч с обязательным place_attention
+            self._mission_check_action("place_attention", tx, ty)
         elif intent == "remove_danger_zone":
             # UI-удаление ОПАСНОЙ зоны мышью (⛯ Режим зон + ПКМ).
             # Не записывается в Python-код программы (это pre-flight чистка
@@ -4170,7 +4228,15 @@ odo = Odometry()    # глобальный экземпляр одометрии
             fn = fn[4:]
         if fn.endswith("_here"):
             fn = fn[:-5]
-            args = ""    # _here-варианты вызываются без координат
+            # _here-варианты по координатам не имеют (берётся текущая позиция),
+            # но могут принимать радиус — конвертируем одиночное число в
+            # явное «радиус N», чтобы extract_radius его подобрал, а
+            # extract_coordinates НЕ подобрал.
+            args_h = args.strip()
+            if args_h and re.fullmatch(r'-?\d+(?:\.\d+)?', args_h):
+                args = f"радиус {args_h}"
+            else:
+                args = ""
         args = args.strip()
         # Алиасы коротких имён хелперов → канонические intent-имена.
         # Нужно для парсинга нового codegen (face_cmd, kturn_cmd, ...)
@@ -4182,6 +4248,7 @@ odo = Odometry()    # глобальный экземпляр одометрии
             "face":            "face_cardinal",
             "course":          "set_course",
             "attention_zone":  "set_algorithm_zone",
+            "attention":       "set_algorithm_zone",   # attention_here_cmd → attention
             "danger":          "mark_danger",
             "clear":           "remove_zone",
         }
@@ -4295,7 +4362,25 @@ odo = Odometry()    # глобальный экземпляр одометрии
                 secs = 1.0
             return ("pause", f"Вега пауза {secs:g}")
         if fn == "set_algorithm_zone":
-            parts = re.split(r'[,\s]+', args.strip())
+            args_s = args.strip()
+            if not args_s:
+                # set_algorithm_zone() → зона внимания в текущей позиции
+                return ("set_algorithm_zone", "Вега установи зону")
+            # Форма «радиус N» (приходит из attention_here_cmd(N)) —
+            # ставим в текущей позиции с указанным радиусом.
+            m_r = re.fullmatch(r'радиус\s+(-?\d+(?:\.\d+)?)', args_s)
+            if m_r:
+                return ("set_algorithm_zone",
+                        f"Вега установи зону радиус {float(m_r.group(1)):g}")
+            parts = re.split(r'[,\s]+', args_s)
+            # Один аргумент → радиус, без координат (текущая позиция).
+            if len(parts) == 1:
+                try:
+                    r = float(parts[0])
+                    return ("set_algorithm_zone",
+                            f"Вега установи зону радиус {r:g}")
+                except ValueError:
+                    return None
             try:
                 tx, ty = float(parts[0]), float(parts[1])
             except (ValueError, IndexError):

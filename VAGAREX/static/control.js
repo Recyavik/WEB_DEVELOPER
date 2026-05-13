@@ -170,6 +170,9 @@
           _setModeButtonsLocked(hasDanger,
             'Режим зафиксирован миссией с опасными зонами. '
             + 'Завершите или остановите миссию, чтобы переключиться.');
+          // Запрещаем «📍 В точку…» — обучающийся составляет маршрут
+          // программно, а не телепортирует робота одной кнопкой.
+          _setMissionShortcutsLocked(true);
         }
         break;
 
@@ -184,6 +187,7 @@
         window._currentMission = null;
         hideMissionButton();
         _setModeButtonsLocked(false);
+        _setMissionShortcutsLocked(false);
         document.querySelectorAll('#cmd-log .log-task-card').forEach(card => {
           card.classList.add('log-task-card--finalized');
           card.querySelectorAll('button').forEach(b => { b.disabled = true; });
@@ -337,6 +341,7 @@
     window._currentMission = null;
     hideMissionButton();
     _setModeButtonsLocked(false);
+    _setMissionShortcutsLocked(false);
     document.querySelectorAll('#cmd-log .log-task-card')
             .forEach(el => el.remove());
   }
@@ -359,6 +364,25 @@
         delete b.dataset._titleOrig;
       }
     });
+  }
+
+  function _setMissionShortcutsLocked(locked) {
+    // Блокирует команды-«читы», обходящие программирование во время миссии:
+    // «📍 В точку…» (телепорт-подобный goto). Сервер тоже отвергает,
+    // но визуальная индикация важна — иначе пользователь думает, что
+    // кнопка просто не работает.
+    const btn = document.getElementById('btn-goto');
+    if (!btn) return;
+    btn.disabled = !!locked;
+    btn.classList.toggle('is-locked', !!locked);
+    if (locked) {
+      if (!btn.dataset._titleOrig) btn.dataset._titleOrig = btn.title || '';
+      btn.title = 'Во время миссии команду «в точку» нельзя — '
+                + 'составьте маршрут из forward/поворотов в коде.';
+    } else if (btn.dataset._titleOrig !== undefined) {
+      btn.title = btn.dataset._titleOrig;
+      delete btn.dataset._titleOrig;
+    }
   }
 
   function _clearLogPanel() {
@@ -1381,16 +1405,17 @@
       sendCmd('Вега в точку ' + cleaned);
     });
 
-    // «📍 Установить зону…» — спросить координаты + (опц.) радиус
+    // «🟡 Установить зону…» — спросить только радиус, поставить в
+    // текущей позиции робота. Без goto: пользователь сам подъехал куда
+    // надо (стрелками или «📍 В точку…»), и просто помечает место.
     document.getElementById('btn-set-zone')?.addEventListener('click', () => {
-      const xy = prompt(
-        'Координаты алгоритмической зоны (X Y [радиус_см]),\n' +
-        'пример: 100 -50 30',
-        '100 100');
-      if (xy === null) return;
-      const cleaned = xy.trim();
+      const raw = prompt('Радиус зоны внимания (см):', '30');
+      if (raw === null) return;
+      const cleaned = raw.trim();
       if (!cleaned) return;
-      sendCmd('Вега установи зону ' + cleaned);
+      // Сервер: «установи зону» без X Y → ставит в позиции робота;
+      // «радиус N см» парсится nlu.extract_radius из общего raw.
+      sendCmd('Вега установи зону радиус ' + cleaned + ' см');
     });
 
     // «✕ Убрать зону» — сразу убирает зону под роботом, без диалога.

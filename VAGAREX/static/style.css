@@ -1893,7 +1893,8 @@ body { padding-bottom: 22px; }
    валидация (mode_inspector/mode_cautious) в любом случае отвергает
    переключение, это просто визуальная подсказка. */
 #btn-mode-inspector.is-locked,
-#btn-mode-cautious.is-locked {
+#btn-mode-cautious.is-locked,
+#btn-goto.is-locked {
   opacity:        0.55;
   cursor:         not-allowed;
   filter:         grayscale(35%);

@@ -1094,7 +1094,8 @@ class TestStableCommandSurface(unittest.TestCase):
         ("mark_danger",        "вега опасная зона 100 50 20", False),
         ("mark_danger",        "вега опасная зона",           False),  # under robot
         ("set_algorithm_zone", "вега установи зону 100 100",  False),
-        ("set_algorithm_zone", "вега установи зону",          True),
+        # Без координат — теперь валидно: ставит в текущей позиции робота.
+        ("set_algorithm_zone", "вега установи зону",          False),
         ("remove_zone",        "вега убрать зону",            False),
         ("remove_zone",        "вега убрать зону 100 100",    False),
         ("remove_danger_zone", "вега убрать опасную зону 100 50", False),
