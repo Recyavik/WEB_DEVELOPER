@@ -119,17 +119,20 @@ _LEVEL_HEADING_STEP_DEG = {1: 45, 2: 15, 3: 45}   # L3 снова кратно 4
 # совпадают с session.py `_HELPER_CODE`. Используются для предсказания
 # траектории на этапе генерации миссии.
 _BYPASS_DEFAULT_SPEED_PCT      = 40
-_BYPASS_QUARTER_SEC            = 0.5     # дефолт, как в helper-коде
+_BYPASS_QUARTER_SEC            = 0.5     # дефолт helper-кода
+# Для генерации L3 используем УВЕЛИЧЕННЫЙ quarter_sec, иначе волна
+# 3 см при 64 см пути — визуально не отличается от прямой. На 1.0 с
+# волна ±12 см при 125 см пути — реально читается как «синусоида».
+# Параметр прокидывается в эмитимый код как явный аргумент:
+#   `bypass_cmd(start_dir=1, quarter_sec=1.0)`
+_BYPASS_QUARTER_SEC_L3         = 1.0
 _BYPASS_MAX_STEER              = 36
 _BYPASS_SPEED_AT_100           = 80.0   # см/с, дефолт UserCfg
 _BYPASS_WHEEL_CIRC_CM          = 28.30
 _BYPASS_HEADING_DEG_PER_ROT    = 25.0
 _BYPASS_TURN_SPEED_REF         = 40     # % — turn_speed_ref
-# Минимальное расстояние между waypoint'ами Level 3 — чтобы маршрут
-# не «клубком» в одном углу поля. 60 см: bypass даёт ~64 см
-# net-смещения, точно проходит порог; чтобы точки всё же не лезли
-# друг на друга.
-_LEVEL3_MIN_WAYPOINT_DIST_CM   = 60.0
+# Минимальное расстояние между waypoint'ами Level 3.
+_LEVEL3_MIN_WAYPOINT_DIST_CM   = 70.0
 
 # Русские названия + helper-команды для каждого из 8 курсов. Используется
 # в face-кандидате (вместо литеральных списков в коде).
@@ -415,12 +418,14 @@ def _sim_arc(state: dict, steer_deg: float, dist_cm: float
     return ({"x": x, "y": y, "heading": h}, pts)
 
 
-def _simulate_bypass(state: dict, start_dir: int
-                       ) -> tuple[dict, list[list[float]]]:
-    """Численно симулирует bypass_cmd (S-волна, 4 четверть-арки) с дефолтным
-    quarter_sec. Возвращает (end_state, path_points)."""
+def _simulate_bypass(state: dict, start_dir: int,
+                      quarter_sec: float = _BYPASS_QUARTER_SEC
+                      ) -> tuple[dict, list[list[float]]]:
+    """Численно симулирует bypass_cmd (S-волна, 4 четверть-арки).
+    quarter_sec задаёт длительность каждой арки (по умолчанию 0.5 с —
+    как в helper-коде; для генератора L3 = 1.0 с)."""
     cm_per_s     = _BYPASS_SPEED_AT_100 * _BYPASS_DEFAULT_SPEED_PCT / 100.0
-    quarter_dist = cm_per_s * _BYPASS_QUARTER_SEC
+    quarter_dist = cm_per_s * quarter_sec
     cur_state = state
     all_pts: list[list[float]] = [[round(state["x"], 1), round(state["y"], 1)]]
     for phase in range(4):
@@ -449,14 +454,16 @@ def _simulate_set_course(state: dict, target_deg: float
 
 def _candidate_bypass(state: dict, g: WorldGeom, rng: random.Random, *,
                        start_dir: int,
+                       quarter_sec: float = _BYPASS_QUARTER_SEC_L3,
                        align_to_grid: bool = False,    # noqa: ARG001
                        prior_path: Optional[list] = None,
                        min_gap_cm: Optional[float] = None,
                        heading_step_deg: int = 45):     # noqa: ARG001
     """Объезд препятствия S-волной. start_dir=+1 — объезд справа,
-    start_dir=-1 — слева. Использует дефолтный quarter_sec (0.5 сек) —
-    те же параметры, что и голосовая команда «Вега объезд слева/справа»."""
-    new, path_seg = _simulate_bypass(state, start_dir)
+    start_dir=-1 — слева. По умолчанию quarter_sec=1.0 с — путь ~125 см
+    с волной ±12 см (визуально читается как синусоида). Код эмитим
+    с явным параметром, чтобы запуск миссии воспроизвёл ту же волну."""
+    new, path_seg = _simulate_bypass(state, start_dir, quarter_sec)
     if not _inside_field(new["x"], new["y"], g):
         return None
     for px, py in path_seg:
@@ -467,7 +474,7 @@ def _candidate_bypass(state: dict, g: WorldGeom, rng: random.Random, *,
         return None
     side  = "справа" if start_dir > 0 else "слева"
     voice = f"Вега объезд {side}"
-    code  = f"bypass_cmd(start_dir={start_dir})"
+    code  = f"bypass_cmd(start_dir={start_dir}, quarter_sec={quarter_sec})"
     return (new, voice, code, path_seg)
 
 
@@ -738,24 +745,39 @@ def _generate_trajectory(n_waypoints: int, geom: WorldGeom,
         need_course = include_bypass and course_used < min_course
 
         # Выбор стиля шага:
-        #   pure-turn_move = face_cardinal + linear/bypass
-        #   curve_combined = course_cmd (turn+move в одном)
-        #   goto           = направление + дистанция (если allow_goto)
-        # На L3 чередуем стили так, чтобы и bypass, и course попали
-        # в маршрут (min_bypass раз, min_course раз). После того как
-        # оба минимума набраны — оставшиеся шаги всегда линейные
-        # (turn_move с линейным movement) — иначе пользователь видит
-        # сплошные кривые и нет 3 линейных, как просили.
+        #   pure-turn_move    = face_cardinal + linear/bypass
+        #   curve_combined    = course_cmd (turn+move в одном)
+        #   goto              = направление + дистанция (если allow_goto)
         if allow_goto:
             style = rng.choice(['turn_move', 'turn_move', 'goto'])
-        elif need_bypass and need_course:
-            style = rng.choice(['turn_move', 'curve_combined'])
-        elif need_bypass:
-            style = 'turn_move'             # bypass идёт через turn_move
-        elif need_course:
-            style = 'curve_combined'        # course идёт здесь
+        elif not include_bypass:
+            style = 'turn_move'
         else:
-            style = 'turn_move'             # на free-итерациях только линейные
+            # На L3 чередуем кривые и прямые. Слот = waypoints_created:
+            #   0 → линейная, 1 → bypass, 2 → линейная, 3 → course, 4 → линейная.
+            # Если нужный тип кривой уже использован — fallback на linear.
+            slot = waypoints_created
+            target_type = 'linear'
+            if slot == 1 and need_bypass:
+                target_type = 'bypass'
+            elif slot == 3 and need_course:
+                target_type = 'course'
+            # Если кончаются слоты, а кривая ещё не вставлена — навёрстываем:
+            if need_bypass and not (target_type == 'bypass'):
+                slots_left = n_waypoints - waypoints_created
+                if need_bypass + need_course >= slots_left:
+                    target_type = 'bypass'
+            if need_course and not (target_type in ('bypass', 'course')):
+                slots_left = n_waypoints - waypoints_created
+                if need_course >= slots_left:
+                    target_type = 'course'
+            if target_type == 'course':
+                style = 'curve_combined'
+            else:
+                style = 'turn_move'
+            # Для turn_move: force_bypass_this_iter — пробуем bypass-кандидата
+            # только когда target_type=='bypass'. Иначе — линейный.
+            force_bypass_this_iter = (target_type == 'bypass')
 
         if style == 'goto':
             result = _candidate_goto(state, geom, rng, **cand_kw)
@@ -823,17 +845,16 @@ def _generate_trajectory(n_waypoints: int, geom: WorldGeom,
         _extend_path(path_seg)
 
         moved = False
-        # Если ещё не использовали bypass — принудительно пробуем его
-        # все 8 попыток. Иначе (минимум кривых набран) — только линейные
-        # forward/back, чтобы маршрут содержал «3 линейные + 2 кривые».
+        # На текущем слоте target_type определяет, что хотим:
+        #   'bypass' → bypass-кандидат (S-волна)
+        #   else     → линейный (forward/back)
+        # Если 'bypass' не получается — последние 2 попытки фолбэк на linear,
+        # чтобы не зависнуть.
+        force_bypass_local = force_bypass_this_iter if include_bypass else False
         for attempt_i in range(8):
-            if need_bypass and attempt_i < 6:
+            if force_bypass_local and attempt_i < 6:
                 mv_fn = rng.choice(curved_candidates)
-            elif need_bypass:
-                # последние 2 попытки — любая команда, лишь бы не зависнуть
-                mv_fn = rng.choice(movement_candidates)
             else:
-                # min_bypass уже набран — только линейные
                 mv_fn = rng.choice(linear_candidates)
             result = mv_fn(state, geom, rng, **cand_kw)
             if result is None:
