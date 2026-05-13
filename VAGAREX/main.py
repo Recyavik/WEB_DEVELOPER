@@ -124,6 +124,7 @@ def _ensure_schema_migrations():
             "path_cell_size_cm":       "INTEGER NOT NULL DEFAULT 10",
             "cautious_follow_algo":    "VARCHAR(20) NOT NULL DEFAULT 'pure_pursuit'",
             "cautious_slow_curves":    "BOOLEAN NOT NULL DEFAULT TRUE",
+            "wall_turn_strategy":      "VARCHAR(20) NOT NULL DEFAULT 'backoff'",
         },
         "missions": {
             "path": "TEXT NOT NULL DEFAULT '[]'",
@@ -1208,6 +1209,7 @@ async def settings_page(request: Request,
             "path_cell_size_cm":  row.path_cell_size_cm,
             "cautious_follow_algo": row.cautious_follow_algo,
             "cautious_slow_curves": row.cautious_slow_curves,
+            "wall_turn_strategy":   row.wall_turn_strategy,
         },
     })
 
@@ -1238,6 +1240,7 @@ async def api_settings_save(
     path_cell_size_cm:  int   = Form(10),
     cautious_follow_algo: str = Form("pure_pursuit"),
     cautious_slow_curves: str = Form("0"),
+    wall_turn_strategy:   str = Form("backoff"),
     current_user: User    = Depends(require_user),
     db:           Session = Depends(get_db),
 ):
@@ -1275,6 +1278,9 @@ async def api_settings_save(
                                 if cautious_follow_algo in ("pure_pursuit", "stanley")
                                 else "pure_pursuit")
     row.cautious_slow_curves = (cautious_slow_curves == "1")
+    row.wall_turn_strategy   = (wall_turn_strategy
+                                if wall_turn_strategy in ("backoff", "multi_step")
+                                else "backoff")
     db.commit()
 
     # Если у пользователя есть активная сессия — обновляем ее настройки на лету

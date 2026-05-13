@@ -628,19 +628,24 @@ class TestLevel2Shape(unittest.TestCase):
 
 
 class TestGeomHelpers(unittest.TestCase):
-    def test_wall_clearance_uses_max_robot_dim(self):
+    def test_wall_clearance_fits_kturn(self):
+        """Запас от стены должен вмещать K-turn: R·sin(α) + safety ≈ 50-60 см
+        на дефолтном роботе. Поэтому 4×габарит, но не меньше 80 см."""
         g = WorldGeom(robot_w_cm=12, robot_l_cm=20)
-        self.assertEqual(_wall_clearance_cm(g), 40.0)
+        self.assertEqual(_wall_clearance_cm(g), 80.0)
         g = WorldGeom(robot_w_cm=20, robot_l_cm=12)
-        self.assertEqual(_wall_clearance_cm(g), 40.0)
+        self.assertEqual(_wall_clearance_cm(g), 80.0)
+        # Крупный робот — масштабируется
+        g = WorldGeom(robot_w_cm=30, robot_l_cm=40)
+        self.assertEqual(_wall_clearance_cm(g), 160.0)
 
     def test_inside_field_respects_clearance(self):
         g = _geom_default()
-        # margin = 40см, поле 500×500 → допустимая зона [-210, +210]
+        # margin = 80см, поле 500×500 → допустимая зона [-170, +170]
         self.assertTrue(_inside_field(0, 0, g))
-        self.assertTrue(_inside_field(200, 200, g))
-        self.assertFalse(_inside_field(220, 0, g))    # за пределами
-        self.assertFalse(_inside_field(0, -240, g))
+        self.assertTrue(_inside_field(150, 150, g))
+        self.assertFalse(_inside_field(200, 0, g))    # за пределами 170
+        self.assertFalse(_inside_field(0, -200, g))
 
 
 if __name__ == "__main__":
