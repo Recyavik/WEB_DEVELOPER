@@ -208,6 +208,9 @@
           <option value="multi_step" {% if cfg.wall_turn_strategy == "multi_step" %}selected{% endif %}>
             Разворот за N маленьких приёмов
           </option>
+          <option value="manual" {% if cfg.wall_turn_strategy == "manual" %}selected{% endif %}>
+            Ручной режим (стоп у препятствия)
+          </option>
         </select>
         <span class="settings-hint" data-hint-group="wall_turn" data-hint-for="backoff">
           <strong>Отъехать и развернуться.</strong> Когда габариты мешают
@@ -223,6 +226,14 @@
           N подбирается автоматически по доступному месту: 4 шага для 180°
           в обычном помещении, 8-12 шагов у самой стены. Медленнее в ×N
           раз, но обходится без длинного отъезда.
+        </span>
+        <span class="settings-hint" data-hint-group="wall_turn" data-hint-for="manual">
+          <strong>Ручной режим (стоп у препятствия).</strong> Робот НЕ
+          пытается сам разрулить тесноту. Если для разворота не хватает
+          места впереди — просто останавливается и присылает предупреждение.
+          Дальше уже задача обучающегося: отъехать назад вручную, объехать
+          препятствие и повторить команду. Полезно для отработки навыка
+          ручного управления и понимания габаритов робота.
         </span>
       </div>
     </section>
@@ -274,47 +285,53 @@
       // Флаг хранится в localStorage (на устройство), чтобы не было лишней
       // колонки в БД. При включённом флаге любой change в форме отправляет
       // её POST-ом через fetch с дебаунсом 500мс. Страница не перезагружается.
-      const autosaveToggle = document.getElementById('autosave_toggle');
-      const autosaveStatus = document.getElementById('autosave_status');
-      const settingsForm   = document.querySelector('form.settings-form');
-      const AUTOSAVE_KEY   = 'vegarex.settings.autosave';
+      // Откладываем в DOMContentLoaded: блок autosave_toggle рендерится
+      // ПОСЛЕ этого <script>, и getElementById('autosave_toggle') без
+      // wait вернёт null — флаг тогда не подцепится.
+      window.addEventListener('DOMContentLoaded', function () {
+        const autosaveToggle = document.getElementById('autosave_toggle');
+        const autosaveStatus = document.getElementById('autosave_status');
+        const settingsForm   = document.querySelector('form.settings-form');
+        const AUTOSAVE_KEY   = 'vegarex.settings.autosave';
+        if (!autosaveToggle || !settingsForm) return;
 
-      autosaveToggle.checked = localStorage.getItem(AUTOSAVE_KEY) === '1';
-      autosaveToggle.addEventListener('change', function () {
-        localStorage.setItem(AUTOSAVE_KEY, this.checked ? '1' : '0');
-      });
+        autosaveToggle.checked = localStorage.getItem(AUTOSAVE_KEY) === '1';
+        autosaveToggle.addEventListener('change', function () {
+          localStorage.setItem(AUTOSAVE_KEY, this.checked ? '1' : '0');
+        });
 
-      function showStatus(text, color) {
-        autosaveStatus.textContent = text;
-        autosaveStatus.style.color = color || '';
-        autosaveStatus.style.opacity = '1';
-        clearTimeout(showStatus._t);
-        showStatus._t = setTimeout(function () {
-          autosaveStatus.style.opacity = '0';
-        }, 1500);
-      }
+        function showStatus(text, color) {
+          autosaveStatus.textContent = text;
+          autosaveStatus.style.color = color || '';
+          autosaveStatus.style.opacity = '1';
+          clearTimeout(showStatus._t);
+          showStatus._t = setTimeout(function () {
+            autosaveStatus.style.opacity = '0';
+          }, 1500);
+        }
 
-      let autosaveTimer = null;
-      function scheduleAutosave() {
-        if (!autosaveToggle.checked) return;
-        clearTimeout(autosaveTimer);
-        autosaveTimer = setTimeout(function () {
-          const data = new FormData(settingsForm);
-          showStatus('Сохраняю…');
-          fetch(settingsForm.action, { method: 'POST', body: data })
-            .then(function (r) {
-              if (r.ok)       showStatus('✓ Сохранено', '#3a8d3a');
-              else            showStatus('⚠ Ошибка сохранения', '#c33');
-            })
-            .catch(function () { showStatus('⚠ Сеть недоступна', '#c33'); });
-        }, 500);
-      }
+        let autosaveTimer = null;
+        function scheduleAutosave() {
+          if (!autosaveToggle.checked) return;
+          clearTimeout(autosaveTimer);
+          autosaveTimer = setTimeout(function () {
+            const data = new FormData(settingsForm);
+            showStatus('Сохраняю…');
+            fetch(settingsForm.action, { method: 'POST', body: data })
+              .then(function (r) {
+                if (r.ok)       showStatus('✓ Сохранено', '#3a8d3a');
+                else            showStatus('⚠ Ошибка сохранения', '#c33');
+              })
+              .catch(function () { showStatus('⚠ Сеть недоступна', '#c33'); });
+          }, 500);
+        }
 
-      // change ловит выбор select, чекбокс, blur input. input ловит набор
-      // в текстовых полях — но это слишком часто, поэтому только change.
-      settingsForm.querySelectorAll('input, select, textarea').forEach(function (el) {
-        if (el.id === 'autosave_toggle') return;   // сам тогглер — не триггерит
-        el.addEventListener('change', scheduleAutosave);
+        // change ловит выбор select, чекбокс, blur input. input ловит набор
+        // в текстовых полях — но это слишком часто, поэтому только change.
+        settingsForm.querySelectorAll('input, select, textarea').forEach(function (el) {
+          if (el.id === 'autosave_toggle') return;   // сам тогглер — не триггерит
+          el.addEventListener('change', scheduleAutosave);
+        });
       });
     </script>
 

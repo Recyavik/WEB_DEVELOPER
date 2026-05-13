@@ -1279,7 +1279,7 @@ async def api_settings_save(
                                 else "pure_pursuit")
     row.cautious_slow_curves = (cautious_slow_curves == "1")
     row.wall_turn_strategy   = (wall_turn_strategy
-                                if wall_turn_strategy in ("backoff", "multi_step")
+                                if wall_turn_strategy in ("backoff", "multi_step", "manual")
                                 else "backoff")
     db.commit()
 

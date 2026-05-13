@@ -118,7 +118,10 @@ class UserCfg:
     #                  возвращается в свою стартовую точку → ноль дрейфа).
     #                  N подбирается автоматически по доступному месту.
     #                  Медленнее (×N), но влезает в 8-20 см впереди.
-    wall_turn_strategy:  str  = "backoff"          # "backoff" | "multi_step"
+    #   "manual"     — НЕ отъезжать и НЕ разворачиваться, если впереди мало
+    #                  места. Просто остановиться и сообщить пользователю.
+    #                  Пользователь сам разруливает (отъезжает, объезжает).
+    wall_turn_strategy:  str  = "backoff"          # "backoff" | "multi_step" | "manual"
     # runtime-only флаг, не из БД: дальномер по факту используется
     # для остановки у стены. Переключается через тулбар-чекбокс «Дальномер».
     laser_enabled:      bool = True
@@ -2213,26 +2216,26 @@ class UserSession:
         await self._run_back(backup, self.cfg.move_speed)
         return float(backup)
 
-    async def _compensate_kturn_backup(self, backup_cm: float) -> None:
+    async def _compensate_kturn_backup(self, backup_cm: float,
+                                         total_diff_deg: float = 180.0) -> None:
         """Компенсация отъезда: едем НАЗАД в направлении носа на backup_cm.
 
-        Алгоритм (по словам пользователя):
-          1. Робот оценил, что стена мешает развороту.
-          2. Отъехал назад на безопасное расстояние от стены.
-          3. Выполнил алгоритм разворота по сторонам света из новой точки.
-          4. После разворота едет НАЗАД на backup_cm — компенсирует отъезд.
-
-        Почему именно прямой задний ход (steer=0), а НЕ _drive_to_point:
-          • _drive_to_point подруливает по координатам (Stanley-control),
-            и за время компенсации набирает курсовой дрейф (наблюдалось 18°).
-          • Прямой задний ход с steer=0 не меняет курс — робот едет
-            строго против носа. Для 180° K-turn'а это возвращает
-            ровно в исходную точку (старый курс = новый + 180°).
+        Условие: total_diff_deg ≈ 180° (с допуском ±10°).
+        Для других углов компенсация даёт боковой снос (направление
+        заднего хода в новом курсе НЕ совпадает со старым курсом),
+        поэтому пропускаем — лучше оставить робота в отъехавшей точке,
+        чем сместить вбок на 30-50 см.
 
         Дальномер ОТКЛЮЧЁН: позиция «до отъезда» по определению безопасна
         (мы туда только что приехали), а K-turn мог чуть приблизить нас
         к стене — включённый laser_stop обрывал бы возврат на полпути."""
         if backup_cm < 1.0:
+            return
+        if abs(total_diff_deg) < 170.0:
+            await self.push_message(
+                f"🔁 Разворот завершён. Отъезд {backup_cm:.0f} см не компенсирую "
+                f"(угол {total_diff_deg:.0f}° ≠ 180° — задний ход уведёт вбок).",
+                "info")
             return
         s = self.robot_state
         await self.push_message(
@@ -2317,7 +2320,7 @@ class UserSession:
             new_heading = (s.heading + step_signed) % 360.0
             await self._k_turn_to_heading(new_heading)
 
-        await self._compensate_kturn_backup(backup)
+        await self._compensate_kturn_backup(backup, total_diff_deg=abs(diff))
 
     @staticmethod
     def _kturn_per_step_clearance(step_deg: float, R: float) -> float:
@@ -2335,6 +2338,77 @@ class UserSession:
         beta  = 2.0 * math.degrees(math.asin(s_half / 2.0))
         alpha = (d - beta) / 2.0
         return R * math.sin(math.radians(alpha))
+
+    @staticmethod
+    def _kturn_step_extents(step_deg: float, direction: int, R: float,
+                             body_l: float = 0.0, body_w: float = 0.0
+                             ) -> tuple[float, float, float, float]:
+        """Численно прокручивает 3-дуговой K-turn step_deg в указанном
+        direction (±1) и возвращает (forward, backward, right, left) —
+        максимальное удаление корпуса робота (с учётом 4 углов
+        прямоугольника L×W) от стартовой позиции в start-heading frame.
+
+        forward = +y (по курсу),  backward = -y,
+        right   = +x (heading+90), left = -x (heading-90).
+
+        Все 4 значения ≥ 0. Применяется в `_pick_kturn_step_count` для
+        проверки 4-сторонних клиренсов до стен."""
+        if step_deg <= 0.5:
+            # Очень маленький шаг — только габарит робота
+            return (0.0, body_l, body_w / 2.0, body_w / 2.0)
+        half = math.radians(step_deg / 2.0)
+        s_half = math.sin(half)
+        if abs(s_half / 2.0) > 1.0:
+            return (R, R, R, R)
+        beta_deg  = 2.0 * math.degrees(math.asin(s_half / 2.0))
+        alpha_deg = (step_deg - beta_deg) / 2.0
+
+        # 4 угла корпуса в локальной (start-heading) системе при позиции
+        # (x, y) и курсе h_deg. Нос — это (x, y); корпус уходит назад на body_l.
+        def body_corners(x, y, h_deg):
+            hr  = math.radians(h_deg)
+            sh, ch = math.sin(hr), math.cos(hr)
+            # перпендикуляр (вправо от курса): (cos h, -sin h)
+            half_w = body_w / 2.0
+            nose_l = (x - ch * half_w, y + sh * half_w)
+            nose_r = (x + ch * half_w, y - sh * half_w)
+            rx = x - sh * body_l
+            ry = y - ch * body_l
+            rear_l = (rx - ch * half_w, ry + sh * half_w)
+            rear_r = (rx + ch * half_w, ry - sh * half_w)
+            return [nose_l, nose_r, rear_l, rear_r]
+
+        # Дискретная прокрутка дуги ~1° на микрошаг, как в физике.
+        def trace_arc(x, y, h, sweep_signed_deg, drive_sign):
+            steps = max(1, int(math.ceil(abs(sweep_signed_deg))))
+            d_head = sweep_signed_deg / steps
+            ds     = R * math.radians(abs(d_head))
+            corners_all = []
+            for _ in range(steps):
+                h += d_head
+                hr = math.radians(h)
+                x += drive_sign * math.sin(hr) * ds
+                y += drive_sign * math.cos(hr) * ds
+                corners_all.extend(body_corners(x, y, h))
+            return x, y, h, corners_all
+
+        all_corners = list(body_corners(0.0, 0.0, 0.0))
+        # Дуга 1: вперёд, heading += direction · α
+        x, y, h, c1 = trace_arc(0.0, 0.0, 0.0, direction * alpha_deg, +1)
+        all_corners.extend(c1)
+        # Дуга 2: назад, heading += direction · β
+        x, y, h, c2 = trace_arc(x, y, h, direction * beta_deg, -1)
+        all_corners.extend(c2)
+        # Дуга 3: вперёд, heading += direction · α
+        x, y, h, c3 = trace_arc(x, y, h, direction * alpha_deg, +1)
+        all_corners.extend(c3)
+
+        xs = [c[0] for c in all_corners]
+        ys = [c[1] for c in all_corners]
+        return (max(0.0, max(ys)),
+                max(0.0, -min(ys)),
+                max(0.0, max(xs)),
+                max(0.0, -min(xs)))
 
     @staticmethod
     def _pick_kturn_step_count(diff: float, forward_have: float,
@@ -2380,12 +2454,40 @@ class UserSession:
     async def _run_face_cardinal(self, deg: float, label: str):
         await self.push_message(
             f"🧭 Развернуться лицом к {label} (курс {deg:.0f}°).", "info")
-        if self.cfg.wall_turn_strategy == "multi_step":
+        if self.cfg.wall_turn_strategy == "manual":
+            # Ручной режим: если впереди мало места — стоп, не разворачиваемся.
+            if not await self._kturn_clearance_ok(deg):
+                return
+            await self._k_turn_to_heading(deg)
+        elif self.cfg.wall_turn_strategy == "multi_step":
             await self._multi_step_kturn(deg)
         else:
+            diff = (float(deg) - self.robot_state.heading + 540.0) % 360.0 - 180.0
             backup = await self._ensure_kturn_clearance(deg)
             await self._k_turn_to_heading(deg)
-            await self._compensate_kturn_backup(backup)
+            await self._compensate_kturn_backup(backup, total_diff_deg=abs(diff))
+
+    async def _kturn_clearance_ok(self, target_deg: float) -> bool:
+        """Проверяет, достаточно ли места для K-turn'а БЕЗ отъезда.
+        Используется в режиме wall_turn_strategy='manual': если места
+        мало — отправляет предупреждение и возвращает False (вызывающий
+        код останавливается, не разворачивается)."""
+        s = self.robot_state
+        diff = (float(target_deg) - s.heading + 540.0) % 360.0 - 180.0
+        if abs(diff) < 3.0:
+            return True
+        forward_need  = self._kturn_forward_clearance_needed(abs(diff))
+        if abs(diff) >= 90.0:
+            forward_need = max(forward_need, self.cfg.robot_length_cm)
+        forward_need += 12.5 + self.cfg.robot_width_cm / 2.0 + 15.0
+        forward_have  = self._wall_dist_cm(s.heading) - self.cfg.wall_thickness_cm
+        if forward_have >= forward_need:
+            return True
+        await self.push_message(
+            f"⛔ Ручной режим: для разворота нужно {forward_need:.0f} см впереди, "
+            f"есть только {forward_have:.0f}. Остановился. Отъехай назад вручную "
+            f"и повтори команду.", "warning")
+        return False
 
     def _has_danger_zone_at(self, x: float, y: float, radius: float,
                             tol_cm: float = 1.0) -> bool:
@@ -2828,7 +2930,7 @@ class UserSession:
 odo = Odometry()    # глобальный экземпляр одометрии
 '''),
         "face_cmd": (
-            "Поворот лицом к стороне света (3-дуговой K-turn)",
+            "Поворот лицом к стороне света (3-дуговой K-turn с отъездом от стены)",
             r'''def face_cmd(target_deg, power_pct=DEFAULT_SPEED):
     odo.sync_heading()
     diff = (target_deg - odo.heading + 540.0) % 360.0 - 180.0
@@ -2842,6 +2944,19 @@ odo = Odometry()    # глобальный экземпляр одометрии
     beta_deg  = math.degrees(2.0 * math.asin(s_half / 2.0))
     alpha_deg = (abs(diff) - beta_deg) / 2.0
     steer_ratio = DEFAULT_TURN_ANGLE / 45.0
+    # Клиренс по дальномеру: если у носа мало места для арки 1 — отъезжаем.
+    # forward_need = R·sin(α) + полширины + запас на дрейф интегратора.
+    R_turn       = WHEEL_CIRC_CM * 360.0 / (2.0 * math.pi * HEADING_DEG_PER_ROT * steer_ratio)
+    forward_need = R_turn * math.sin(math.radians(alpha_deg)) + ROBOT_WIDTH_CM / 2.0 + 15.0
+    try:    forward_have = robot.get_laser()
+    except Exception: forward_have = None
+    backup_cm = 0.0
+    if forward_have is not None and forward_have < forward_need:
+        backup_cm = forward_need - forward_have
+        robot.set_angle(0)
+        secs = duration(backup_cm, power_pct)
+        robot.move(-power_pct, secs)
+        odo.move_step(-power_pct, secs, 0)
     def arc(sweep_deg, sign):
         arc_cm = sweep_deg * WHEEL_CIRC_CM / (HEADING_DEG_PER_ROT * steer_ratio)
         secs   = duration(arc_cm, power_pct)
@@ -2852,6 +2967,19 @@ odo = Odometry()    # глобальный экземпляр одометрии
     arc(alpha_deg, +1)
     arc(beta_deg,  -1)
     arc(alpha_deg, +1)
+    # Компенсация отъезда — ТОЛЬКО для разворотов близких к 180°.
+    # Геометрия: задний ход после K-turn'а движется в направлении
+    # (new_heading + 180°). Для 180° K-turn'а это совпадает со
+    # старым курсом → робот точно возвращается в исходную точку.
+    # Для других углов (90°, 45° …) направление компенсации НЕ
+    # совпадает со старым курсом → компенсация уведёт робота вбок.
+    # Лучше оставить его в отъехавшей позиции — финальный offset
+    # снимет следующая команда движения (она к абсолютной цели).
+    if backup_cm > 1.0 and abs(diff) > 170.0:
+        robot.set_angle(0)
+        secs = duration(backup_cm, power_pct)
+        robot.move(-power_pct, secs)
+        odo.move_step(-power_pct, secs, 0)
     robot.stop()
     robot.set_servo_center()
     odo.heading = target_deg % 360.0
@@ -3588,25 +3716,41 @@ odo = Odometry()    # глобальный экземпляр одометрии
             direction = -1 if any(w in n for w in ("налево", "влево", "против")) else 1
             side = "влево" if direction == -1 else "вправо"
             target_180 = (s.heading + 180.0) % 360.0
-            if self.cfg.wall_turn_strategy == "multi_step":
+            if self.cfg.wall_turn_strategy == "manual":
+                if not await self._kturn_clearance_ok(target_180):
+                    msg = "Разворот невозможен (мало места)."
+                    ok = False
+                else:
+                    await self._k_turn_n(direction, steps=1)
+                    msg = f"Разворот {side} завершен."
+            elif self.cfg.wall_turn_strategy == "multi_step":
                 await self._multi_step_kturn(target_180)
+                msg = f"Разворот {side} завершен."
             else:
                 backup = await self._ensure_kturn_clearance(target_180)
                 await self._k_turn_n(direction, steps=1)
-                await self._compensate_kturn_backup(backup)
-            msg = f"Разворот {side} завершен."
+                await self._compensate_kturn_backup(backup, total_diff_deg=180.0)
+                msg = f"Разворот {side} завершен."
         elif intent == "turn_around_place":
             n = nlu.norm(raw)
             direction = -1 if any(w in n for w in ("налево", "влево", "против")) else 1
             steps = nlu.extract_kturn_steps(raw)
             target_180 = (s.heading + 180.0) % 360.0
-            if self.cfg.wall_turn_strategy == "multi_step":
+            if self.cfg.wall_turn_strategy == "manual":
+                if not await self._kturn_clearance_ok(target_180):
+                    msg = "Разворот невозможен (мало места)."
+                    ok = False
+                else:
+                    await self._k_turn_n(direction, steps)
+                    msg = "Разворот на месте завершен."
+            elif self.cfg.wall_turn_strategy == "multi_step":
                 await self._multi_step_kturn(target_180)
+                msg = "Разворот на месте завершен."
             else:
                 backup = await self._ensure_kturn_clearance(target_180)
                 await self._k_turn_n(direction, steps)
-                await self._compensate_kturn_backup(backup)
-            msg = "Разворот на месте завершен."
+                await self._compensate_kturn_backup(backup, total_diff_deg=180.0)
+                msg = "Разворот на месте завершен."
         elif intent == "circle":
             # По умолчанию CCW (против часовой, мат. направление 0→2π).
             # Только если явно сказано «направо/вправо/по часовой» — CW.
