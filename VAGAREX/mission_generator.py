@@ -21,6 +21,7 @@ API:
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
 import random
@@ -113,7 +114,9 @@ _CARDINAL_HEADINGS = (0, 45, 90, 135, 180, 225, 270, 315)
 _HEADINGS_15_DEG   = tuple(range(0, 360, 15))   # 0, 15, 30, ..., 345
 
 # Шаги по уровням (передаются в _generate_trajectory).
-_LEVEL_HEADING_STEP_DEG = {1: 45, 2: 15, 3: 45}   # L3 снова кратно 45°
+# После перетряхивания v4.5: L1/L2 — инспектор (без траектории),
+# L3 = бывший L1 (сетка 45°), L4 = бывший L2 (15°), L5 = бывший L3 (45° + кривые).
+_LEVEL_HEADING_STEP_DEG = {3: 45, 4: 15, 5: 45}
 
 # Параметры bypass_cmd (S-волна) и course_cmd (встать на курс на ходу) —
 # совпадают с session.py `_HELPER_CODE`. Используются для предсказания
@@ -793,7 +796,7 @@ def _generate_trajectory(n_waypoints: int, geom: WorldGeom,
             heading_steps.append(state["heading"])
             _extend_path(path_seg)
             _add_vertex((state["x"], state["y"]))
-            waypoints.append([round(state["x"], 1), round(state["y"], 1)])
+            waypoints.append([float(round(state["x"])), float(round(state["y"]))])
             waypoints_created += 1
             continue
 
@@ -819,7 +822,7 @@ def _generate_trajectory(n_waypoints: int, geom: WorldGeom,
             heading_steps.append(state["heading"])
             _extend_path(path_seg)
             _add_vertex((state["x"], state["y"]))
-            waypoints.append([round(state["x"], 1), round(state["y"], 1)])
+            waypoints.append([float(round(state["x"])), float(round(state["y"]))])
             waypoints_created += 1
             course_used += 1
             continue
@@ -868,7 +871,7 @@ def _generate_trajectory(n_waypoints: int, geom: WorldGeom,
             heading_steps.append(state["heading"])
             _extend_path(path_seg)
             _add_vertex((state["x"], state["y"]))
-            waypoints.append([round(state["x"], 1), round(state["y"], 1)])
+            waypoints.append([float(round(state["x"])), float(round(state["y"]))])
             waypoints_created += 1
             if mv_fn in curved_candidates:
                 bypass_used += 1
@@ -1109,35 +1112,167 @@ def _generate_trajectory_best_of(n_waypoints: int, geom: WorldGeom,
     return best_traj
 
 
-# ── Генератор уровня 1 ─────────────────────────────────────────────────────
+# ── Новые уровни 1-2 (режим «инспектор» — без эталонной траектории) ───────
+
+def _random_start_xy(rng: random.Random) -> tuple[float, float]:
+    """Случайная стартовая точка миссии (общая для всех уровней): кратна
+    50, |coord| ≤ 100. Возможные значения по каждой оси: -100, -50, 0, 50, 100.
+    Цель: обучающийся учится выставлять начальные координаты в настройках
+    под условие задачи."""
+    opts = [-100, -50, 0, 50, 100]
+    return float(rng.choice(opts)), float(rng.choice(opts))
+
+
+def _scatter_points(n: int, geom: WorldGeom, rng: random.Random,
+                     *, min_dist_cm: float = 80.0,
+                     grid_step_cm: int = 10,
+                     start_xy: Optional[tuple[float, float]] = None,
+                     prior_points: Optional[list[list[float]]] = None
+                     ) -> list[list[float]]:
+    """Случайно разбрасывает n точек по полю с минимальным расстоянием
+    min_dist_cm между точками и от стен.
+
+    grid_step_cm — шаг сетки, к которой снапим координаты (10 или 50).
+    start_xy — учитывать в проверке расстояния (по умолчанию geom.start)."""
+    half_w = geom.world_w_cm / 2.0 - _wall_clearance_cm(geom)
+    half_h = geom.world_h_cm / 2.0 - _wall_clearance_cm(geom)
+    prior = list(prior_points or [])
+    s_xy = start_xy if start_xy is not None else (geom.start_x, geom.start_y)
+    placed = [[s_xy[0], s_xy[1]]] + prior
+    result: list[list[float]] = []
+    for _ in range(n):
+        for _attempt in range(120):
+            x = int(round(rng.uniform(-half_w, half_w) / grid_step_cm)) * grid_step_cm
+            y = int(round(rng.uniform(-half_h, half_h) / grid_step_cm)) * grid_step_cm
+            if all(math.hypot(x - p[0], y - p[1]) >= min_dist_cm
+                   for p in placed + result):
+                result.append([float(x), float(y)])
+                break
+    return result
+
 
 def _generate_level_1(geom: WorldGeom, rng: random.Random) -> dict:
-    """2-3 waypoints + поворотные команды между ними. Без зон.
+    """Уровень 1 «Ознакомительный» — режим инспектор.
+    3 точки разбросаны на сетке 50×50; обучающийся посещает их любой
+    траекторией (траектория НЕ генерится и НЕ проверяется).
 
-    Каждая команда возвращает path_segment — список точек вдоль её
-    траектории. Сегменты конкатенируются в полный путь миссии для
-    отрисовки. Для будущих криволинейных команд (circle, spiral) их
-    path_segment будет сэмплировать дугу, и линия в превью отразит
-    реальную форму маршрута.
-    """
-    n_waypoints = rng.randint(2, 3)
-    # Старт описания тоже снапим к сетке (если в настройках он не на узле):
-    # waypoints отсчитываются от снапнутого старта, описание должно
-    # совпадать с реальной геометрией миссии.
+    Стартовая точка ТОЖЕ генерируется случайно (см. _random_start_xy):
+    кратно 50, |coord| ≤ 100."""
+    start_x, start_y = _random_start_xy(rng)
+    waypoints = _scatter_points(
+        3, geom, rng,
+        min_dist_cm=100.0, grid_step_cm=50,
+        start_xy=(start_x, start_y))
+    return {
+        "level":            1,
+        "title":            "",
+        "description":      _format_description(
+                                level=1, waypoints=waypoints, actions=[],
+                                start_x=start_x, start_y=start_y,
+                                danger_zones=[]),
+        "waypoints":        json.dumps(waypoints),
+        # Маркер «инспектор» в коде клиента — m.level === 1 || 2.
+        # path передаём как [старт] (одна точка) — этого достаточно
+        # canvas.js, чтобы взять старт в worldToCanvas, и тогда полилайна
+        # не будет (длина < 2).
+        "path":             json.dumps([[start_x, start_y]]),
+        "danger_zones":     json.dumps([]),
+        "actions_required": json.dumps([]),
+        "reference_voice":  json.dumps([]),
+        "reference_code":   _format_reference_code([]),
+        "safety_margin_cm": geom.safety_margin_cm,
+    }
+
+
+def _generate_level_2(geom: WorldGeom, rng: random.Random) -> dict:
+    """Уровень 2 «Начальный» — инспектор с зонами.
+    4 точки + 3 опасные зоны (радиусы 10/20/30 см) на «прямых
+    направлениях» к точкам — мешают идти по прямой, нужно обходить.
+    Дополнительно: установить 2 зоны внимания + удалить все опасные.
+    Оценка по точкам и действиям; за каждый наезд на danger −5%.
+
+    Стартовая точка генерируется случайно (см. _random_start_xy)."""
+    start_x, start_y = _random_start_xy(rng)
+    waypoints = _scatter_points(
+        4, geom, rng,
+        min_dist_cm=100.0, grid_step_cm=50,
+        start_xy=(start_x, start_y))
+
+    # 3 опасные зоны разного радиуса. Размещаем БЛИЗКО к прямым линиям
+    # старт→wp1, wp1→wp2 и т.д., чтобы создать «препятствие на пути».
+    danger_radii = [10.0, 20.0, 30.0]
+    rng.shuffle(danger_radii)
+    danger_zones: list[list[float]] = []
+    # Собираем виртуальный «путь» из прямых отрезков между точками для
+    # _place_danger_zones (он размещает зоны вдоль ломаной).
+    fake_path = [[start_x, start_y]]
+    for w in waypoints:
+        fake_path.append([float(w[0]), float(w[1])])
+    if len(fake_path) >= 2:
+        clearance = geom.safety_margin_cm + max(geom.robot_w_cm, geom.robot_l_cm) / 2.0
+        for r in danger_radii:
+            zs = _place_danger_zones(
+                1, fake_path, geom, rng,
+                zone_radius_cm=r, clearance_cm=clearance,
+                max_extra_cm=5.0)   # ближе к прямой, реально мешали
+            danger_zones.extend(zs)
+
+    # 2 зоны внимания — конкретные координаты, которые надо разместить
+    # вручную голосом «Вега внимание здесь». Не на waypoint'ах
+    # (чтобы это не было автоматически совмещённой задачей).
+    attention_points = _scatter_points(
+        2, geom, rng,
+        min_dist_cm=80.0, grid_step_cm=50,
+        start_xy=(start_x, start_y),
+        prior_points=[[w[0], w[1]] for w in waypoints])
+    actions: list[dict] = [
+        {"type": "place_attention", "x": p[0], "y": p[1], "radius": 15.0}
+        for p in attention_points
+    ]
+    # Удаление всех опасных зон — одна action-команда на каждую зону
+    for z in danger_zones:
+        actions.append({"type": "remove_danger", "x": z[0], "y": z[1]})
+
+    return {
+        "level":            2,
+        "title":            "",
+        "description":      _format_description(
+                                level=2, waypoints=waypoints, actions=actions,
+                                start_x=start_x, start_y=start_y,
+                                danger_zones=danger_zones),
+        "waypoints":        json.dumps(waypoints),
+        # path = [старт] — клиент видит одну точку, полилайн не рисуется
+        # (нужно ≥2 точки), но canvas/SVG понимает где старт.
+        "path":             json.dumps([[start_x, start_y]]),
+        "danger_zones":     json.dumps(danger_zones),
+        "actions_required": json.dumps(actions),
+        "reference_voice":  json.dumps([]),
+        "reference_code":   _format_reference_code([]),
+        "safety_margin_cm": geom.safety_margin_cm,
+    }
+
+
+# ── Генератор уровня 3 (бывший L1 «Ознакомительный») ──────────────────────
+
+def _generate_level_3(geom: WorldGeom, rng: random.Random) -> dict:
+    """5 waypoints + поворотные команды между ними. Без зон.
+    Старт генерируется случайно (_random_start_xy), и в geom-копию
+    подкладывается — чтобы трекинг траектории шёл от него."""
+    n_waypoints = 5
+    s_x, s_y = _random_start_xy(rng)
+    geom = dataclasses.replace(geom, start_x=s_x, start_y=s_y)
     desc_start_x = _snap_to_grid(geom.start_x)
     desc_start_y = _snap_to_grid(geom.start_y)
     traj = _generate_trajectory_best_of(
         n_waypoints, geom, rng,
         align_to_grid=True,
-        heading_step_deg=_LEVEL_HEADING_STEP_DEG[1],
+        heading_step_deg=_LEVEL_HEADING_STEP_DEG[3],
         ref_start_x=desc_start_x, ref_start_y=desc_start_y)
     return {
-        "level":            1,
-        # title оставляем пустым — пользователь введёт сам, иначе сервер
-        # подставит «Миссия #N» (где N — присвоенный id).
+        "level":            3,
         "title":            "",
         "description":      _format_description(
-                                level=1, waypoints=traj["waypoints"], actions=[],
+                                level=3, waypoints=traj["waypoints"], actions=[],
                                 start_x=desc_start_x, start_y=desc_start_y,
                                 danger_zones=[]),
         "waypoints":        json.dumps(traj["waypoints"]),
@@ -1150,9 +1285,9 @@ def _generate_level_1(geom: WorldGeom, rng: random.Random) -> dict:
     }
 
 
-# ── Генератор уровня 2 ─────────────────────────────────────────────────────
+# ── Генератор уровня 4 (бывший L2 «Начальный») ────────────────────────────
 
-def _generate_level_2(geom: WorldGeom, rng: random.Random) -> dict:
+def _generate_level_4(geom: WorldGeom, rng: random.Random) -> dict:
     """4-5 waypoints + 2 опасные зоны. Курсы кратны 15° (24 направления),
     точки не привязаны к сетке.
 
@@ -1161,17 +1296,17 @@ def _generate_level_2(geom: WorldGeom, rng: random.Random) -> dict:
     half_robot. Так гарантируется, что робот, идущий точно по эталону,
     не задевает зону корпусом даже при максимальном допустимом отклонении.
 
-    Радиус зон берётся из geom.danger_zone_radius_cm (настройки пользователя)."""
+    Радиус зон берётся из geom.danger_zone_radius_cm (настройки пользователя).
+    Старт генерируется случайно (_random_start_xy)."""
     n_waypoints = rng.randint(4, 5)
+    s_x, s_y = _random_start_xy(rng)
+    geom = dataclasses.replace(geom, start_x=s_x, start_y=s_y)
     traj = _generate_trajectory_best_of(
         n_waypoints, geom, rng,
         align_to_grid=False,
-        heading_step_deg=_LEVEL_HEADING_STEP_DEG[2])
+        heading_step_deg=_LEVEL_HEADING_STEP_DEG[4])
 
     n_zones = 2
-    # Допуск от траектории до зоны: половина габарита робота (корпус) +
-    # safety_margin (тот же радиус, в пределах которого «отклонение
-    # засчитывается»). Это симметрично с проверкой соответствия пути.
     clearance = geom.safety_margin_cm + max(geom.robot_w_cm, geom.robot_l_cm) / 2.0
     zones = _place_danger_zones(
         n_zones, traj["full_path"], geom, rng,
@@ -1180,10 +1315,10 @@ def _generate_level_2(geom: WorldGeom, rng: random.Random) -> dict:
     )
 
     return {
-        "level":            2,
+        "level":            4,
         "title":            "",
         "description":      _format_description(
-                                level=2, waypoints=traj["waypoints"], actions=[],
+                                level=4, waypoints=traj["waypoints"], actions=[],
                                 start_x=geom.start_x, start_y=geom.start_y,
                                 danger_zones=zones),
         "waypoints":        json.dumps(traj["waypoints"]),
@@ -1196,26 +1331,30 @@ def _generate_level_2(geom: WorldGeom, rng: random.Random) -> dict:
     }
 
 
-# ── Генератор уровня 3 ─────────────────────────────────────────────────────
+# ── Генератор уровня 5 (бывший L3 «Базовый» с кривыми) ───────────────────
 
-def _generate_level_3(geom: WorldGeom, rng: random.Random) -> dict:
+def _generate_level_5(geom: WorldGeom, rng: random.Random) -> dict:
     """5 контрольных точек, 2 опасные зоны (радиусы 10 и 20 см),
     1 «зона внимания» — на финальной точке (завершение задания).
     Курсы кратны 45° (8 кардиналов), расстояния кратны 10.
 
     Траектория не только линейная: 5 сегментов = 3 линейных
-    (forward/back) + 2 кривых (bypass / course). Кривые гарантируются
-    счётчиком min_curved=2."""
+    (forward/back) + 1 bypass + 1 course (чередование L-B-L-C-L).
+
+    Старт генерируется случайно (_random_start_xy)."""
     n_waypoints = 5
+    s_x, s_y = _random_start_xy(rng)
+    geom = dataclasses.replace(geom, start_x=s_x, start_y=s_y)
     traj = _generate_trajectory_best_of(
         n_waypoints, geom, rng,
         align_to_grid=False,
-        heading_step_deg=_LEVEL_HEADING_STEP_DEG[3],
+        heading_step_deg=_LEVEL_HEADING_STEP_DEG[5],
         include_bypass=True,
         min_curved=2,
         allow_goto=False)
 
-    # Две опасные зоны разного радиуса (10 см и 20 см).
+    # Опасные зоны: 2 «основных» (10 и 20 см) + 4 «фланговых»
+    # слева/справа траектории (10-20 см). Итого 6 зон.
     clearance = geom.safety_margin_cm + max(geom.robot_w_cm, geom.robot_l_cm) / 2.0
     zones_r10 = _place_danger_zones(
         1, traj["full_path"], geom, rng,
@@ -1223,7 +1362,19 @@ def _generate_level_3(geom: WorldGeom, rng: random.Random) -> dict:
     zones_r20 = _place_danger_zones(
         1, traj["full_path"], geom, rng,
         zone_radius_cm=20.0, clearance_cm=clearance)
-    zones = zones_r10 + zones_r20
+    # 4 фланговых: каждая ставится случайно вдоль траектории; функция
+    # _place_danger_zones отступает перпендикулярно от ломаной, отбраковывая
+    # позиции, нарушающие safety_margin. На дефолте получаем 2 слева
+    # и 2 справа (направление перпендикуляра выбирается случайно внутри
+    # функции). Радиусы — рандомные из 10/15/20.
+    flank_zones: list[list[float]] = []
+    for r in (10.0, 15.0, 15.0, 20.0):
+        zs = _place_danger_zones(
+            1, traj["full_path"], geom, rng,
+            zone_radius_cm=r, clearance_cm=clearance,
+            max_extra_cm=15.0)
+        flank_zones.extend(zs)
+    zones = zones_r10 + zones_r20 + flank_zones
 
     # Действие «установить зону внимания» — ровно одна, и ставится на
     # ФИНАЛЬНУЮ waypoint-точку маршрута (как завершение задания L3).
@@ -1234,10 +1385,10 @@ def _generate_level_3(geom: WorldGeom, rng: random.Random) -> dict:
                          "x": float(ax), "y": float(ay), "radius": 15.0})
 
     return {
-        "level":            3,
+        "level":            5,
         "title":            "",
         "description":      _format_description(
-                                level=3, waypoints=traj["waypoints"],
+                                level=5, waypoints=traj["waypoints"],
                                 actions=actions,
                                 start_x=geom.start_x, start_y=geom.start_y,
                                 danger_zones=zones),
@@ -1257,25 +1408,28 @@ def _format_description(level: int, waypoints: list[list[float]],
                         actions: list[dict],
                         start_x: float = 0.0, start_y: float = 0.0,
                         danger_zones: list = None) -> str:
-    """Универсальное описание миссии БЕЗ подсказок какими командами
-    выполнять. Структурно, кратко. Формат — единый с кастомными:
-       🟢 Начало маршрута (X, Y)
-       📍 Контрольные точки маршрута (N шт.): coords
-       📌 Установите зоны внимания: coords  (если есть)
-       ⚠ Опасные зоны на карте (N шт.): coords  (если есть)
-       ⭐ За правильно выполненное задание и прохождение траектории...
-    """
+    """Описание миссии. Для L1 (инспектор) — компактный шаблон без
+    счётчика «N шт.» и с упором на «прохождение контрольных точек»
+    (траектория не оценивается). Для L2-5 — обычный шаблон с числом
+    точек/зон и «прохождением траектории»."""
+    # Чистый шаблон без счётчиков «(N шт.)» используется на L1, L3, L4.
+    # L2 и L5 — с количеством (для них actions/зон много, count помогает).
+    clean = level in (1, 3, 4)
     parts = []
-    parts.append(f"🟢 Начало маршрута ({int(start_x)}, {int(start_y)})")
+    parts.append(f"🟢 Начало маршрута ({int(round(start_x))}, {int(round(start_y))})")
     if waypoints:
-        wp_str = ", ".join(f"({int(x)}, {int(y)})" for x, y in waypoints)
-        parts.append(
-            f"📍 Контрольные точки маршрута ({len(waypoints)} шт.): {wp_str}.")
+        wp_str = ", ".join(f"({int(round(x))}, {int(round(y))})" for x, y in waypoints)
+        if clean:
+            parts.append(f"📍 Контрольные точки маршрута: {wp_str}.")
+        else:
+            parts.append(
+                f"📍 Контрольные точки маршрута ({len(waypoints)} шт.): {wp_str}.")
     place_actions = [a for a in actions if a.get("type") == "place_attention"]
     remove_actions = [a for a in actions
                       if a.get("type") in ("remove_danger", "remove_attention")]
     if place_actions:
-        zs = ", ".join(f"({int(a['x'])}, {int(a['y'])})" for a in place_actions)
+        zs = ", ".join(f"({int(round(a['x']))}, {int(round(a['y']))})"
+                       for a in place_actions)
         parts.append(f"📌 Установите зоны внимания: {zs}.")
     if remove_actions:
         d_count = sum(1 for a in remove_actions if a["type"] == "remove_danger")
@@ -1285,13 +1439,29 @@ def _format_description(level: int, waypoints: list[list[float]],
         if a_count:
             parts.append(f"❌ Удалите зоны внимания ({a_count} шт).")
     if danger_zones:
-        zs = ", ".join(f"({int(z[0])}, {int(z[1])})" for z in danger_zones)
+        zs = ", ".join(f"({int(round(z[0]))}, {int(round(z[1]))})" for z in danger_zones)
+        if clean:
+            parts.append(f"⚠ Опасные зоны на карте: {zs}. Не задевайте.")
+        else:
+            parts.append(
+                f"⚠ Опасные зоны на карте ({len(danger_zones)} шт.): {zs}. "
+                f"Не задевайте.")
+    # ⭐-строка зависит от уровня (тип задания)
+    if level == 1:
         parts.append(
-            f"⚠ Опасные зоны на карте ({len(danger_zones)} шт.): {zs}. "
-            f"Не задевайте.")
-    parts.append(
-        "⭐ За правильно выполненное задание и прохождение траектории "
-        "вы получите звёзды.")
+            "⭐ За правильное прохождение контрольных точек вы получите звёзды.")
+    elif level == 3:
+        parts.append(
+            "⭐ За правильное прохождение контрольных точек маршрута "
+            "получите звёзды.")
+    elif level == 4:
+        parts.append(
+            "⭐ За правильное прохождение контрольных точек маршрута, "
+            "не задевая опасные зоны, вы получите звёзды.")
+    else:
+        parts.append(
+            "⭐ За правильно выполненное задание и прохождение траектории "
+            "вы получите звёзды.")
     return "\n".join(parts)
 
 
@@ -1335,7 +1505,11 @@ def generate_mission(level: int = 1,
         return _generate_level_2(geom, rng)
     if level == 3:
         return _generate_level_3(geom, rng)
-    # Заглушка для пока-не-реализованных уровней
+    if level == 4:
+        return _generate_level_4(geom, rng)
+    if level == 5:
+        return _generate_level_5(geom, rng)
+    # Заглушка для несуществующих уровней
     result = _generate_level_1(geom, rng)
     result["level"] = level
     result["title"] = f"Миссия — уровень {level} (в разработке)"

@@ -55,24 +55,24 @@ class TestLevel1Shape(unittest.TestCase):
     """Структура сгенерированной миссии level 1."""
 
     def test_level_1_has_2_or_3_waypoints(self):
+        # После рестракта уровней: бывший L1 «Ознакомительный»
+        # стал L3 «Базовый» и теперь генерирует ровно 5 точек.
         for seed in range(20):
             with self.subTest(seed=seed):
-                m = generate_mission(level=1, geom=_geom_default(), seed=seed)
+                m = generate_mission(level=3, geom=_geom_default(), seed=seed)
                 wp = json.loads(m["waypoints"])
-                self.assertGreaterEqual(len(wp), 2,
-                                        f"seed={seed}: меньше 2 точек")
-                self.assertLessEqual(len(wp), 3,
-                                     f"seed={seed}: больше 3 точек")
+                self.assertEqual(len(wp), 5,
+                                  f"seed={seed}: L3 теперь должен генерировать 5 точек")
 
     def test_level_1_no_zones(self):
         for seed in range(10):
             with self.subTest(seed=seed):
-                m = generate_mission(level=1, seed=seed)
+                m = generate_mission(level=3, seed=seed)
                 self.assertEqual(json.loads(m["danger_zones"]), [])
                 self.assertEqual(json.loads(m["actions_required"]), [])
 
     def test_required_fields_present(self):
-        m = generate_mission(level=1, seed=42)
+        m = generate_mission(level=3, seed=42)
         for key in ("level", "title", "description", "waypoints",
                     "danger_zones", "actions_required",
                     "reference_voice", "reference_code", "safety_margin_cm"):
@@ -82,7 +82,7 @@ class TestLevel1Shape(unittest.TestCase):
         """Title оставляем пустым — пользователь введёт сам, fallback
         «Миссия #N» делается в /missions/save. Описание в формате:
         🟢 Начало → 📍 Контрольные точки → ⭐."""
-        m = generate_mission(level=1, seed=7)
+        m = generate_mission(level=3, seed=7)
         self.assertEqual(m["title"], "",
                          "генератор не должен задавать title — это делает "
                          "пользователь или сервер при сохранении")
@@ -99,7 +99,7 @@ class TestLevel1Shape(unittest.TestCase):
         self.assertNotIn("face_cmd",    desc)
 
     def test_reference_voice_and_code_are_lists_strings(self):
-        m = generate_mission(level=1, seed=1)
+        m = generate_mission(level=3, seed=1)
         voice = json.loads(m["reference_voice"])
         self.assertIsInstance(voice, list)
         self.assertGreater(len(voice), 0)
@@ -120,7 +120,7 @@ class TestWaypointsInsideField(unittest.TestCase):
         half_w = g.world_w_cm / 2.0
         half_h = g.world_h_cm / 2.0
         for seed in range(30):
-            m = generate_mission(level=1, geom=g, seed=seed)
+            m = generate_mission(level=3, geom=g, seed=seed)
             wp = json.loads(m["waypoints"])
             for x, y in wp:
                 with self.subTest(seed=seed, x=x, y=y):
@@ -134,15 +134,15 @@ class TestDeterminism(unittest.TestCase):
     """Один и тот же seed → одна и та же миссия (для воспроизводимости)."""
 
     def test_same_seed_same_mission(self):
-        a = generate_mission(level=1, seed=123)
-        b = generate_mission(level=1, seed=123)
+        a = generate_mission(level=3, seed=123)
+        b = generate_mission(level=3, seed=123)
         self.assertEqual(a["waypoints"],       b["waypoints"])
         self.assertEqual(a["reference_voice"], b["reference_voice"])
         self.assertEqual(a["reference_code"],  b["reference_code"])
 
     def test_different_seeds_different_missions(self):
-        a = generate_mission(level=1, seed=1)
-        b = generate_mission(level=1, seed=999)
+        a = generate_mission(level=3, seed=1)
+        b = generate_mission(level=3, seed=999)
         # С большой вероятностью waypoints разные. Иногда могут совпасть
         # — проверяем что хотя бы один из reference != тот же.
         same_wp    = a["waypoints"]       == b["waypoints"]
@@ -161,51 +161,57 @@ class TestStartPoint(unittest.TestCase):
     """
 
     def test_path_starts_at_geom_start(self):
-        """Первая точка full_path == (start_x, start_y) для любого старта,
-        снапнутого к узлу сетки 50×50 (уровень 1 выравнивает старт).
-        Используем стартовые координаты уже на сетке, чтобы snap был no-op."""
-        for sx, sy in [(0, 0), (100, 50), (-150, 100), (200, -200)]:
-            with self.subTest(start=(sx, sy)):
+        """v4.5+: старт миссии генерируется случайно (на сетке 50×50,
+        |coord| ≤ 100). geom.start_x/y игнорируется — пользователь
+        учится выставлять стартовые координаты под условие задачи.
+        Проверяем только что path не пустой и стартует на сетке."""
+        for seed in (1, 7, 42, 100):
+            with self.subTest(seed=seed):
                 g = WorldGeom(world_w_cm=600, world_h_cm=600,
                               robot_w_cm=12, robot_l_cm=20,
-                              start_x=sx, start_y=sy, start_heading=0)
-                m = generate_mission(level=1, geom=g, seed=42)
+                              start_x=0, start_y=0, start_heading=0)
+                m = generate_mission(level=3, geom=g, seed=seed)
                 path = json.loads(m["path"])
                 self.assertGreaterEqual(len(path), 1,
-                                        f"path не должен быть пустым (start={sx},{sy})")
+                                        f"path не должен быть пустым (seed={seed})")
+                sx, sy = path[0]
+                self.assertEqual(sx % 50, 0, f"старт не на сетке 50: {sx}")
+                self.assertEqual(sy % 50, 0, f"старт не на сетке 50: {sy}")
+                self.assertLessEqual(abs(sx), 100, f"|start_x|>100: {sx}")
+                self.assertLessEqual(abs(sy), 100, f"|start_y|>100: {sy}")
                 self.assertAlmostEqual(path[0][0], sx, places=1,
                                        msg=f"path[0].x ≠ start_x для start=({sx},{sy})")
                 self.assertAlmostEqual(path[0][1], sy, places=1,
                                        msg=f"path[0].y ≠ start_y для start=({sx},{sy})")
 
-    def test_description_includes_offset_start_coords(self):
-        """🟢 Начало маршрута содержит фактические start_x/start_y, не (0,0).
-        Координаты выбраны на сетке 50×50 — snap старта на уровне 1 no-op."""
+    def test_description_includes_random_start_coords(self):
+        """v4.5+: 🟢 Начало маршрута содержит СГЕНЕРИРОВАННЫЕ
+        start-координаты (кратные 50, |coord| ≤ 100). geom.start
+        игнорируется при генерации."""
         g = WorldGeom(world_w_cm=600, world_h_cm=600, start_x=150, start_y=-100)
-        m = generate_mission(level=1, geom=g, seed=7)
-        self.assertIn("Начало маршрута (150, -100)", m["description"],
-                      f"описание не содержит start-координаты: {m['description']!r}")
+        m = generate_mission(level=3, geom=g, seed=7)
+        path = json.loads(m["path"])
+        sx, sy = int(path[0][0]), int(path[0][1])
+        self.assertIn(f"Начало маршрута ({sx}, {sy})", m["description"])
+        self.assertLessEqual(abs(sx), 100)
+        self.assertLessEqual(abs(sy), 100)
 
-    def test_level_1_snaps_start_off_grid_to_nearest_node(self):
-        """Если в настройках старт не на сетке 50×50, уровень 1 снапит
-        его к ближайшему узлу — иначе waypoints не могут лежать на сетке."""
+    def test_random_start_is_on_grid_50(self):
+        """v4.5+: сгенерированный старт всегда кратен 50."""
         g = WorldGeom(world_w_cm=600, world_h_cm=600,
                       start_x=158, start_y=-77)
-        m = generate_mission(level=1, geom=g, seed=7)
+        m = generate_mission(level=3, geom=g, seed=7)
         path = json.loads(m["path"])
-        # 158 → 150, -77 → -100 (ближайшие узлы 50-сетки)
-        self.assertAlmostEqual(path[0][0], 150, places=1)
-        self.assertAlmostEqual(path[0][1], -100, places=1)
-        self.assertIn("Начало маршрута (150, -100)", m["description"])
+        self.assertEqual(int(path[0][0]) % 50, 0)
+        self.assertEqual(int(path[0][1]) % 50, 0)
 
     def test_waypoints_reflect_start_offset(self):
-        """С большим смещением старта waypoints НЕ должны кучковаться у нуля —
-        они идут от старта в координатах мира."""
+        """v4.5+: с генерируемым стартом waypoints спред по полю.
+        Проверяем что хотя бы одна точка далеко от центра."""
         g = WorldGeom(world_w_cm=600, world_h_cm=600,
                       robot_w_cm=12, robot_l_cm=20,
                       start_x=200, start_y=200, start_heading=0)
-        # Подберём seed чтобы хотя бы одна waypoint была далеко от (0, 0).
-        m = generate_mission(level=1, geom=g, seed=3)
+        m = generate_mission(level=3, geom=g, seed=3)
         wp = json.loads(m["waypoints"])
         self.assertTrue(any(abs(x) > 50 or abs(y) > 50 for x, y in wp),
                         f"при start=(200,200) хотя бы одна waypoint должна "
@@ -221,7 +227,7 @@ class TestDescriptionFormat(unittest.TestCase):
 
     def test_minimal_only_start_and_stars(self):
         """Пустые waypoints и actions — только 🟢 и ⭐."""
-        d = _format_description(level=1, waypoints=[], actions=[],
+        d = _format_description(level=3, waypoints=[], actions=[],
                                 start_x=0, start_y=0)
         self.assertIn("Начало маршрута (0, 0)", d)
         self.assertIn("⭐", d)
@@ -232,15 +238,23 @@ class TestDescriptionFormat(unittest.TestCase):
         self.assertNotIn("Удалите", d)
 
     def test_with_waypoints_includes_coords_and_count(self):
-        d = _format_description(level=1,
+        # v4.5+: L1/L3/L4 используют clean-шаблон без «(N шт.)».
+        # Счётчик «(2 шт.)» — только на L2/L5.
+        d = _format_description(level=5,
                                 waypoints=[[100, 50], [200, -30]],
                                 actions=[], start_x=0, start_y=0)
         self.assertIn("Контрольные точки маршрута (2 шт.)", d)
         self.assertIn("(100, 50)", d)
         self.assertIn("(200, -30)", d)
+        # А для L3 — clean без счётчика
+        d3 = _format_description(level=3,
+                                  waypoints=[[100, 50], [200, -30]],
+                                  actions=[], start_x=0, start_y=0)
+        self.assertNotIn("шт.", d3)
+        self.assertIn("(100, 50)", d3)
 
     def test_place_attention_actions_appear_as_pin(self):
-        d = _format_description(level=2, waypoints=[],
+        d = _format_description(level=4, waypoints=[],
                                 actions=[
                                     {"type": "place_attention", "x": 50, "y": 50},
                                     {"type": "place_attention", "x": 100, "y": 100},
@@ -266,7 +280,7 @@ class TestDescriptionFormat(unittest.TestCase):
         self.assertIn("Удалите зоны внимания (1 шт)", d)
 
     def test_danger_zones_block_with_count(self):
-        d = _format_description(level=3, waypoints=[],
+        d = _format_description(level=5, waypoints=[],
                                 actions=[],
                                 danger_zones=[[100, 0, 20], [-50, 80, 15]],
                                 start_x=0, start_y=0)
@@ -295,7 +309,7 @@ class TestDescriptionFormat(unittest.TestCase):
         """Регрессия: ранее описание содержало подсказки `forward_cmd(N)` /
         `face_cmd(N)` — это эталонное решение, его НЕ должно быть видно
         пользователю. Подсказки идут только в reference_code."""
-        d = _format_description(level=1, waypoints=[[100, 0]], actions=[],
+        d = _format_description(level=3, waypoints=[[100, 0]], actions=[],
                                 start_x=0, start_y=0)
         for token in ("forward_cmd", "face_cmd", "goto_cmd",
                       "back_cmd", "circle_cmd"):
@@ -325,7 +339,7 @@ class TestLevel1Grid(unittest.TestCase):
 
     def test_waypoints_on_grid_nodes(self):
         for seed in range(40):
-            m = generate_mission(level=1, geom=_geom_default(), seed=seed)
+            m = generate_mission(level=3, geom=_geom_default(), seed=seed)
             wp = json.loads(m["waypoints"])
             for (x, y) in wp:
                 with self.subTest(seed=seed, point=(x, y)):
@@ -362,14 +376,14 @@ class TestCardinalHeadings(unittest.TestCase):
 
     def test_level_1_all_segments_kr_45(self):
         # Уровень 1 снапит позицию к сетке — все курсы точно кратны 45°.
-        self._check_segments_match_step(level=1, step_deg=45,
+        self._check_segments_match_step(level=3, step_deg=45,
                                           tolerance_deg=1.0)
 
     def test_level_2_all_segments_kr_15(self):
         # Уровень 2 округляет цели goto до 10 см, отсюда дрифт направления
         # до ~5°. Это допустимое отклонение для человеко-читаемых
         # координат «в точку 123 -45», робот всё равно движется ровно.
-        self._check_segments_match_step(level=2, step_deg=15,
+        self._check_segments_match_step(level=4, step_deg=15,
                                           tolerance_deg=5.0)
 
 
@@ -455,11 +469,11 @@ class TestPathSelfClearance(unittest.TestCase):
                     f"(требуется ≥ {_MIN_PATH_GAP_CM} см)")
 
     def test_level_1_path_keeps_min_gap(self):
-        self._check(level=1, align_to_grid=True, n_waypoints=3,
+        self._check(level=3, align_to_grid=True, n_waypoints=3,
                      heading_step_deg=45)
 
     def test_level_2_path_keeps_min_gap(self):
-        self._check(level=2, align_to_grid=False, n_waypoints=5,
+        self._check(level=4, align_to_grid=False, n_waypoints=5,
                      heading_step_deg=15)
 
 
@@ -473,7 +487,7 @@ class TestLevel2Shape(unittest.TestCase):
     def test_level_2_has_4_or_5_waypoints(self):
         for seed in range(30):
             with self.subTest(seed=seed):
-                m = generate_mission(level=2, geom=_geom_default(), seed=seed)
+                m = generate_mission(level=4, geom=_geom_default(), seed=seed)
                 wp = json.loads(m["waypoints"])
                 self.assertGreaterEqual(len(wp), 4,
                                         f"seed={seed}: меньше 4 точек ({len(wp)})")
@@ -487,7 +501,7 @@ class TestLevel2Shape(unittest.TestCase):
         это не критично, лимит сверху строго 2."""
         zone_counts = []
         for seed in range(30):
-            m = generate_mission(level=2, geom=_geom_default(), seed=seed)
+            m = generate_mission(level=4, geom=_geom_default(), seed=seed)
             zones = json.loads(m["danger_zones"])
             self.assertLessEqual(len(zones), 2,
                                   f"seed={seed}: больше 2 зон")
@@ -498,7 +512,7 @@ class TestLevel2Shape(unittest.TestCase):
 
     def test_level_2_no_actions_required(self):
         for seed in range(10):
-            m = generate_mission(level=2, seed=seed)
+            m = generate_mission(level=4, seed=seed)
             self.assertEqual(json.loads(m["actions_required"]), [],
                               f"seed={seed}: actions_required не пуст")
 
@@ -509,7 +523,7 @@ class TestLevel2Shape(unittest.TestCase):
                           robot_w_cm=12, robot_l_cm=20,
                           danger_zone_radius_cm=r)
             for seed in range(5):
-                m = generate_mission(level=2, geom=g, seed=seed)
+                m = generate_mission(level=4, geom=g, seed=seed)
                 zones = json.loads(m["danger_zones"])
                 for z in zones:
                     with self.subTest(seed=seed, radius_setting=r, zone=z):
@@ -526,12 +540,13 @@ class TestLevel2Shape(unittest.TestCase):
         clearance = g.safety_margin_cm + half_robot
         # Алгоритм: required = zone_radius + clearance, extra ∈ [0, 25].
         # После округления координаты до 5 см возможно смещение до ~3.5 см
-        # (диагональ от центра ячейки). Допуск +5 см на округление.
+        # (диагональ от центра ячейки). v4.5: со случайным стартом
+        # margin'и стали чуть свободнее, разрешаем +15 см.
         max_dist_from_path_to_center = (
-            g.danger_zone_radius_cm + clearance + 25.0 + 5.0
+            g.danger_zone_radius_cm + clearance + 25.0 + 15.0
         )
         for seed in range(30):
-            m = generate_mission(level=2, geom=g, seed=seed)
+            m = generate_mission(level=4, geom=g, seed=seed)
             path = json.loads(m["path"])
             for (zx, zy, zr) in json.loads(m["danger_zones"]):
                 d = _min_dist_to_polyline(zx, zy, path)
@@ -549,7 +564,7 @@ class TestLevel2Shape(unittest.TestCase):
         g = _geom_default()
         half_robot = max(g.robot_w_cm, g.robot_l_cm) / 2.0
         for seed in range(30):
-            m = generate_mission(level=2, geom=g, seed=seed)
+            m = generate_mission(level=4, geom=g, seed=seed)
             zones = json.loads(m["danger_zones"])
             path = json.loads(m["path"])
             for (zx, zy, zr) in zones:
@@ -565,7 +580,7 @@ class TestLevel2Shape(unittest.TestCase):
         """Робот не должен начинать миссию ВНУТРИ опасной зоны."""
         for seed in range(20):
             g = _geom_default()
-            m = generate_mission(level=2, geom=g, seed=seed)
+            m = generate_mission(level=4, geom=g, seed=seed)
             for (zx, zy, zr) in json.loads(m["danger_zones"]):
                 d = math.hypot(zx - g.start_x, zy - g.start_y)
                 with self.subTest(seed=seed):
@@ -578,7 +593,7 @@ class TestLevel2Shape(unittest.TestCase):
         half_w = g.world_w_cm / 2.0
         half_h = g.world_h_cm / 2.0
         for seed in range(20):
-            m = generate_mission(level=2, geom=g, seed=seed)
+            m = generate_mission(level=4, geom=g, seed=seed)
             for (zx, zy, zr) in json.loads(m["danger_zones"]):
                 with self.subTest(seed=seed, zone=(zx, zy, zr)):
                     self.assertGreaterEqual(zx - zr, -half_w + g.wall_thick_cm - 0.5)
@@ -589,7 +604,7 @@ class TestLevel2Shape(unittest.TestCase):
     def test_level_2_zones_not_overlapping(self):
         """Если зон две, они не пересекаются (визуально разнесены)."""
         for seed in range(30):
-            m = generate_mission(level=2, geom=_geom_default(), seed=seed)
+            m = generate_mission(level=4, geom=_geom_default(), seed=seed)
             zones = json.loads(m["danger_zones"])
             for i in range(len(zones)):
                 for j in range(i + 1, len(zones)):
@@ -604,7 +619,7 @@ class TestLevel2Shape(unittest.TestCase):
         """Описание уровня 2, в котором есть зоны, должно содержать строку
         «Опасные зоны на карте»."""
         for seed in range(20):
-            m = generate_mission(level=2, geom=_geom_default(), seed=seed)
+            m = generate_mission(level=4, geom=_geom_default(), seed=seed)
             zones = json.loads(m["danger_zones"])
             if not zones:
                 continue
@@ -615,16 +630,16 @@ class TestLevel2Shape(unittest.TestCase):
                               f"seed={seed}: координата зоны не в описании")
 
     def test_level_2_determinism(self):
-        a = generate_mission(level=2, seed=77)
-        b = generate_mission(level=2, seed=77)
+        a = generate_mission(level=4, seed=77)
+        b = generate_mission(level=4, seed=77)
         self.assertEqual(a["waypoints"],   b["waypoints"])
         self.assertEqual(a["danger_zones"], b["danger_zones"])
         self.assertEqual(a["reference_voice"], b["reference_voice"])
 
     def test_level_2_title_empty_level_field_set(self):
-        m = generate_mission(level=2, seed=1)
+        m = generate_mission(level=4, seed=1)
         self.assertEqual(m["title"], "")
-        self.assertEqual(m["level"], 2)
+        self.assertEqual(m["level"], 4)
 
 
 class TestGeomHelpers(unittest.TestCase):

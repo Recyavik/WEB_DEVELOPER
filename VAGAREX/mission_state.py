@@ -104,13 +104,23 @@ class ActiveMission:
     coefficient:       float    = 1.0
     deviations:        int      = 0
     last_in_margin:    bool     = True
-    # Последняя позиция робота — нужна для проверки waypoint по отрезку
-    # движения (см. mark_waypoint_visits). None = первый кадр.
     last_robot_pos:    Optional[tuple[float, float]] = None
     started_at:        datetime = field(default_factory=datetime.utcnow)
-    # Время последнего прогона программы через ▶ Запустить (с момента
-    # нажатия до опустошения очереди). Метрика «эффективность алгоритма».
     last_algo_duration_sec: Optional[float] = None
+    # Индексы danger-зон, на которые робот уже наезжал (по индексу в
+    # self.danger_zones). Нужно для штрафа −5%/наезд в инспектор-режиме:
+    # без этого набора каждый кадр пребывания внутри зоны давал бы повторный
+    # штраф (десятки −5% за секунду стоянки).
+    danger_zones_hit:  set[int] = field(default_factory=set)
+
+    # ── Режим миссии ─────────────────────────────────────────────────────
+
+    @property
+    def is_inspector(self) -> bool:
+        """Уровни 1-2 «инспектор» — без эталонной траектории.
+        Оценка идёт только по посещению точек, выполнению действий и
+        наездам на опасные зоны (каждый наезд −5% точности)."""
+        return self.level in (1, 2)
 
     # ── Трекинг отклонения и обновление коэффициента ─────────────────────
 
@@ -119,9 +129,20 @@ class ActiveMission:
         return [(self.start_x, self.start_y), *self.waypoints]
 
     def update_coefficient(self, robot_x: float, robot_y: float) -> bool:
-        """Обновить коэффициент по текущей позиции робота. Вызывать на
-        каждый push_state. Возвращает True если состояние «в margin /
-        вне margin» изменилось (для журналирования отклонений)."""
+        """Обновить коэффициент по текущей позиции робота.
+
+        В обычном режиме: расстояние до эталонной траектории. В пределах
+        safety_margin — коэффициент растёт, вне — падает.
+
+        В инспектор-режиме (L1/L2): эталонной траектории нет, коэффициент
+        НЕ меняется по позиции. Штрафы идут только при наездах на опасные
+        зоны (`mark_danger_zone_hits`). Возвращает True если случился
+        переход «в margin / вне margin» (для журнала)."""
+        if self.is_inspector:
+            # Инспектор: проверяем только наезды на опасные зоны.
+            self._mark_danger_zone_hits(robot_x, robot_y)
+            return False
+
         d = dist_to_path(robot_x, robot_y, self.full_path())
         in_margin = d <= self.safety_margin_cm
         if in_margin:
@@ -131,10 +152,28 @@ class ActiveMission:
 
         transitioned = (in_margin != self.last_in_margin)
         if transitioned and not in_margin:
-            # Только переход «в margin → вне» считаем отклонением.
             self.deviations += 1
         self.last_in_margin = in_margin
         return transitioned
+
+    def _mark_danger_zone_hits(self, robot_x: float, robot_y: float) -> int:
+        """Инспектор-режим: при первом наезде на каждую опасную зону —
+        штраф −5% к коэффициенту. Повторное пребывание в той же зоне
+        НЕ штрафуется (нужно выехать и заехать заново для нового штрафа,
+        но это уже логика клиента — у нас сейчас «один наезд = один минус»).
+
+        Возвращает число новых засчитанных наездов в этом тике."""
+        if not self.danger_zones:
+            return 0
+        new_hits = 0
+        for i, (zx, zy, zr) in enumerate(self.danger_zones):
+            if i in self.danger_zones_hit:
+                continue
+            if math.hypot(robot_x - zx, robot_y - zy) <= zr:
+                self.danger_zones_hit.add(i)
+                self.coefficient = max(0.0, self.coefficient - 0.05)
+                new_hits += 1
+        return new_hits
 
     # ── Чекпоинты и действия ─────────────────────────────────────────────
 

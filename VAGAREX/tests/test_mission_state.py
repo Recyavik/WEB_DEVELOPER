@@ -22,7 +22,10 @@ from mission_state import (
 
 
 def _mk_mission(**overrides) -> ActiveMission:
-    """Конструктор тестового ActiveMission с разумными дефолтами."""
+    """Конструктор тестового ActiveMission с разумными дефолтами.
+    level=3 (с трекингом траектории) — иначе включится инспектор-режим
+    L1/L2 (см. ActiveMission.is_inspector), и тесты update_coefficient
+    провалятся (там не отслеживается отклонение)."""
     defaults = dict(
         mission_id=1, run_id=None, user_id=1,
         waypoints=[(100.0, 0.0), (100.0, 100.0)],
@@ -30,6 +33,7 @@ def _mk_mission(**overrides) -> ActiveMission:
         actions_required=[],
         safety_margin_cm=5.0,
         start_x=0.0, start_y=0.0,
+        level=3,
     )
     defaults.update(overrides)
     return ActiveMission(**defaults)
