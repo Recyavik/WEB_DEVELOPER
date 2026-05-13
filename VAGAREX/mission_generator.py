@@ -1219,12 +1219,16 @@ def _generate_level_2(geom: WorldGeom, rng: random.Random) -> dict:
 
     # 2 зоны внимания — конкретные координаты, которые надо разместить
     # вручную голосом «Вега внимание здесь». Не на waypoint'ах
-    # (чтобы это не было автоматически совмещённой задачей).
+    # (чтобы это не было автоматически совмещённой задачей) и НЕ на
+    # опасных зонах — иначе при размещении attention робот окажется
+    # внутри danger, что приведёт к ложному штрафу при выходе.
+    attention_prior = [[w[0], w[1]] for w in waypoints]
+    attention_prior += [[z[0], z[1]] for z in danger_zones]
     attention_points = _scatter_points(
         2, geom, rng,
         min_dist_cm=80.0, grid_step_cm=50,
         start_xy=(start_x, start_y),
-        prior_points=[[w[0], w[1]] for w in waypoints])
+        prior_points=attention_prior)
     actions: list[dict] = [
         {"type": "place_attention", "x": p[0], "y": p[1], "radius": 15.0}
         for p in attention_points
