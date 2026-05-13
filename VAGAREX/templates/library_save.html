@@ -38,7 +38,8 @@
 
       <div class="settings-actions">
         <button type="submit" class="btn btn--primary"
-                {% if cmd_count == 0 %}disabled{% endif %}>
+                {% if cmd_count == 0 %}disabled{% endif %}
+                title="Сохранить текущий маршрут в личной библиотеке">
           💾 Сохранить ({{ cmd_count }} команд)
         </button>
         <a href="/" class="btn btn--sm">Отмена</a>

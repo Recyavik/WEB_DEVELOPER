@@ -5,7 +5,12 @@
     python -m tests.test_codegen
     # или
     python -m unittest tests.test_codegen -v
-"""
+
+ПРИМЕЧАНИЕ (Day 2 миграция на Python-API): часть классов помечена
+@unittest.skip — они проверяли старую систему хелперов-def'ов и парсинга
+текстаря в `_program`. С переходом на `robot.X(...)` + exec() эти модули
+удаляются, тесты получат свежий аналог в Day 3 (интеграционные тесты
+Python-API). Не удаляем сразу, чтобы можно было посмотреть, что было."""
 import os
 import sys
 import re
@@ -64,6 +69,7 @@ def _cmd(intent: str, raw: str = "", code: str = "", label: str = "") -> RobotCm
 # ────────────────────────────────────────────────────────────────────────────
 
 
+@unittest.skip("Day 2: проверяет старую codegen-систему, удалена с парсером")
 class TestHelperRegistry(unittest.TestCase):
     """Реестр helpers: имена и зависимости консистентны."""
 
@@ -195,6 +201,7 @@ class TestCircleVoicePhrases(unittest.TestCase):
         self.assertEqual(intent, "circle")
 
 
+@unittest.skip("Day 2: проверяет старую codegen-систему, перепишется в Day 3")
 class TestCollectHelpers(unittest.TestCase):
     """Транзитивный сбор зависимостей."""
 
@@ -248,6 +255,7 @@ class TestCollectHelpers(unittest.TestCase):
         self.assertEqual(helpers, [])
 
 
+@unittest.skip("Day 2: проверяет старую codegen-систему, перепишется в Day 3")
 class TestPreambleEmission(unittest.TestCase):
     """Преамбула: содержит только нужные def-блоки."""
 
@@ -298,19 +306,22 @@ class TestCallLines(unittest.TestCase):
     def test_circle_call_has_no_inline_comment(self):
         """Регрессия: ранее в call-строки добавлялся inline `# окружность`
         — пользователь правил его, думая что это и есть команда. Теперь
-        комментариев в генерируемом коде нет, источник истины — тело."""
+        комментариев в генерируемом коде нет, источник истины — тело.
+        Day 2: circle_cmd → robot.circle (новый Python-API)."""
         lines = self.s._python_call_lines_for_cmd(_cmd("circle", raw="Вега вокруг"))
         joined = "\n".join(lines)
-        self.assertIn("circle_cmd(", joined)
+        self.assertIn("robot.circle(", joined)
         self.assertNotIn("#", joined,
                          f"в call-строках не должно быть комментариев: {lines!r}")
 
     def test_face_cardinal_no_inline_comment(self):
+        # Day 2: face_cmd(180) → robot.face(180).
         lines = self.s._python_call_lines_for_cmd(
             _cmd("face_s", raw="Вега на юг", code="face_s()", label="Лицом на юг"))
-        self.assertEqual(lines, ["face_cmd(180)"])
+        self.assertEqual(lines, ["robot.face(180)"])
 
 
+@unittest.skip("Day 2: проверяет старую codegen-систему, удалена с парсером")
 class TestParser(unittest.TestCase):
     """Парсер _parse_dsl_line распознаёт суффикс _cmd и legacy префикс."""
 
@@ -392,6 +403,7 @@ class TestParser(unittest.TestCase):
                           f"raw-текст для face_to должен содержать угол {deg}")
 
 
+@unittest.skip("Day 2: проверяет старую codegen-систему, перепишется в Day 3")
 class TestGotoOptimization(unittest.TestCase):
     """goto оптимизируется в forward/backward, если курс совпадает/противоположен."""
 
@@ -513,6 +525,7 @@ class TestGotoOptimization(unittest.TestCase):
                          "Если бы codegen видел post-state (50,50), было бы skip")
 
 
+@unittest.skip("Day 2: проверяет старую codegen-систему, перепишется в Day 3")
 class TestProgramTextParser(unittest.TestCase):
     """Парсер _parse_program_text должен принимать строки с inline-комментариями."""
 
@@ -755,6 +768,7 @@ face_cmd(180)  # на юг
                           "forward_to_wall", "face_s"])
 
 
+@unittest.skip("Day 2: проверяет старую codegen-систему, перепишется в Day 3")
 class TestProgramTextRoundTrip(unittest.TestCase):
     """`_program_text()` собирает: константы → сентинель → helpers (дедуп) → вызовы."""
 
@@ -890,6 +904,7 @@ class TestZoneCancellation(unittest.TestCase):
 # ────────────────────────────────────────────────────────────────────────────
 
 
+@unittest.skip("Day 2: проверяет старую codegen-систему, удалена с парсером")
 class TestFaceTo(unittest.TestCase):
     """Регрессии для нового intent `face_to` (поворот на месте на любой угол).
 
@@ -1008,12 +1023,13 @@ class TestFaceTo(unittest.TestCase):
     # ── Codegen: face_to → face_cmd(N) ──────────────────────────────────
 
     def test_codegen_emits_face_cmd_line(self):
+        # Day 2: face_cmd(N) → robot.face(N).
         cmd = _cmd("face_to", raw="вега лицом на 70",
-                   code="face_cmd(70)", label="Поворот на 70°")
+                   code="robot.face(70)", label="Поворот на 70°")
         lines = self.s._python_call_lines_for_cmd(cmd)
         joined = "\n".join(lines)
-        self.assertIn("face_cmd(70)", joined,
-                      "Codegen должен эмитить face_cmd(70) для face_to")
+        self.assertIn("robot.face(70)", joined,
+                      "Codegen должен эмитить robot.face(70) для face_to")
 
     def test_helpers_for_face_to_includes_face_cmd(self):
         cmd = _cmd("face_to", raw="вега поверни на 70",
@@ -1133,9 +1149,9 @@ class TestStableCommandSurface(unittest.TestCase):
                     self.assertTrue(cmd.label, f"{intent!r}: пустой label")
 
     def test_codegen_for_built_cmds_does_not_crash(self):
-        """Пайплайн: _build_cmd → _python_call_lines_for_cmd → _helpers_for_cmd.
+        """Пайплайн: _build_cmd → _python_call_lines_for_cmd.
         Регрессия: ни один known intent не должен бросать исключение
-        при codegen."""
+        при codegen. Day 2: _helpers_for_cmd удалён вместе с парсером."""
         for intent, raw, expect_none in self.INTENT_PROBES:
             if expect_none:
                 continue
@@ -1145,37 +1161,13 @@ class TestStableCommandSurface(unittest.TestCase):
                     continue   # tolerated for some optional argument cases
                 try:
                     self.s._python_call_lines_for_cmd(cmd)
-                    self.s._helpers_for_cmd(cmd)
                 except Exception as e:
                     self.fail(f"codegen для {intent!r} {raw!r} бросил "
                               f"{type(e).__name__}: {e}")
 
+    @unittest.skip("Day 2: парсер _parse_dsl_line удалён вместе с системой хелперов")
     def test_dsl_parser_does_not_crash_on_known_calls(self):
-        """Парсер _parse_dsl_line должен корректно (без исключений)
-        обрабатывать все ключевые сгенерированные DSL-вызовы."""
-        probes = [
-            ("forward", "100"), ("back", "50"),
-            ("steer", "+20"), ("steer", "-20"), ("steer", "0"),
-            ("forward_to_wall", ""), ("backward_to_wall", ""),
-            ("turn_around_place", "3"),
-            ("face_cmd", "70"), ("face_cmd", "0"),  # арбитраж + кардинал
-            ("goto", "100, 50"),
-            ("home", ""),
-            ("mark_danger", "100, 50, 20"),
-            ("attention_zone", "150, 150"),
-            ("remove_zone", "100, 50"),
-            ("course", "90"),
-            ("pause", "2"),
-            ("reset", ""),
-            ("brake", ""),
-        ]
-        for fn, args in probes:
-            with self.subTest(fn=fn, args=args):
-                try:
-                    UserSession._parse_dsl_line(fn, args)
-                except Exception as e:
-                    self.fail(f"_parse_dsl_line({fn!r}, {args!r}) бросил "
-                              f"{type(e).__name__}: {e}")
+        pass
 
 
 # ────────────────────────────────────────────────────────────────────────────

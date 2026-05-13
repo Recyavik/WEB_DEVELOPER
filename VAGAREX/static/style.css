@@ -926,18 +926,27 @@ body { padding-bottom: 22px; }
   font-size: 0.75rem;
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: 0.1rem;              /* вдвое меньше: было 0.2rem */
 }
 .log-entry {
-  padding: 0.25rem 0.4rem;
+  padding: 0.1rem 0.4rem;   /* вдвое меньше по вертикали: было 0.25rem */
   border-radius: 4px;
   border-left: 2px solid var(--border);
-  line-height: 1.3;
+  line-height: 1.25;        /* плотнее: было 1.3 */
+  /* Многострочные сообщения (traceback Python) — сохраняем переносы строк
+     как в IDE-консоли, но позволяем длинным строкам перенестись по ширине. */
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
 }
 .log-entry--info    { border-color: var(--accent); }
-.log-entry--success { border-color: var(--success); }
-.log-entry--warning { border-color: var(--warning); }
-.log-entry--error   { border-color: var(--danger); }
+.log-entry--success { border-color: var(--success); color: var(--success); }
+.log-entry--warning { border-color: var(--warning); color: var(--warning); }
+.log-entry--error   {
+  border-color: var(--danger);
+  color:        var(--danger);
+  font-family:  "Consolas", "Menlo", monospace;  /* traceback моноширинно */
+}
 .log-time { color: var(--text-dim); margin-right: 0.3rem; }
 
 /* Карточка задания: вставляется в журнал по клику «📋 Задание».
@@ -1182,6 +1191,20 @@ body { padding-bottom: 22px; }
   max-width: 1200px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
 }
+/* Toggle-класс «развёрнуто на весь экран»: убираем padding (2rem) и
+   max-width (1200px) у внутренней панели — она растягивается на весь
+   viewport, строка кода получает максимально возможную ширину.
+   Браузерный хром (URL-бар, табы) при этом ОСТАЁТСЯ — мы не зовём
+   Fullscreen API, просто перекрашиваем разметку. */
+.code-modal--maximized {
+  padding: 0;
+}
+.code-modal--maximized .code-modal__panel {
+  max-width: none;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
 .code-modal__header {
   display: flex;
   align-items: center;
@@ -1198,29 +1221,149 @@ body { padding-bottom: 22px; }
 }
 .program-code--modal {
   flex: 1;
-  font-size: 0.95rem;          /* крупнее в модалке для удобной правки */
+  /* font-size управляется CSS-переменной --code-font-size, чтобы Shift+колесо
+     могло её менять. Значение по умолчанию ≈ 0.95rem = 15.2px на 16px root. */
+  font-size: var(--code-font-size, 15px);
   line-height: 1.5;
   font-weight: 500;            /* чуть плотнее, лучше читается */
   border: none;
-  border-radius: 0 0 var(--radius) var(--radius);
+  border-radius: 0;
   resize: none;
   min-height: 0;
   caret-color: #f0f6fc !important;   /* ярче для модалки */
+  outline: none;               /* убираем браузерный focus-ring */
+  box-shadow: none;
+}
+.program-code--modal:focus,
+.program-code--modal:focus-visible {
+  outline: none;
+  box-shadow: none;
+  border: none;
 }
 .code-overlay--modal {
-  font-size: 0.95rem;
+  font-size: var(--code-font-size, 15px);
   line-height: 1.5;
   font-weight: 500;
   color: #f0f6fc;
   background: #0d1117;
   border: none;
-  border-radius: 0 0 var(--radius) var(--radius);
+  border-radius: 0;
   padding: 0.6rem 0.8rem;
 }
 /* В модалке padding чуть больше — синхронизируем у textarea тоже */
 .code-overlay--modal + .program-code--modal,
 .program-code--modal {
   padding: 0.6rem 0.8rem;
+}
+
+/* ── Модал: код (CodeMirror) + журнал — вертикальный сплит ─────────── */
+.code-wrap--modal {
+  flex: 1 1 60%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;     /* критично: без этого flex-child не сожмётся */
+  background: #0d1117;
+  overflow: hidden;
+}
+.cm-modal-host {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  background: #0d1117;
+}
+.cm-modal-host[hidden] { display: none; }
+.cm-modal-host > .cm-editor {
+  flex: 1;
+  height: 100%;
+  outline: none;     /* CM ставит outline при фокусе — у нас своя тёмная тема */
+}
+.cm-modal-host .cm-editor.cm-focused {
+  outline: none;
+}
+/* Fallback редактор (textarea + наша overlay-подсветка), когда CM не загрузился. */
+/* #cm-modal-fallback === .code-wrap__editor (он же), стили унифицированы
+   в .code-wrap__editor ниже — row-направление (gutter слева, редактор
+   справа). Здесь оставлено только переключение display при hidden. */
+#cm-modal-fallback[hidden] { display: none; }
+.code-wrap__editor {
+  flex: 1;
+  position: relative;
+  display: flex;
+  flex-direction: row;       /* gutter слева, редактор справа */
+  min-width: 0;
+  min-height: 0;
+}
+.code-wrap__editor-inner {
+  flex: 1;
+  position: relative;        /* для абсолютного overlay'а */
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;    /* textarea с flex:1 растягивается по ВЫСОТЕ */
+  overflow: hidden;          /* textarea не должен выпадать за рамки */
+}
+/* Модальный гуттер: уравнять line-height с textarea, шрифт берётся
+   из общей CSS-переменной (родительский .code-wrap--modal задаёт её
+   через Shift+колесо мыши, см. attachCodeHighlight). */
+.code-gutter--modal {
+  line-height: 1.5;          /* совпадает с .program-code--modal:line-height */
+  padding: 0.6rem 0.6rem 0.6rem 0.4rem;  /* по вертикали как у textarea (0.6rem) */
+}
+.code-gutter {
+  flex: 0 0 auto;
+  width: 3.5rem;
+  padding: 0.6rem 0.5rem 0.6rem 0.3rem;
+  background: #0a0e14;
+  color: rgba(139, 148, 158, 0.55);
+  font-family: "Consolas", "Menlo", monospace;
+  font-size: var(--code-font-size, 15px);
+  line-height: 1.5;
+  text-align: right;
+  white-space: pre;
+  overflow: hidden;     /* скроллится в скрипте синхронно с textarea */
+  user-select: none;
+  border-right: 1px solid rgba(139, 148, 158, 0.15);
+}
+.code-modal__journal {
+  flex: 1 1 40%;
+  display: flex;
+  flex-direction: column;
+  border-top: 2px solid var(--border);
+  background: #0d1117;
+  min-height: 0;
+}
+.code-modal__journal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.35rem 0.8rem;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid rgba(139, 148, 158, 0.15);
+}
+.code-modal__hint {
+  font-size: 0.7rem;
+  color: rgba(139, 148, 158, 0.6);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.code-modal__journal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.3rem 0.8rem;
+  font-size: var(--journal-font-size, 13px);
+  line-height: 1.25;        /* плотнее: было 1.4 */
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;              /* вдвое меньше: было 0.2rem */
+}
+.code-modal__journal-body .log-entry {
+  font-size: inherit;       /* масштабируется через --journal-font-size */
+  padding: 0.1rem 0.4rem;   /* вдвое меньше: было 0.25rem (вертикали) */
+  line-height: 1.25;
 }
 
 
@@ -2010,3 +2153,86 @@ body.mode-cautious .voice-status {
 .chip--lvl-3 .chip__lvlnum { background: #d4a017; }
 .chip--lvl-4 .chip__lvlnum { background: #d28438; }
 .chip--lvl-5 .chip__lvlnum { background: #d2392f; }
+
+/* ── Popup-автодополнение robot.X для textarea ─────────────────────────
+   Структура: popup = scrollable __list + фиксированная __doc-полоса
+   снизу с описанием выбранного пункта. Строки списка ОДНОЙ высоты,
+   стрелками вверх/вниз → меняется только подсветка и текст __doc,
+   список не перерисовывается (нет прыжков). */
+.robot-autocomplete {
+  position: fixed;
+  z-index: 10000;
+  max-height: 320px;
+  width: 420px;
+  background: #1f2733;
+  border: 1px solid #3a4654;
+  border-radius: 4px;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.55);
+  font-family: "Consolas", "Menlo", monospace;
+  font-size: 13px;
+  color: #d8dde4;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.robot-autocomplete[hidden] { display: none; }
+.robot-autocomplete__list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 0;
+}
+.robot-autocomplete__item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 10px;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.robot-autocomplete__item--sel {
+  background: rgba(88, 166, 255, 0.18);
+  border-left-color: #58a6ff;
+}
+.robot-autocomplete__icon {
+  display: inline-block;
+  width: 1.1em;
+  text-align: center;
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+.robot-autocomplete__icon--method   { color: #b392f0; }   /* фиолетовый */
+.robot-autocomplete__icon--property { color: #79c0ff; }   /* голубой */
+.robot-autocomplete__name {
+  color: #e6edf3;
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+.robot-autocomplete__sig {
+  color: #8b949e;
+  font-size: 12px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Фиксированная полоса с описанием выбранного метода. Высота стабильна:
+   max 2 строки + ellipsis. min-height гарантирует одну строку даже у
+   пустого описания — popup не «прыгает» по высоте при наведении на
+   разные пункты. */
+.robot-autocomplete__doc {
+  flex: 0 0 auto;
+  border-top: 1px solid rgba(139, 148, 158, 0.2);
+  padding: 6px 10px;
+  font-size: 11.5px;
+  color: #9aa5b1;
+  background: rgba(13, 17, 23, 0.55);
+  line-height: 1.4;
+  white-space: normal;
+  min-height: 2.4em;         /* стабильная высота, без скачков */
+  max-height: 4.2em;
+  overflow-y: auto;
+}

@@ -69,7 +69,8 @@
       <section class="card">
         <h3 class="card__title">Голосовое управление</h3>
         <p class="hint">Скажите <strong>«Вега»</strong> + команда</p>
-        <button id="btn-voice" class="btn btn--voice btn--mode-action">🎙 Слушать</button>
+        <button id="btn-voice" class="btn btn--voice btn--mode-action"
+                title="Включить распознавание голоса (нажмите и говорите «Вега …»)">🎙 Слушать</button>
         <div id="voice-status" class="voice-status">Ожидание…</div>
       </section>
 
@@ -78,7 +79,8 @@
         <form id="cmd-form" class="cmd-form">
           <input id="cmd-input" type="text" class="cmd-input"
                  placeholder="Вега вперед" autocomplete="off">
-          <button type="submit" class="btn btn--info btn--mode-action">▶</button>
+          <button type="submit" class="btn btn--info btn--mode-action"
+                  title="Выполнить введённую команду">▶</button>
         </form>
       </section>
 
@@ -101,12 +103,12 @@
         <details class="ctrl-group" open>
           <summary>Расстояние</summary>
           <div class="quick-extra">
-            <button class="btn btn--xs" data-cmd="Вега вперед 20 см">↑20</button>
-            <button class="btn btn--xs" data-cmd="Вега вперед 50 см">↑50</button>
-            <button class="btn btn--xs" data-cmd="Вега вперед 100 см">↑100</button>
-            <button class="btn btn--xs" data-cmd="Вега назад 20 см">↓20</button>
-            <button class="btn btn--xs" data-cmd="Вега назад 50 см">↓50</button>
-            <button class="btn btn--xs" data-cmd="Вега назад 100 см">↓100</button>
+            <button class="btn btn--xs" data-cmd="Вега вперед 20 см" title="Вперёд на 20 см">↑20</button>
+            <button class="btn btn--xs" data-cmd="Вега вперед 50 см" title="Вперёд на 50 см">↑50</button>
+            <button class="btn btn--xs" data-cmd="Вега вперед 100 см" title="Вперёд на 100 см">↑100</button>
+            <button class="btn btn--xs" data-cmd="Вега назад 20 см" title="Назад на 20 см">↓20</button>
+            <button class="btn btn--xs" data-cmd="Вега назад 50 см" title="Назад на 50 см">↓50</button>
+            <button class="btn btn--xs" data-cmd="Вега назад 100 см" title="Назад на 100 см">↓100</button>
           </div>
         </details>
 
@@ -117,10 +119,10 @@
             <button class="btn btn--xs" data-cmd="Вега медленно" title="20%">Медленно</button>
             <button class="btn btn--xs" data-cmd="Вега спокойно" title="40%">Спокойно</button>
             <button class="btn btn--xs" data-cmd="Вега быстро" title="80%">Быстро</button>
-            <button class="btn btn--xs" data-cmd="Вега скорость 20 процентов">20%</button>
-            <button class="btn btn--xs" data-cmd="Вега скорость 40 процентов">40%</button>
-            <button class="btn btn--xs" data-cmd="Вега скорость 60 процентов">60%</button>
-            <button class="btn btn--xs" data-cmd="Вега скорость 80 процентов">80%</button>
+            <button class="btn btn--xs" data-cmd="Вега скорость 20 процентов" title="Установить скорость 20%">20%</button>
+            <button class="btn btn--xs" data-cmd="Вега скорость 40 процентов" title="Установить скорость 40%">40%</button>
+            <button class="btn btn--xs" data-cmd="Вега скорость 60 процентов" title="Установить скорость 60%">60%</button>
+            <button class="btn btn--xs" data-cmd="Вега скорость 80 процентов" title="Установить скорость 80%">80%</button>
           </div>
         </details>
 
@@ -128,11 +130,11 @@
         <details class="ctrl-group" open>
           <summary>Маневры</summary>
           <div class="quick-extra">
-            <button class="btn btn--xs" data-cmd="Вега разворот">↺ Разворот</button>
-            <button class="btn btn--xs" data-cmd="Вега разворот на месте" title="Разворот на месте (3 шага)">↺ На месте</button>
-            <button class="btn btn--xs" data-cmd="Вега вперед до упора">▲▲ До упора</button>
-            <button class="btn btn--xs" data-cmd="Вега назад до упора">▼▼ Назад до упора</button>
-            <button class="btn btn--xs" data-cmd="Вега тормоз" title="Тормоз (в очереди)">|| Тормоз</button>
+            <button class="btn btn--xs" data-cmd="Вега разворот" title="Разворот на 180° по дуге (с движением)">↺ Разворот</button>
+            <button class="btn btn--xs" data-cmd="Вега разворот на месте" title="Разворот на месте (K-turn, 3 шага)">↺ На месте</button>
+            <button class="btn btn--xs" data-cmd="Вега вперед до упора" title="Едет вперёд до стены/препятствия">▲▲ До упора</button>
+            <button class="btn btn--xs" data-cmd="Вега назад до упора" title="Едет назад до стены/препятствия">▼▼ Назад до упора</button>
+            <button class="btn btn--xs" data-cmd="Вега тормоз" title="Тормоз (становится в очередь команд)">|| Тормоз</button>
           </div>
         </details>
 
@@ -199,7 +201,7 @@
   <!-- ── Центр: Canvas визуализация ──────────────────────────── -->
   <div class="viz-container">
     <div class="viz-toolbar">
-      <button id="btn-center-view" class="btn btn--sm">⊙ Центрировать</button>
+      <button id="btn-center-view" class="btn btn--sm" title="Центрировать вид на роботе (сбросить пан/зум)">⊙ Центрировать</button>
       <label class="toggle">
         <input type="checkbox" id="chk-grid" checked>
         <span>Сетка</span>
@@ -276,12 +278,36 @@
                   title="Упорядочить код: константы → функции (без дублей) → вызовы">🧹</button>
           <button id="btn-modal-clear" class="btn btn--xs" title="Очистить код">✕</button>
           <button id="btn-modal-run"   class="btn btn--xs btn--info btn--mode-action" title="Запустить код" aria-label="Запустить код">▶</button>
-          <button id="btn-collapse-python-code" class="btn btn--xs" title="Свернуть">⛶ Свернуть</button>
+          <button id="btn-modal-fullscreen" class="btn btn--xs"
+                  title="Развернуть на весь экран (без браузерного хрома)" aria-label="Полный экран">⛶ Весь экран</button>
+          <button id="btn-collapse-python-code" class="btn btn--xs"
+                  title="Свернуть редактор обратно в боковую панель" aria-label="Свернуть">↙ Свернуть</button>
         </div>
       </div>
-      <div class="code-wrap code-wrap--modal">
-        <pre class="code-overlay code-overlay--modal" aria-hidden="true"><code id="python-code-modal-overlay"></code></pre>
-        <textarea id="python-code-modal-area" class="program-code program-code--modal program-code--editor" wrap="off" spellcheck="false"></textarea>
+      <!-- Код-зона: пробуем CodeMirror 6 (autocomplete robot.X, Python-подсветка).
+           Если esm.sh недоступен или модуль не загрузился — control.js
+           включит резервный textarea с нашей самописной подсветкой. -->
+      <div class="code-wrap code-wrap--modal" id="code-wrap-modal">
+        <div id="cm-modal-host" class="cm-modal-host"></div>
+        <!-- Fallback textarea (показывается если CM не загрузился).
+             Гуттер слева — номера строк, рендерятся в attachCodeHighlight
+             по id с суффиксом «-gutter» вместо «-area». -->
+        <div class="code-wrap__editor" id="cm-modal-fallback" hidden>
+          <pre id="python-code-modal-gutter" class="code-gutter code-gutter--modal" aria-hidden="true"></pre>
+          <div class="code-wrap__editor-inner">
+            <pre class="code-overlay code-overlay--modal" aria-hidden="true"><code id="python-code-modal-overlay"></code></pre>
+            <textarea id="python-code-modal-area" class="program-code program-code--modal program-code--editor" wrap="off" spellcheck="false"></textarea>
+          </div>
+        </div>
+      </div>
+      <!-- Терминал-журнал: дублирует основной cmd-log. Shift+колесо
+           над журналом — зум шрифта журнала независимо от кода. -->
+      <div class="code-modal__journal" id="code-modal-journal-wrap">
+        <div class="code-modal__journal-header">
+          <span>Журнал</span>
+          <span class="code-modal__hint">Shift+колесо мыши — масштаб</span>
+        </div>
+        <div id="code-modal-journal" class="cmd-log code-modal__journal-body"></div>
       </div>
     </div>
   </div>
@@ -290,6 +316,13 @@
 {% endblock %}
 
 {% block scripts %}
+<!-- Каталог robot.X (методы/свойства фасада). Обычный <script>, поэтому
+     грузится даже если esm.sh заблокирован — control.js всё равно сможет
+     показать popup-автодополнение в textarea. -->
+<script src="/static/robot-catalog.js?v={{ robot_version }}"></script>
+<!-- CodeMirror 6 редактор: ES-модуль, загружается ДО control.js,
+     чтобы window.cmEditor был готов когда control.js откроет модалку. -->
+<script type="module" src="/static/cm-editor.js?v={{ robot_version }}"></script>
 <script src="/static/canvas.js?v={{ robot_version }}"></script>
 <script src="/static/control.js?v={{ robot_version }}"></script>
 {% endblock %}

@@ -133,15 +133,19 @@
               _clearCodeDraft();
             }
           }
-          // Если модалка открыта — тоже обновляем
-          const modal     = document.getElementById('python-code-modal');
-          const modalArea = document.getElementById('python-code-modal-area');
-          if (modal && !modal.hidden && modalArea) modalArea.value = finalText;
+          // Если модалка открыта — синхронизируем и CodeMirror.
+          const modal = document.getElementById('python-code-modal');
+          if (modal && !modal.hidden && window.cmEditor && window.cmEditor.isReady()) {
+            window.cmEditor.setValue(finalText);
+          }
         }
         break;
 
       case 'code_exec_result':
-        logMsg(msg.output || 'Выполнено.', 'info');
+        // Уровень приходит с сервера: 'error' для traceback'ов, 'ok' для успеха.
+        // Многострочный traceback (`File "..."`, `NameError: ...`) рендерим
+        // переносами, чтобы было читаемо как в обычной IDE-консоли.
+        logMsg(msg.output || 'Выполнено.', msg.level || 'info');
         break;
 
 
@@ -642,8 +646,99 @@
     // на них тоже досинхронизируем сразу.
     ta.addEventListener('keyup', syncScroll);
     ta.addEventListener('click', syncScroll);
+
+    // ── Tab / Shift+Tab — отступы для Python ──────────────────────────
+    // Без этого Tab уводит фокус с textarea (browser default). Здесь:
+    //   • Tab без выделения → вставить 4 пробела в каретку;
+    //   • Tab с многострочным выделением → отступить каждую строку;
+    //   • Shift+Tab → убрать до 4 ведущих пробелов / 1 \t (dedent).
+    const INDENT = '    ';
+    ta.addEventListener('keydown', (e) => {
+      if (e.key !== 'Tab') return;
+      e.preventDefault();
+      const start = ta.selectionStart;
+      const end   = ta.selectionEnd;
+      const v     = ta.value;
+      const multilineSel = (start !== end) && v.slice(start, end).includes('\n');
+      if (multilineSel) {
+        const lineStart = v.lastIndexOf('\n', start - 1) + 1;
+        const block = v.slice(lineStart, end);
+        let newBlock;
+        if (e.shiftKey) {
+          newBlock = block.split('\n').map(line => {
+            if (line.startsWith(INDENT)) return line.slice(4);
+            if (line.startsWith('\t'))   return line.slice(1);
+            return line.replace(/^ {1,3}/, '');
+          }).join('\n');
+        } else {
+          newBlock = block.split('\n').map(line => INDENT + line).join('\n');
+        }
+        ta.value = v.slice(0, lineStart) + newBlock + v.slice(end);
+        ta.selectionStart = lineStart;
+        ta.selectionEnd   = lineStart + newBlock.length;
+      } else if (e.shiftKey) {
+        // Shift+Tab без выделения — dedent текущей строки.
+        const lineStart = v.lastIndexOf('\n', start - 1) + 1;
+        const m = v.slice(lineStart).match(/^( {1,4}|\t)/);
+        if (m) {
+          const cut = m[0].length;
+          ta.value = v.slice(0, lineStart) + v.slice(lineStart + cut);
+          ta.selectionStart = ta.selectionEnd = Math.max(lineStart, start - cut);
+        }
+      } else {
+        // Tab без выделения — вставить 4 пробела.
+        ta.value = v.slice(0, start) + INDENT + v.slice(end);
+        ta.selectionStart = ta.selectionEnd = start + INDENT.length;
+      }
+      ta.dispatchEvent(new Event('input', {bubbles: true}));
+    });
     // Первоначальная подсветка
     syncContent();
+
+    // ── Гуттер с номерами строк (только модальный редактор) ──────────
+    // Помогает быстро найти строку из traceback: «Ошибка в строке 12»
+    // — пользователь видит цифру 12 в столбце слева.
+    const gutterId = textareaId.replace(/-area$/, '-gutter');
+    const gutter   = document.getElementById(gutterId);
+    if (gutter) {
+      const renderGutter = () => {
+        const lines = (ta.value || '').split('\n').length;
+        // Не плодим лишние ноды, просто текстом.
+        let out = '';
+        for (let i = 1; i <= lines; i++) out += i + '\n';
+        gutter.textContent = out;
+      };
+      const syncGutterScroll = () => { gutter.scrollTop = ta.scrollTop; };
+      ta.addEventListener('input',  renderGutter);
+      ta.addEventListener('scroll', syncGutterScroll);
+      renderGutter();
+    }
+
+    // ── Shift+колесо мыши — масштаб шрифта редактора ──────────────────
+    // CSS-переменная --code-font-size ставится на общий .code-wrap--modal
+    // и каскадом наследуется в textarea + overlay + gutter (так как все
+    // их font-size использует var(--code-font-size, 15px)). Если ставить
+    // на textarea отдельно — overlay/gutter останутся со старым значением,
+    // потому что CSS-переменные распространяются ВНИЗ по DOM, а они —
+    // сиблинги textarea, не его потомки.
+    const wrap = ta.closest('.code-wrap--modal');
+    if (wrap) {
+      const FONT_KEY = `cm:font:${textareaId}`;
+      const saved = parseInt(localStorage.getItem(FONT_KEY) || '0', 10);
+      if (saved >= 9 && saved <= 32) {
+        wrap.style.setProperty('--code-font-size', saved + 'px');
+      }
+      wrap.addEventListener('wheel', (e) => {
+        if (!e.shiftKey) return;
+        e.preventDefault();
+        const cur = parseInt(getComputedStyle(ta).fontSize, 10) || 15;
+        const delta = e.deltaY > 0 ? -1 : +1;
+        const next = Math.max(9, Math.min(32, cur + delta));
+        wrap.style.setProperty('--code-font-size', next + 'px');
+        localStorage.setItem(FONT_KEY, String(next));
+      }, {passive: false});
+    }
+
     // Программные изменения value (например, server append) не дают input —
     // дублирующий polling 200мс.
     let lastVal = ta.value;
@@ -651,8 +746,254 @@
       if (ta.value !== lastVal) {
         lastVal = ta.value;
         syncContent();
+        if (gutter) {
+          // Пересчитываем гуттер по тому же эвенту, что и подсветка.
+          const lines = (ta.value || '').split('\n').length;
+          let out = '';
+          for (let i = 1; i <= lines; i++) out += i + '\n';
+          gutter.textContent = out;
+        }
       }
     }, 200);
+  }
+
+  // ── Popup-автодополнение для textarea ────────────────────────────────
+  // Показывает список robot.X методов/свойств когда юзер печатает «robot.»
+  // в любой textarea. Работает без CodeMirror — нужно когда esm.sh
+  // недоступен и развёрнутый редактор скатился в fallback-textarea, а
+  // также в боковом маленьком поле кода.
+  //
+  // Один общий popup-элемент на странице (`#robot-autocomplete-popup`),
+  // переиспользуется между textarea. Текущая «привязка» хранится в
+  // замыкании attachRobotAutocomplete (своё состояние на textarea).
+  function _ensurePopup() {
+    let pop = document.getElementById('robot-autocomplete-popup');
+    if (pop) return pop;
+    pop = document.createElement('div');
+    pop.id = 'robot-autocomplete-popup';
+    pop.className = 'robot-autocomplete';
+    pop.hidden = true;
+    document.body.appendChild(pop);
+    return pop;
+  }
+
+  // Координаты каретки в textarea (для позиционирования popup'а).
+  // Считаем приблизительно: монопространный шрифт + lineHeight из CSS.
+  function _getCaretCoords(ta, pos) {
+    const text = ta.value.substring(0, pos);
+    const lines = text.split('\n');
+    const lineNum = lines.length - 1;
+    const colNum  = lines[lineNum].length;
+    const cs = window.getComputedStyle(ta);
+    const fontSize = parseFloat(cs.fontSize) || 15;
+    const lh = parseFloat(cs.lineHeight) || fontSize * 1.4;
+    // Ширина символа: измеряем 'M' для текущего шрифта через canvas.
+    if (!_getCaretCoords._ctx) {
+      _getCaretCoords._ctx = document.createElement('canvas').getContext('2d');
+    }
+    const ctx = _getCaretCoords._ctx;
+    ctx.font = `${cs.fontStyle || 'normal'} ${cs.fontWeight || 'normal'} `
+             + `${cs.fontSize} ${cs.fontFamily}`;
+    const charW = ctx.measureText('M').width || (fontSize * 0.6);
+    const rect = ta.getBoundingClientRect();
+    const padTop  = parseFloat(cs.paddingTop)  || 0;
+    const padLeft = parseFloat(cs.paddingLeft) || 0;
+    const x = rect.left + padLeft + colNum * charW - ta.scrollLeft;
+    const y = rect.top  + padTop  + lineNum * lh   - ta.scrollTop;
+    return {x, y, lh};
+  }
+
+  function _escHTML(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;',
+    }[c]));
+  }
+
+  // Каталог методов/свойств → один плоский массив объектов с полями
+  // {name, sig, info, type}. type ∈ {'method', 'property'}.
+  function _flatCatalog() {
+    const c = window.ROBOT_API_CATALOG;
+    if (!c) return [];
+    return [
+      ...c.methods.map(([name, sig, info]) =>
+        ({name, sig, info, type: 'method'})),
+      ...c.properties.map(([name, info]) =>
+        ({name, sig: '', info, type: 'property'})),
+    ];
+  }
+
+  function attachRobotAutocomplete(textareaId) {
+    const ta = document.getElementById(textareaId);
+    if (!ta) return;
+    if (ta.dataset._acWired) return;       // идемпотентно: можно звать дважды
+    ta.dataset._acWired = '1';
+    if (!window.ROBOT_API_CATALOG) return; // каталог не загрузился — нечего показывать
+
+    const popup = _ensurePopup();
+    let items = [];
+    let selIdx = 0;
+    let active = false;
+    let triggerStart = -1;  // абсолютный индекс символа после «robot.»
+
+    const close = () => {
+      if (!active) return;
+      popup.hidden = true;
+      active = false;
+      items = [];
+      selIdx = 0;
+      triggerStart = -1;
+    };
+
+    // Список с фиксированной высотой строк + отдельная полоса описания
+    // внизу popup'а. Прокрутка стрелками меняет ТОЛЬКО класс выделения
+    // и текст описания — DOM-строки не перерисовываются, прыжков нет.
+    const renderList = () => {
+      const listHtml = items.map((it, i) => {
+        const klass = 'robot-autocomplete__item'
+                   + (i === selIdx ? ' robot-autocomplete__item--sel' : '');
+        const icon  = it.type === 'method' ? 'ƒ' : '•';
+        return `<div class="${klass}" data-idx="${i}">`
+             +   `<span class="robot-autocomplete__icon robot-autocomplete__icon--${it.type}">${icon}</span>`
+             +   `<span class="robot-autocomplete__name">${_escHTML(it.name)}</span>`
+             +   `<span class="robot-autocomplete__sig">${_escHTML(it.sig)}</span>`
+             + `</div>`;
+      }).join('');
+      popup.innerHTML =
+          `<div class="robot-autocomplete__list">${listHtml}</div>`
+        + `<div class="robot-autocomplete__doc"></div>`;
+      renderDoc();
+      scrollSelIntoView();
+    };
+    const renderDoc = () => {
+      const doc = popup.querySelector('.robot-autocomplete__doc');
+      if (!doc) return;
+      const it = items[selIdx];
+      doc.textContent = it ? (it.info || '') : '';
+    };
+    const scrollSelIntoView = () => {
+      const sel = popup.querySelector('.robot-autocomplete__item--sel');
+      if (sel) sel.scrollIntoView({block: 'nearest'});
+    };
+    // Меняем выделение без перерисовки списка — только классы + описание.
+    const setSel = (newIdx) => {
+      if (!items.length) return;
+      const list = popup.querySelector('.robot-autocomplete__list');
+      if (!list) { selIdx = newIdx; return; }
+      const oldEl = list.children[selIdx];
+      if (oldEl) oldEl.classList.remove('robot-autocomplete__item--sel');
+      selIdx = ((newIdx % items.length) + items.length) % items.length;
+      const newEl = list.children[selIdx];
+      if (newEl) {
+        newEl.classList.add('robot-autocomplete__item--sel');
+        newEl.scrollIntoView({block: 'nearest'});
+      }
+      renderDoc();
+    };
+
+    const insert = (item) => {
+      if (!item) return;
+      const caret = ta.selectionStart;
+      const before = ta.value.slice(0, triggerStart);
+      const after  = ta.value.slice(caret);
+      const ins = item.type === 'method' ? item.name + '(' : item.name;
+      ta.value = before + ins + after;
+      const newCaret = before.length + ins.length;
+      ta.setSelectionRange(newCaret, newCaret);
+      close();
+      ta.dispatchEvent(new Event('input', {bubbles: true}));
+      ta.focus();
+    };
+
+    const update = () => {
+      if (document.activeElement !== ta) { close(); return; }
+      const caret = ta.selectionStart;
+      // Сканируем 60 символов перед кареткой — этого хватит на «robot.».
+      const lookback = Math.max(0, caret - 60);
+      const slice = ta.value.slice(lookback, caret);
+      const m = slice.match(/robot\.(\w*)$/);
+      if (!m) { close(); return; }
+      const partial = m[1].toLowerCase();
+      const afterDot = caret - m[1].length;
+      const matches = _flatCatalog()
+        .filter(it => it.name.toLowerCase().startsWith(partial));
+      if (matches.length === 0) { close(); return; }
+      items = matches;
+      // Сохраняем выделение если оно осталось валидным.
+      const prevName = active && items[selIdx] ? items[selIdx].name : null;
+      selIdx = 0;
+      if (prevName) {
+        const idx = matches.findIndex(it => it.name === prevName);
+        if (idx >= 0) selIdx = idx;
+      }
+      triggerStart = afterDot;
+      renderList();
+      const c = _getCaretCoords(ta, caret);
+      // Размещаем popup ПОД строкой (caret.y + lineHeight). Если не лезет
+      // внизу экрана — над строкой.
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const popW = 420;
+      const popH = Math.min(popup.scrollHeight || 240, 320);
+      let x = c.x;
+      let y = c.y + c.lh + 2;
+      if (x + popW > vw - 8) x = Math.max(8, vw - popW - 8);
+      if (y + popH > vh - 8) y = Math.max(8, c.y - popH - 2);
+      popup.style.left = x + 'px';
+      popup.style.top  = y + 'px';
+      popup.hidden = false;
+      active = true;
+    };
+
+    ta.addEventListener('input',  update);
+    ta.addEventListener('keyup',  (e) => {
+      // input уже триггернул update, но keyup ловит ArrowLeft/Right/Home/End,
+      // которые двигают каретку без изменения текста.
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight'
+          || e.key === 'Home'   || e.key === 'End') update();
+    });
+    ta.addEventListener('click',  update);
+    ta.addEventListener('keydown',(e) => {
+      if (!active) return;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSel(selIdx + 1);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSel(selIdx - 1);
+      } else if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        insert(items[selIdx]);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        close();
+      }
+    });
+    ta.addEventListener('blur', () => {
+      // Задержка чтобы успел сработать mousedown на popup'е.
+      setTimeout(() => {
+        if (document.activeElement !== ta) close();
+      }, 150);
+    });
+
+    // Mousedown по элементу (НЕ click), чтобы textarea не успел потерять
+    // фокус до вставки — иначе selectionStart обнулится.
+    popup.addEventListener('mousedown', (e) => {
+      const item = e.target.closest('.robot-autocomplete__item');
+      if (!item) return;
+      e.preventDefault();
+      const idx = parseInt(item.dataset.idx, 10);
+      if (!isNaN(idx)) insert(items[idx]);
+    });
+    // Hover двигает выделение (как в IDE).
+    popup.addEventListener('mousemove', (e) => {
+      const item = e.target.closest('.robot-autocomplete__item');
+      if (!item) return;
+      const idx = parseInt(item.dataset.idx, 10);
+      if (!isNaN(idx) && idx !== selIdx) setSel(idx);
+    });
+    // Закрываем popup при resize/прокрутке страницы.
+    window.addEventListener('resize', close);
+    window.addEventListener('scroll', close, true);
   }
 
   // ── UI обновление ───────────────────────────────────────────────────────────
@@ -748,10 +1089,17 @@
   // ── Лог ────────────────────────────────────────────────────────────────────
 
   function logMsg(text, level = 'info') {
-    const log = document.getElementById('cmd-log');
-    if (log) {
-      const now  = new Date();
-      const time = `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}`;
+    const now  = new Date();
+    const time = `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}`;
+    // Дублируем сообщение в основной журнал И в журнал развёрнутого
+    // редактора — чтобы при открытой модалке (превью закрыто) ошибки
+    // и print() оставались видны рядом с кодом.
+    const targets = [
+      document.getElementById('cmd-log'),
+      document.getElementById('code-modal-journal'),
+    ];
+    for (const log of targets) {
+      if (!log) continue;
       const entry = document.createElement('div');
       entry.className = `log-entry log-entry--${level}`;
       entry.innerHTML = `<span class="log-time">${time}</span>${escHtml(text)}`;
@@ -937,9 +1285,10 @@
     flushBufferAsPlain();
 
     textarea.value = merged;
-    const modal     = document.getElementById('python-code-modal');
-    const modalArea = document.getElementById('python-code-modal-area');
-    if (modal && !modal.hidden && modalArea) modalArea.value = merged;
+    const modal = document.getElementById('python-code-modal');
+    if (modal && !modal.hidden && window.cmEditor && window.cmEditor.isReady()) {
+      window.cmEditor.setValue(merged);
+    }
   }
 
   async function runPythonCode() {
@@ -1146,13 +1495,13 @@
     if (!main) return;
     const tidied = tidyPythonCode(main.value);
     main.value = tidied;
-    // Зеркалим в модалку, если она открыта.
+    // Зеркалим в модалку (CodeMirror), если она открыта.
     const modal = document.getElementById('python-code-modal');
-    const modalArea = document.getElementById('python-code-modal-area');
-    if (modal && !modal.hidden && modalArea) modalArea.value = tidied;
-    // Триггерим input-событие, чтобы overlay-подсветка пересчиталась.
+    if (modal && !modal.hidden && window.cmEditor && window.cmEditor.isReady()) {
+      window.cmEditor.setValue(tidied);
+    }
+    // Триггерим input-событие для overlay боковой панели.
     main.dispatchEvent(new Event('input', {bubbles: true}));
-    if (modalArea) modalArea.dispatchEvent(new Event('input', {bubbles: true}));
     logMsg('🧹 Код упорядочен: функции собраны вверху, вызовы внизу.', 'info');
   }
 
@@ -1265,7 +1614,18 @@
 
     // Быстрые кнопки
     document.querySelectorAll('[data-cmd]').forEach(btn => {
-      btn.addEventListener('click', () => sendCmd(btn.dataset.cmd));
+      btn.addEventListener('click', () => {
+        // Перед «↺ Поле» (Вега новое поле) синхронизируем текст
+        // редактора с сервером — _run_reset прочитает START_X/Y/HEADING_DEG
+        // из КОДА (он главнее настроек). Иначе после правки констант
+        // и нажатия «↺ Поле» робот вставал бы в старые координаты.
+        const cmd = btn.dataset.cmd || '';
+        if (cmd.includes('новое поле') && ws && ws.readyState === WebSocket.OPEN) {
+          const ta = document.getElementById('python-code');
+          ws.send(JSON.stringify({type: 'sync_code', code: ta ? ta.value : ''}));
+        }
+        sendCmd(cmd);
+      });
     });
 
     // Кнопки тулбара
@@ -1310,40 +1670,170 @@
 
     // Подсветка комментариев в обоих редакторах кода
     attachCodeHighlight('python-code',            'python-code-overlay');
-    attachCodeHighlight('python-code-modal-area', 'python-code-modal-overlay');
+    // attachCodeHighlight('python-code-modal-area', ...) — больше не нужен:
+    // развёрнутый редактор работает на CodeMirror (см. cm-editor.js),
+    // подсветка/гуттер/Tab/zoom — встроены в CM.
+
+    // Popup-автодополнение robot.X в боковом поле кода.
+    // Для fallback-textarea модалки автодополнение прикрутится в
+    // activateFallbackEditor() (когда CM не загрузился). В CodeMirror
+    // автодополнение встроено через robotCompletion в cm-editor.js.
+    attachRobotAutocomplete('python-code');
+
+    // ── Shift+колесо мыши над CodeMirror — масштаб шрифта кода ────────
+    const cmWrap = document.getElementById('code-wrap-modal');
+    if (cmWrap) {
+      const FONT_KEY = 'cm:font:python-code-modal-area';
+      cmWrap.addEventListener('wheel', (e) => {
+        if (!e.shiftKey) return;
+        if (!window.cmEditor || !window.cmEditor.isReady()) return;
+        e.preventDefault();
+        const cur = window.cmEditor.getFontSize();
+        const delta = e.deltaY > 0 ? -1 : +1;
+        const next = Math.max(9, Math.min(32, cur + delta));
+        window.cmEditor.setFontSize(next);
+        localStorage.setItem(FONT_KEY, String(next));
+      }, {passive: false});
+    }
 
     // ── Модальное окно «Python код во весь экран» ─────────────────────
     const modal      = document.getElementById('python-code-modal');
     const modalArea  = document.getElementById('python-code-modal-area');
     const sideArea   = document.getElementById('python-code');
 
-    function openCodeModal() {
-      if (!modal || !modalArea || !sideArea) return;
-      modalArea.value = sideArea.value;     // последняя версия из боковой
-      modal.hidden = false;
-      // Принудительно обновляем overlay-подсветку (textarea имеет
-      // прозрачный текст — без overlay код виден не будет; polling 200мс
-      // тут слишком медленный для пользователя).
-      const modalOverlay = document.getElementById('python-code-modal-overlay');
-      if (modalOverlay) {
-        modalOverlay.innerHTML = highlightPython(modalArea.value || '');
-        modalOverlay.style.transform = 'translate(0px, 0px)';
+    function activateFallbackEditor() {
+      // Включает резервный textarea вместо CodeMirror (если CM не загрузился).
+      const host = document.getElementById('cm-modal-host');
+      const fb   = document.getElementById('cm-modal-fallback');
+      if (host) host.hidden = true;
+      if (fb)   fb.hidden   = false;
+      const fbArea = document.getElementById('python-code-modal-area');
+      if (fbArea && sideArea) {
+        fbArea.value = sideArea.value || '';
+        // Прикрутим подсветку/Tab/автодополнение если ещё не было.
+        if (!fbArea.dataset._wired) {
+          fbArea.dataset._wired = '1';
+          attachCodeHighlight('python-code-modal-area', 'python-code-modal-overlay');
+          attachRobotAutocomplete('python-code-modal-area');
+        }
+        fbArea.focus();
       }
-      modalArea.focus();
+    }
+
+    function openCodeModal() {
+      if (!modal || !sideArea) return;
+      modal.hidden = false;
+      // Маунтим CodeMirror при первом открытии. На последующих —
+      // просто заливаем актуальный текст из боковой textarea.
+      const host = document.getElementById('cm-modal-host');
+      const tryMountCM = () => {
+        if (!host || !window.cmEditor) return false;
+        const savedFontStr = localStorage.getItem('cm:font:python-code-modal-area');
+        const fontSize = parseInt(savedFontStr || '15', 10) || 15;
+        try {
+          if (!window.cmEditor.isReady()) {
+            window.cmEditor.mount(host, sideArea.value || '', {
+              fontSize,
+              onChange: (text) => {
+                sideArea.value = text;
+                _saveCodeDraft(text);
+              },
+            });
+          } else {
+            window.cmEditor.setValue(sideArea.value || '');
+          }
+          return window.cmEditor.isReady();
+        } catch (e) {
+          console.error('[control] CM mount failed, fallback:', e);
+          return false;
+        }
+      };
+      // Если CodeMirror уже загружен — монтируем сразу.
+      // Иначе ждём до 800мс (esm.sh может тянуть пачку модулей).
+      if (!tryMountCM()) {
+        let attempts = 0;
+        const poll = setInterval(() => {
+          attempts++;
+          if (tryMountCM() || attempts >= 16) {
+            clearInterval(poll);
+            if (!(window.cmEditor && window.cmEditor.isReady())) {
+              console.warn('[control] CodeMirror не загрузился, fallback на textarea');
+              activateFallbackEditor();
+            }
+          }
+        }, 50);
+      }
+      // Журнал в модалке: на открытии заливаем все существующие записи.
+      const mainLog = document.getElementById('cmd-log');
+      const modalJournal = document.getElementById('code-modal-journal');
+      if (mainLog && modalJournal) {
+        modalJournal.innerHTML = mainLog.innerHTML;
+        modalJournal.scrollTop = modalJournal.scrollHeight;
+      }
+      if (window.cmEditor && window.cmEditor.isReady()) window.cmEditor.focus();
     }
     function closeCodeModal() {
-      if (!modal || !modalArea || !sideArea) return;
-      sideArea.value = modalArea.value;     // правки из модалки → в боковую
-      modal.hidden = true;
-      // Так же синхронизируем overlay в боковой (если правили в модалке).
-      const sideOverlay = document.getElementById('python-code-overlay');
-      if (sideOverlay) {
-        sideOverlay.innerHTML = highlightPython(sideArea.value || '');
-        sideOverlay.style.transform = 'translate(0px, 0px)';
+      if (!modal || !sideArea) return;
+      // Правки из CM возвращаем в боковую textarea + overlay.
+      if (window.cmEditor && window.cmEditor.isReady()) {
+        sideArea.value = window.cmEditor.getValue();
+        const sideOverlay = document.getElementById('python-code-overlay');
+        if (sideOverlay) {
+          sideOverlay.innerHTML = highlightPython(sideArea.value || '');
+          sideOverlay.style.transform = 'translate(0px, 0px)';
+        }
+        // Триггерим input для backup'а draft'а.
+        sideArea.dispatchEvent(new Event('input', {bubbles: true}));
       }
+      modal.hidden = true;
     }
     document.getElementById('btn-expand-python-code')?.addEventListener('click', openCodeModal);
     document.getElementById('btn-collapse-python-code')?.addEventListener('click', closeCodeModal);
+
+    // ── Toggle «на весь экран» — растягиваем модалку на 100% × 100% viewport
+    // (убираем padding 2rem и max-width 1200px). Браузерный хром сохраняется —
+    // это НЕ Fullscreen API. Сохраняем состояние в localStorage, чтобы
+    // следующее открытие модалки помнило предпочтение пользователя.
+    const btnFs = document.getElementById('btn-modal-fullscreen');
+    if (btnFs && modal) {
+      const KEY = 'cm:maximized';
+      const applyMaxState = (maxed) => {
+        modal.classList.toggle('code-modal--maximized', maxed);
+        btnFs.textContent = maxed ? '🗗 Окно' : '⛶ Весь экран';
+        btnFs.title = maxed
+          ? 'Вернуть панель в обычный размер (с отступами и max-width)'
+          : 'Растянуть панель на всю ширину и высоту экрана';
+      };
+      // Применяем сохранённое состояние при загрузке.
+      applyMaxState(localStorage.getItem(KEY) === '1');
+      btnFs.addEventListener('click', () => {
+        const next = !modal.classList.contains('code-modal--maximized');
+        applyMaxState(next);
+        localStorage.setItem(KEY, next ? '1' : '0');
+      });
+    }
+
+    // ── Shift+колесо мыши над журналом модалки — масштаб шрифта ──────
+    // Независимо от кода. Min 10px, max 28px, сохраняется в localStorage.
+    const modalJournalWrap = document.getElementById('code-modal-journal-wrap');
+    if (modalJournalWrap) {
+      const KEY = 'cm:journal-font';
+      const saved = parseInt(localStorage.getItem(KEY) || '0', 10);
+      if (saved >= 10 && saved <= 28) {
+        modalJournalWrap.style.setProperty('--journal-font-size', saved + 'px');
+      }
+      modalJournalWrap.addEventListener('wheel', (e) => {
+        if (!e.shiftKey) return;
+        e.preventDefault();
+        const body = document.getElementById('code-modal-journal');
+        if (!body) return;
+        const cur = parseInt(getComputedStyle(body).fontSize, 10) || 13;
+        const delta = e.deltaY > 0 ? -1 : +1;
+        const next = Math.max(10, Math.min(28, cur + delta));
+        modalJournalWrap.style.setProperty('--journal-font-size', next + 'px');
+        localStorage.setItem(KEY, String(next));
+      }, {passive: false});
+    }
     // Esc — тоже закрывает
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && modal && !modal.hidden) closeCodeModal();
@@ -1367,14 +1857,20 @@
     modal?.addEventListener('mousedown', (e) => {
       if (e.target === modal) closeCodeModal();
     });
-    // Кнопки в модалке делегируют в основные обработчики, синхронизируя текст
+    // Кнопки в модалке: читают/пишут через CodeMirror, зеркало в боковую textarea.
+    function cmReady() { return window.cmEditor && window.cmEditor.isReady(); }
+    function modalText() { return cmReady() ? window.cmEditor.getValue() : (modalArea ? modalArea.value : ''); }
+    function setModalText(t) {
+      if (cmReady()) window.cmEditor.setValue(t);
+      else if (modalArea) modalArea.value = t;
+    }
     document.getElementById('btn-modal-copy')?.addEventListener('click', () => {
-      navigator.clipboard.writeText(modalArea.value).catch(() => {});
+      navigator.clipboard.writeText(modalText()).catch(() => {});
     });
     document.getElementById('btn-modal-clear')?.addEventListener('click', () => {
       if (confirm('Очистить весь код?')) {
-        modalArea.value = '';
-        sideArea.value  = '';
+        setModalText('');
+        if (sideArea) sideArea.value = '';
         _clearCodeDraft();
         if (ws && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'clear_program' }));
@@ -1382,17 +1878,15 @@
       }
     });
     document.getElementById('btn-modal-tidy')?.addEventListener('click', () => {
-      // Упорядочиваем текст из модалки и зеркалим в боковую панель.
-      const tidied = tidyPythonCode(modalArea.value || '');
-      modalArea.value = tidied;
+      const tidied = tidyPythonCode(modalText());
+      setModalText(tidied);
       if (sideArea) sideArea.value = tidied;
-      modalArea.dispatchEvent(new Event('input', {bubbles: true}));
       if (sideArea) sideArea.dispatchEvent(new Event('input', {bubbles: true}));
       logMsg('🧹 Код упорядочен.', 'info');
     });
     document.getElementById('btn-modal-run')?.addEventListener('click', () => {
-      // sync from modal to main, then run
-      sideArea.value = modalArea.value;
+      // Sync CM → side, потом запускаем (runPythonCode читает sideArea).
+      if (sideArea) sideArea.value = modalText();
       runPythonCode();
     });
 

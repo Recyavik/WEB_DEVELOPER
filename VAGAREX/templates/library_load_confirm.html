@@ -41,9 +41,11 @@
       <input type="hidden" name="current_code" value="{{ current_code }}">
 
       <div class="settings-actions" style="margin-top:1rem">
-        <button type="submit" class="btn btn--primary">📥 Загрузить</button>
+        <button type="submit" class="btn btn--primary"
+                title="Сохранить текущий код и загрузить выбранный маршрут">📥 Загрузить</button>
         <button type="submit" class="btn btn--sm"
-                onclick="document.querySelector('input[name=save_title]').value=''">
+                onclick="document.querySelector('input[name=save_title]').value=''"
+                title="Загрузить выбранный маршрут БЕЗ сохранения текущего кода (текущее будет потеряно)">
           Загрузить БЕЗ сохранения
         </button>
         <a href="/library" class="btn btn--sm">Отмена</a>
@@ -53,7 +55,8 @@
       <p class="hint">Сейчас у вас пустая программа — сохранять нечего, можно сразу грузить.</p>
       <input type="hidden" name="current_code" value="">
       <div class="settings-actions" style="margin-top:1rem">
-        <button type="submit" class="btn btn--primary">📥 Загрузить</button>
+        <button type="submit" class="btn btn--primary"
+                title="Загрузить выбранный маршрут в редактор кода">📥 Загрузить</button>
         <a href="/library" class="btn btn--sm">Отмена</a>
       </div>
       {% endif %}

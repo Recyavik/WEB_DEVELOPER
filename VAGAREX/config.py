@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 
 # Версия прошивки робота 1T REX (отображается в шапке UI).
-ROBOT_VERSION = "4.5.4"
+ROBOT_VERSION = "4.7.6"
 
 # Папка с пользовательскими данными (БД, загруженные файлы и т. п.).
 # В Docker/Coolify сюда монтируется persistent volume — переживает rebuild.

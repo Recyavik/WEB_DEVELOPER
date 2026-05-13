@@ -15,7 +15,7 @@
   {% if sessions %}
   <form method="POST" action="/missions/clear"
         onsubmit="return confirm('Удалить всю историю сессий, кроме текущей активной? Действие необратимо.');">
-    <button type="submit" class="btn btn--sm btn--danger">✕ Очистить историю</button>
+    <button type="submit" class="btn btn--sm btn--danger" title="Удалить всю историю прошлых сессий (текущая активная сохранится)">✕ Очистить историю</button>
   </form>
   {% endif %}
 </div>

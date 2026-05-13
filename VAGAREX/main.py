@@ -1001,16 +1001,12 @@ async def missions_check_active(request: Request,
         code_text = (body or {}).get("code", "") or ""
     except Exception:
         code_text = ""
-    if code_text.strip():
-        new_program = sess._parse_program_text(code_text)
-        if not new_program:
-            return JSONResponse({"error": "empty program"}, status_code=400)
-        sess._program = new_program
-        sess._save_program()
-    if not sess._program:
+    # Day 2: единственный путь — exec() пользовательского Python через
+    # robot_api.run_user_python. Парсер _program больше не используется.
+    if not code_text.strip():
         return JSONResponse({"error": "empty program"}, status_code=400)
-    await sess.push_message("▶ Запуск программы…", "info")
-    _aio.create_task(sess.run_check())
+    await sess.push_message("▶ Запуск Python-кода…", "info")
+    _aio.create_task(sess.run_check_python(code_text))
     return JSONResponse({"ok": True})
 
 
@@ -1655,22 +1651,39 @@ async def websocket_endpoint(ws: WebSocket):
                 await sess._run_program()
             elif t == "run_python_code":
                 code = data.get("code", "")
-                if sess.cfg.simulation_mode:
-                    await ws.send_json({"type": "code_exec_result",
-                                        "output": "Симуляция: разбираю текст программы и запускаю…"})
-                    await sess.run_textarea_program(code)
-                else:
-                    out = "Выполнено."
-                    try:
-                        # exec в реальном режиме — ответственность пользователя
-                        exec(compile(code, "<веб-код>", "exec"))  # noqa: S102
-                    except Exception as exc:
-                        out = f"Ошибка: {exc}"
-                    await ws.send_json({"type": "code_exec_result", "output": out})
+                # Day 2: единственный путь — exec() с фасадом `robot`. Старый
+                # парсер хелперов-шаблонов удалён, codegen всегда генерит
+                # `robot.X(...)` строки.
+                from robot_api import run_user_python
+                await ws.send_json({"type": "code_exec_result",
+                                    "output": "▶ Запускаю Python-код…",
+                                    "level":  "info"})
+                out = await run_user_python(sess, code)
+                # Ошибки exec (`Ошибка (NameError)`, traceback, ⏹ прервано) —
+                # уровень 'error' → красная подсветка в журнале, как IDE-консоль.
+                is_error = ("Ошибка" in out[:32]) or out.startswith("⏹")
+                await ws.send_json({"type":   "code_exec_result",
+                                    "output": out,
+                                    "level":  "error" if is_error else "ok"})
+            elif t == "sync_code":
+                # Клиент синхронизирует текущий текст textarea с сервером —
+                # нужно перед «↺ Поле», чтобы reset прочитал актуальные
+                # START_X/Y/HEADING_DEG из кода пользователя, а не из настроек.
+                code = data.get("code", "")
+                if isinstance(code, str):
+                    sess._last_python_code = code
             elif t == "clear_program":
                 sess._program.clear()
+                # При очистке программы забываем кэшированный текст и
+                # эффективный старт — преамбула регенерируется из настроек,
+                # маркер «домой» возвращается в cfg.start_x_cm/y_cm.
+                sess._last_python_code = None
+                sess._effective_start_x = None
+                sess._effective_start_y = None
+                sess._effective_start_heading = None
                 sess._save_program()
                 await sess.push_program()
+                await sess.push_world()  # пнём клиента — пусть перерисует маркер
             elif t == "set_laser":
                 enabled = bool(data.get("enabled", True))
                 sess.cfg.laser_enabled = enabled

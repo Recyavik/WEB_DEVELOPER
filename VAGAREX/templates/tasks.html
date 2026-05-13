@@ -17,10 +17,12 @@
      опубликованная миссия становится общедоступной. #}
   {% set pub_count   = missions|selectattr('published')|list|length %}
   <nav class="tabs" role="tablist">
-    <button class="tabs__btn tabs__btn--active" data-tab="generate" role="tab">
+    <button class="tabs__btn tabs__btn--active" data-tab="generate" role="tab"
+            title="Сгенерировать новую миссию выбранного уровня">
       ✨ Сгенерировать
     </button>
-    <button class="tabs__btn" data-tab="catalog" role="tab">
+    <button class="tabs__btn" data-tab="catalog" role="tab"
+            title="Каталог сохранённых и опубликованных миссий">
       📋 Каталог <span class="tabs__count">{{ missions|length }}</span>
     </button>
   </nav>
@@ -52,7 +54,8 @@
         {% endfor %}
       </div>
       <div class="generate-actions">
-        <button id="btn-generate" class="btn btn--success">
+        <button id="btn-generate" class="btn btn--success"
+                title="Сгенерировать миссию выбранного уровня сложности">
           ✨ Сгенерировать миссию
         </button>
         <span class="hint" style="margin-left:0.7rem; color:var(--text-dim); font-size:0.8rem;">
@@ -78,13 +81,18 @@
       </h2>
       <div class="program-actions">
         <span data-when="unsaved" style="display:inline-flex; gap:0.4rem">
-          <button id="btn-preview-save"      class="btn btn--success btn--sm">💾 Сохранить</button>
-          <button id="btn-preview-regenerate" class="btn btn--sm">🔄 Сгенерировать ещё</button>
+          <button id="btn-preview-save"      class="btn btn--success btn--sm"
+                  title="Сохранить миссию в каталог (станет доступна для прохождения)">💾 Сохранить</button>
+          <button id="btn-preview-regenerate" class="btn btn--sm"
+                  title="Сгенерировать другой вариант миссии того же уровня">🔄 Сгенерировать ещё</button>
         </span>
         <span data-when="saved" style="display:none; gap:0.4rem">
-          <button id="btn-preview-start"   class="btn btn--info btn--sm">▶ Пройти</button>
-          <button id="btn-preview-publish" class="btn btn--sm">📤 Опубликовать</button>
-          <button id="btn-preview-delete"  class="btn btn--sm">🗑 Удалить</button>
+          <button id="btn-preview-start"   class="btn btn--info btn--sm"
+                  title="Открыть миссию и начать прохождение">▶ Пройти</button>
+          <button id="btn-preview-publish" class="btn btn--sm"
+                  title="Опубликовать в общий каталог (видна другим)">📤 Опубликовать</button>
+          <button id="btn-preview-delete"  class="btn btn--sm"
+                  title="Удалить миссию навсегда">🗑 Удалить</button>
         </span>
         <button id="btn-preview-close"   class="btn btn--sm" title="Закрыть превью">✕</button>
       </div>
@@ -127,13 +135,16 @@
     {% for m in missions %}{% if lvl_counts.update({m.level: lvl_counts.get(m.level, 0) + 1}) %}{% endif %}{% endfor %}
     <div class="catalog-toolbar">
       <div class="filter-chips" role="tablist" aria-label="Фильтр по владельцу">
-        <button class="chip chip--active" data-filter="all" role="tab">
+        <button class="chip chip--active" data-filter="all" role="tab"
+                title="Показать все миссии (свои и чужие опубликованные)">
           Все <span class="chip__count">{{ missions|length }}</span>
         </button>
-        <button class="chip" data-filter="mine" role="tab">
+        <button class="chip" data-filter="mine" role="tab"
+                title="Только мои миссии (сгенерированные и кастомные)">
           👤 Мои <span class="chip__count">{{ my_count }}</span>
         </button>
-        <button class="chip" data-filter="published" role="tab">
+        <button class="chip" data-filter="published" role="tab"
+                title="Опубликованные миссии (включая мои опубликованные)">
           🌐 Общие <span class="chip__count">{{ pub_count }}</span>
         </button>
       </div>
@@ -145,7 +156,7 @@
     </div>
     <div class="filter-chips filter-chips--level" role="tablist"
          aria-label="Фильтр по уровню сложности">
-      <button class="chip chip--active" data-level="all">Все уровни</button>
+      <button class="chip chip--active" data-level="all" title="Показать миссии всех уровней сложности">Все уровни</button>
       <button class="chip chip--lvl chip--lvl-0" data-level="0"
               title="Кастомные миссии (свободный режим)">
         <span class="chip__lvlnum">К</span>
@@ -200,7 +211,7 @@
                 <span class="pub-switch__slider"></span>
                 <span class="pub-switch__txt">Публикация</span>
               </label>
-              <button class="btn btn--sm js-delete-mission" data-id="{{ m.id }}">🗑 Удалить</button>
+              <button class="btn btn--sm js-delete-mission" data-id="{{ m.id }}" title="Удалить миссию">🗑 Удалить</button>
             {% elif current_user.is_admin %}
               {# Админ-модерация чужих опубликованных миссий. #}
               {% if m.published %}

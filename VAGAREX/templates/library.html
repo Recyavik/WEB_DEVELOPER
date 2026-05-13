@@ -51,7 +51,7 @@
             <a href="/library/saved/{{ r.id }}"      class="btn btn--xs">👁</a>
             <form method="POST" action="/library/saved/{{ r.id }}/delete" style="display:inline"
                   onsubmit="return confirm('Удалить «{{ r.title|e }}» из своих сохранений?')">
-              <button type="submit" class="btn btn--xs btn--danger">✕</button>
+              <button type="submit" class="btn btn--xs btn--danger" title="Удалить маршрут">✕</button>
             </form>
           </div>
         </article>
@@ -92,7 +92,7 @@
             {% if current_user and (r.author_id == current_user.id or current_user.is_admin) %}
             <form method="POST" action="/library/published/{{ r.id }}/delete" style="display:inline"
                   onsubmit="return confirm('Удалить опубликованный маршрут «{{ r.title|e }}»?')">
-              <button type="submit" class="btn btn--xs btn--danger">✕</button>
+              <button type="submit" class="btn btn--xs btn--danger" title="Удалить маршрут">✕</button>
             </form>
             {% endif %}
           </div>

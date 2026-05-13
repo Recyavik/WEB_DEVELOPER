@@ -118,9 +118,9 @@ _HEADINGS_15_DEG   = tuple(range(0, 360, 15))   # 0, 15, 30, ..., 345
 # L3 = бывший L1 (сетка 45°), L4 = бывший L2 (15°), L5 = бывший L3 (45° + кривые).
 _LEVEL_HEADING_STEP_DEG = {3: 45, 4: 15, 5: 45}
 
-# Параметры bypass_cmd (S-волна) и course_cmd (встать на курс на ходу) —
-# совпадают с session.py `_HELPER_CODE`. Используются для предсказания
-# траектории на этапе генерации миссии.
+# Параметры bypass (S-волна) и set_course (встать на курс на ходу) —
+# совпадают с дефолтами `_run_bypass` / `_run_set_course` в session.py.
+# Используются для предсказания траектории на этапе генерации миссии.
 _BYPASS_DEFAULT_SPEED_PCT      = 40
 _BYPASS_QUARTER_SEC            = 0.5     # дефолт helper-кода
 # Для генерации L3 используем УВЕЛИЧЕННЫЙ quarter_sec, иначе волна
@@ -140,14 +140,14 @@ _LEVEL3_MIN_WAYPOINT_DIST_CM   = 70.0
 # Русские названия + helper-команды для каждого из 8 курсов. Используется
 # в face-кандидате (вместо литеральных списков в коде).
 _CARDINAL_NAMES = {
-    0:   ("север",         "face_n_cmd()"),
-    45:  ("северо-восток", "face_ne_cmd()"),
-    90:  ("восток",        "face_e_cmd()"),
-    135: ("юго-восток",    "face_se_cmd()"),
-    180: ("юг",            "face_s_cmd()"),
-    225: ("юго-запад",     "face_sw_cmd()"),
-    270: ("запад",         "face_w_cmd()"),
-    315: ("северо-запад",  "face_nw_cmd()"),
+    0:   ("север",         "robot.face(0)"),
+    45:  ("северо-восток", "robot.face(45)"),
+    90:  ("восток",        "robot.face(90)"),
+    135: ("юго-восток",    "robot.face(135)"),
+    180: ("юг",            "robot.face(180)"),
+    225: ("юго-запад",     "robot.face(225)"),
+    270: ("запад",         "robot.face(270)"),
+    315: ("северо-запад",  "robot.face(315)"),
 }
 
 # Максимальный сдвиг курса за один поворотный шаг: 90°. 135° и 180°
@@ -477,7 +477,10 @@ def _candidate_bypass(state: dict, g: WorldGeom, rng: random.Random, *,
         return None
     side  = "справа" if start_dir > 0 else "слева"
     voice = f"Вега объезд {side}"
-    code  = f"bypass_cmd(start_dir={start_dir}, quarter_sec={quarter_sec})"
+    # quarter_sec из старой эпохи (helper bypass_cmd с time-based рулём) не
+    # пробрасываем: robot.bypass работает на дуговой геометрии и параметра не
+    # принимает. См. _run_bypass в session.py.
+    code  = f"robot.bypass({start_dir})"
     return (new, voice, code, path_seg)
 
 
@@ -522,7 +525,7 @@ def _candidate_set_course(state: dict, g: WorldGeom, rng: random.Random, *,
             continue
         new["heading"] = float(target)   # snap для согласованности с реальным cmd
         voice = f"Вега курс {target}"
-        code  = f"course_cmd({target})"
+        code  = f"robot.set_course({target})"
         return (new, voice, code, path_seg)
     return None
 
@@ -548,7 +551,7 @@ def _candidate_face_cardinal(state: dict, g: WorldGeom, rng: random.Random, *,
         voice = f"Вега {ru}"
     else:
         voice = f"Вега поверни на {deg}"
-        code  = f"face_cmd({deg})"
+        code  = f"robot.face({deg})"
     new = _step_face(state, deg)
     path_seg = [[round(state["x"], 1), round(state["y"], 1)]]
     return new, voice, code, path_seg
@@ -593,7 +596,7 @@ def _candidate_goto(state: dict, g: WorldGeom, rng: random.Random, *,
                         and not _path_seg_clears_prior(path_seg, prior_path, min_gap_cm)):
                     continue
                 return (new, f"Вега в точку {new['x']:g} {new['y']:g}",
-                        f"goto_cmd({new['x']:g}, {new['y']:g})", path_seg)
+                        f"robot.goto({new['x']:g}, {new['y']:g})", path_seg)
         return None
     # Легаси (уровень 2): целевая дистанция произвольная, кратна 10 см,
     # направление — один из allowed кардиналов.
@@ -623,7 +626,7 @@ def _candidate_goto(state: dict, g: WorldGeom, rng: random.Random, *,
                     and not _path_seg_clears_prior(path_seg, prior_path, min_gap_cm)):
                 continue
             return (new, f"Вега в точку {tx:g} {ty:g}",
-                    f"goto_cmd({tx:g}, {ty:g})", path_seg)
+                    f"robot.goto({tx:g}, {ty:g})", path_seg)
     return None
 
 
@@ -749,7 +752,7 @@ def _generate_trajectory(n_waypoints: int, geom: WorldGeom,
 
         # Выбор стиля шага:
         #   pure-turn_move    = face_cardinal + linear/bypass
-        #   curve_combined    = course_cmd (turn+move в одном)
+        #   curve_combined    = robot.set_course (turn+move в одном)
         #   goto              = направление + дистанция (если allow_goto)
         if allow_goto:
             style = rng.choice(['turn_move', 'turn_move', 'goto'])

@@ -38,7 +38,7 @@
       {% if is_owner %}
       <form method="POST" action="/library/{{ kind }}/{{ route.id }}/delete" style="display:inline"
             onsubmit="return confirm('Удалить «{{ route.title|e }}»?')">
-        <button type="submit" class="btn btn--danger">✕ Удалить</button>
+        <button type="submit" class="btn btn--danger" title="Удалить этот маршрут из библиотеки">✕ Удалить</button>
       </form>
       {% endif %}
     </div>

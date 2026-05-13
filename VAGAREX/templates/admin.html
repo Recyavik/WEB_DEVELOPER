@@ -10,9 +10,11 @@
       <h3 class="card__title">Регистрация новых пользователей</h3>
       <form method="POST" action="/admin/registration_toggle" style="margin:0">
         {% if registration_open %}
-        <button type="submit" class="btn btn--xs btn--danger">🚫 Закрыть регистрацию</button>
+        <button type="submit" class="btn btn--xs btn--danger"
+                title="Запретить новым пользователям регистрироваться через /register">🚫 Закрыть регистрацию</button>
         {% else %}
-        <button type="submit" class="btn btn--xs btn--primary">✅ Открыть регистрацию</button>
+        <button type="submit" class="btn btn--xs btn--primary"
+                title="Разрешить регистрацию новых пользователей через /register">✅ Открыть регистрацию</button>
         {% endif %}
       </form>
     </div>
@@ -37,7 +39,7 @@
         <input type="checkbox" name="is_admin" value="1">
         <span>админ</span>
       </label>
-      <button type="submit" class="btn btn--primary">Создать</button>
+      <button type="submit" class="btn btn--primary" title="Создать пользователя с указанными логином и паролем">Создать</button>
     </form>
   </section>
 
@@ -91,7 +93,7 @@
             <form method="POST" action="/admin/users/{{ u.id }}/reset_password" style="display:inline-flex;gap:.25rem">
               <input type="text" name="new_password" placeholder="новый или пусто = сгенерить"
                      class="settings-input settings-input--inline">
-              <button type="submit" class="btn btn--xs">🔑 Сбросить</button>
+              <button type="submit" class="btn btn--xs" title="Установить новый пароль (пустое поле — сгенерировать случайный)">🔑 Сбросить</button>
             </form>
             {% if u.id != current_user.id %}
             <form method="POST" action="/admin/users/{{ u.id }}/toggle_admin" style="display:inline">
@@ -102,7 +104,7 @@
             </form>
             <form method="POST" action="/admin/users/{{ u.id }}/delete" style="display:inline"
                   onsubmit="return confirm('Удалить пользователя «{{ u.username }}» вместе со всеми его данными?')">
-              <button type="submit" class="btn btn--xs btn--danger">✕ Удалить</button>
+              <button type="submit" class="btn btn--xs btn--danger" title="Удалить пользователя со всеми его миссиями и настройками">✕ Удалить</button>
             </form>
             {% else %}
             <span class="hint">(это вы)</span>
