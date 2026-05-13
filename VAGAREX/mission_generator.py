@@ -126,8 +126,10 @@ _BYPASS_WHEEL_CIRC_CM          = 28.30
 _BYPASS_HEADING_DEG_PER_ROT    = 25.0
 _BYPASS_TURN_SPEED_REF         = 40     # % — turn_speed_ref
 # Минимальное расстояние между waypoint'ами Level 3 — чтобы маршрут
-# не «клубком» в одном углу поля.
-_LEVEL3_MIN_WAYPOINT_DIST_CM   = 70.0
+# не «клубком» в одном углу поля. 60 см: bypass даёт ~64 см
+# net-смещения, точно проходит порог; чтобы точки всё же не лезли
+# друг на друга.
+_LEVEL3_MIN_WAYPOINT_DIST_CM   = 60.0
 
 # Русские названия + helper-команды для каждого из 8 курсов. Используется
 # в face-кандидате (вместо литеральных списков в коде).
@@ -701,8 +703,12 @@ def _generate_trajectory(n_waypoints: int, geom: WorldGeom,
                    prior_path=vertices, min_gap_cm=min_gap,
                    heading_step_deg=heading_step_deg)
 
-    # Счётчик использованных кривых — гарантируем min_curved для L3.
-    curved_used = 0
+    # Отдельные счётчики bypass и course — на L3 хотим видеть и то, и то.
+    # min_curved разделяем пополам: половина на bypass, половина на course.
+    bypass_used  = 0
+    course_used  = 0
+    min_bypass   = (min_curved + 1) // 2     # для min_curved=2 → 1
+    min_course   = min_curved // 2           # для min_curved=2 → 1
 
     # Минимальное расстояние между новой и любой предыдущей waypoint —
     # для уровней с include_bypass=True (Level 3) выставляем 70 см,
@@ -727,14 +733,29 @@ def _generate_trajectory(n_waypoints: int, geom: WorldGeom,
     safety_iter = 0
     while waypoints_created < n_waypoints and safety_iter < safety_iter_max:
         safety_iter += 1
-        # На L3 (include_bypass=True) добавляем стиль 'curve_combined'
-        # (set_course — сам поворачивает и едет, без отдельного face).
+        remaining = n_waypoints - waypoints_created
+        need_bypass = include_bypass and bypass_used < min_bypass
+        need_course = include_bypass and course_used < min_course
+
+        # Выбор стиля шага:
+        #   pure-turn_move = face_cardinal + linear/bypass
+        #   curve_combined = course_cmd (turn+move в одном)
+        #   goto           = направление + дистанция (если allow_goto)
+        # На L3 чередуем стили так, чтобы и bypass, и course попали
+        # в маршрут (min_bypass раз, min_course раз). После того как
+        # оба минимума набраны — оставшиеся шаги всегда линейные
+        # (turn_move с линейным movement) — иначе пользователь видит
+        # сплошные кривые и нет 3 линейных, как просили.
         if allow_goto:
             style = rng.choice(['turn_move', 'turn_move', 'goto'])
-        elif include_bypass:
-            style = rng.choice(['turn_move', 'turn_move', 'curve_combined'])
+        elif need_bypass and need_course:
+            style = rng.choice(['turn_move', 'curve_combined'])
+        elif need_bypass:
+            style = 'turn_move'             # bypass идёт через turn_move
+        elif need_course:
+            style = 'curve_combined'        # course идёт здесь
         else:
-            style = 'turn_move'
+            style = 'turn_move'             # на free-итерациях только линейные
 
         if style == 'goto':
             result = _candidate_goto(state, geom, rng, **cand_kw)
@@ -778,7 +799,7 @@ def _generate_trajectory(n_waypoints: int, geom: WorldGeom,
             _add_vertex((state["x"], state["y"]))
             waypoints.append([round(state["x"], 1), round(state["y"], 1)])
             waypoints_created += 1
-            curved_used += 1
+            course_used += 1
             continue
 
         # turn + move — с откатом, если после поворота никуда не двинулись.
@@ -802,19 +823,18 @@ def _generate_trajectory(n_waypoints: int, geom: WorldGeom,
         _extend_path(path_seg)
 
         moved = False
-        # Если ещё не набрали обязательный минимум кривых траекторий
-        # (min_curved), и осталось мало шагов — принудительно тянем
-        # bypass-кандидат на первую попытку.
-        force_curve = (include_bypass and curved_used < min_curved
-                       and (n_waypoints - waypoints_created) <= (min_curved - curved_used))
+        # Если ещё не использовали bypass — принудительно пробуем его
+        # все 8 попыток. Иначе (минимум кривых набран) — только линейные
+        # forward/back, чтобы маршрут содержал «3 линейные + 2 кривые».
         for attempt_i in range(8):
-            if force_curve and attempt_i == 0:
+            if need_bypass and attempt_i < 6:
                 mv_fn = rng.choice(curved_candidates)
-            elif force_curve and attempt_i < 4:
-                # Ещё несколько раз пытаемся кривыми, потом — что угодно.
-                mv_fn = rng.choice(curved_candidates)
-            else:
+            elif need_bypass:
+                # последние 2 попытки — любая команда, лишь бы не зависнуть
                 mv_fn = rng.choice(movement_candidates)
+            else:
+                # min_bypass уже набран — только линейные
+                mv_fn = rng.choice(linear_candidates)
             result = mv_fn(state, geom, rng, **cand_kw)
             if result is None:
                 continue
@@ -830,7 +850,7 @@ def _generate_trajectory(n_waypoints: int, geom: WorldGeom,
             waypoints.append([round(state["x"], 1), round(state["y"], 1)])
             waypoints_created += 1
             if mv_fn in curved_candidates:
-                curved_used += 1
+                bypass_used += 1
             moved = True
             break
         if not moved:
@@ -1158,15 +1178,14 @@ def _generate_level_2(geom: WorldGeom, rng: random.Random) -> dict:
 # ── Генератор уровня 3 ─────────────────────────────────────────────────────
 
 def _generate_level_3(geom: WorldGeom, rng: random.Random) -> dict:
-    """4 контрольные точки, 2 опасные зоны (радиусы 10 и 20 см),
-    1 действие «установить зону внимания». Курсы кратны 45° (8 кардиналов),
-    расстояния кратные 10. Траектория уже не только линейная: смешана из
-    3 линейных (forward/back) и 2 кривых (bypass-left / bypass-right).
+    """5 контрольных точек, 2 опасные зоны (радиусы 10 и 20 см),
+    1 «зона внимания» — на финальной точке (завершение задания).
+    Курсы кратны 45° (8 кардиналов), расстояния кратны 10.
 
-    Команды строятся из набора `курс → forward/back/bypass-left/bypass-right`.
-    Каждый шаг ведёт к следующей точке маршрута. Кривые гарантируются
-    счётчиком min_curved=2 в `_generate_trajectory`."""
-    n_waypoints = 4
+    Траектория не только линейная: 5 сегментов = 3 линейных
+    (forward/back) + 2 кривых (bypass / course). Кривые гарантируются
+    счётчиком min_curved=2."""
+    n_waypoints = 5
     traj = _generate_trajectory_best_of(
         n_waypoints, geom, rng,
         align_to_grid=False,
@@ -1185,11 +1204,11 @@ def _generate_level_3(geom: WorldGeom, rng: random.Random) -> dict:
         zone_radius_cm=20.0, clearance_cm=clearance)
     zones = zones_r10 + zones_r20
 
-    # Действие «установить зону внимания» — на одной из waypoint-точек
-    # (генератор для простоты ставит её на первую точку маршрута).
+    # Действие «установить зону внимания» — ровно одна, и ставится на
+    # ФИНАЛЬНУЮ waypoint-точку маршрута (как завершение задания L3).
     actions: list[dict] = []
     if traj["waypoints"]:
-        ax, ay = traj["waypoints"][rng.randrange(len(traj["waypoints"]))]
+        ax, ay = traj["waypoints"][-1]
         actions.append({"type": "place_attention",
                          "x": float(ax), "y": float(ay), "radius": 15.0})
 
