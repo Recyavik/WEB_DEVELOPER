@@ -111,17 +111,26 @@
           // Если в localStorage есть черновик пользовательских правок,
           // которые ещё не были применены (не нажимал ▶) — он переживает
           // reload страницы и подставляется поверх серверного состояния.
-          // Иначе пользователь правил `robot.move(40, duration(80, 40))`,
-          // обновил страницу — и правки терялись.
+          // ВО ВРЕМЯ АКТИВНОЙ МИССИИ draft игнорируется: голосовые команды
+          // в режиме миссии добавляются прямо в _program на сервере, и
+          // каждый push 'program' несёт самый свежий код — заменяем им
+          // textarea, иначе устаревший draft проглатывает новые строки.
           const draft = _readCodeDraft();
           const serverText = msg.text;
-          const useDraft = draft && draft !== serverText && draft.trim() !== '';
+          const missionActive = !!window._currentMission;
+          const useDraft = !missionActive
+                           && draft && draft !== serverText
+                           && draft.trim() !== '';
           const finalText = useDraft ? draft : serverText;
           if (textarea) {
             textarea.value = finalText;
             if (useDraft) {
               logMsg('↻ Восстановлены несохранённые правки кода '
                    + '(▶ применит их, ✕ — отменит).', 'info');
+            } else if (missionActive) {
+              // Подчищаем draft, чтобы он не «всплыл» позже как устаревший
+              // и не подменил очередной серверный апдейт.
+              _clearCodeDraft();
             }
           }
           // Если модалка открыта — тоже обновляем
@@ -147,6 +156,11 @@
         if (msg.mission) {
           window._currentMission = msg.mission;
           _clearLogPanel();
+          // На старте миссии чистим draft-черновик в localStorage: он
+          // мог остаться от свободного режима и при следующем 'program'
+          // подменил бы серверный код миссии (mark_danger + добавленные
+          // голосом команды) на устаревший текст.
+          _clearCodeDraft();
           showMissionButton(msg.mission);
           _startMissionTimer();
           // Уровень ≥ 2 (опасные зоны) — режим зафиксирован «осторожно»
@@ -438,7 +452,18 @@
       document.body.appendChild(modal);
       const close = () => { modal.hidden = true; };
       modal.querySelector('.warn-modal__close').addEventListener('click', close);
-      modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+      // Закрытие по клику на подложку. Используем mousedown (а не click) и
+      // отдельно фиксируем, что нажатие СТАРТОВАЛО на подложке. Иначе при
+      // выделении текста результата для копирования (Ctrl+C) mouseup
+      // может оказаться на подложке и click закроет модалку.
+      let _downOnBackdrop = false;
+      modal.addEventListener('mousedown', (e) => {
+        _downOnBackdrop = (e.target === modal);
+      });
+      modal.addEventListener('mouseup', (e) => {
+        if (_downOnBackdrop && e.target === modal) close();
+        _downOnBackdrop = false;
+      });
     }
     const ok = !!msg.success;
     modal.querySelector('.mission-result-icon').textContent = ok ? '⭐' : '⚠';

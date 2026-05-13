@@ -438,11 +438,19 @@ class UserSession:
             success = m.is_complete()
         ended_at = datetime.utcnow()
         duration_sec = max(0.0, (ended_at - m.started_at).total_seconds())
-        # Финальная разбивка звёзд: факт + точность + скорость (только при успехе).
+        # Финальная разбивка звёзд:
+        #   • факт (за каждую посещённую точку и выполненное действие) —
+        #     ВСЕГДА засчитывается; обучающийся честно довёл робота до
+        #     точки, эту звезду нельзя отнять только потому, что миссию
+        #     не закрыли целиком.
+        #   • точность траектории — тоже всегда (бонус начисляется по
+        #     пройденному пути и не зависит от полноты завершения).
+        #   • скорость прохождения — только при success: премия за
+        #     полностью законченную миссию в срок.
         fact_stars  = m.fact_stars()
         track_stars = m.track_bonus_stars()
         time_stars  = m.time_bonus_stars(duration_sec) if success else 0
-        stars = (fact_stars + track_stars + time_stars) if success else 0
+        stars = fact_stars + track_stars + time_stars
         precision_pct = int(round(m.coefficient * 100))
         algo_duration = round(m.last_algo_duration_sec or 0.0, 2)
         if m.run_id is not None:
@@ -601,14 +609,11 @@ class UserSession:
         await ws.accept()
         self._connections.append(ws)
         await ws.send_json(self._full_state())
-        await ws.send_json({
-            "type":  "program",
-            "lines": self._program_lines(),
-            "text":  self._program_text(),
-        })
-        # Явный сигнал о статусе миссии: либо активная (с данными), либо
-        # «нет миссии». Это нужно, чтобы клиент после рестарта сервера
-        # не зависал в «миссия есть, а на сервере её нет» и понятно сбросил UI.
+        # Сначала ОБЪЯВЛЯЕМ статус миссии, потом высылаем код программы.
+        # Иначе клиентский case 'program' видит `window._currentMission`
+        # ещё пустым, считает «свободный режим» и подменяет серверный
+        # код черновиком из localStorage — пользователь видит код от
+        # прошлой сессии вместо актуальной программы миссии.
         if self._mission is not None:
             await ws.send_json({
                 "type":    "mission_active",
@@ -616,6 +621,11 @@ class UserSession:
             })
         else:
             await ws.send_json({"type": "mission_inactive"})
+        await ws.send_json({
+            "type":  "program",
+            "lines": self._program_lines(),
+            "text":  self._program_text(),
+        })
 
     def remove_ws(self, ws: WebSocket):
         if ws in self._connections:
@@ -3033,13 +3043,18 @@ odo = Odometry()    # глобальный экземпляр одометрии
         "reset", "report_pos", "report_status",
     })
 
+    # Inline-комментарий после кода: 2+ пробела + `#` + хвост до конца строки.
+    # Используется в постобработке call-строк, см. _strip_codegen_comments.
+    _RE_INLINE_COMMENT = re.compile(r'\s{2,}#.*$')
+
     def _python_call_lines_for_cmd(self, cmd: RobotCmd) -> list[str]:
         """Строки вызова команды (без преамбулы и def-блоков).
 
-        Для атомарных команд (raw robot.X-вызовы) добавляется маркер
-        `# CMD: name(args)` сверху — иначе парсер на «Запуск» не сможет
-        восстановить команду из текста textarea (regex DSL не матчит
-        строки вида `robot.set_angle(13)`)."""
+        В конце пропускаем результат через `_strip_codegen_comments`,
+        чтобы убрать inline-комментарии и маркер `# CMD: …`. Пользователь
+        не должен ориентироваться на комментарии: источник истины — само
+        тело команды (`robot.move(...)`, `face_cmd(...)`, …). Если бы
+        маркер остался, его правка вводила бы в заблуждение."""
         raw = cmd.raw
         intent = cmd.intent
         c = self.cfg
@@ -3047,8 +3062,6 @@ odo = Odometry()    # глобальный экземпляр одометрии
         dist = nlu.extract_distance(raw)
         cur_steer = int(self.robot_state.steer)
         code_lines: list[str] = []
-        if intent in self._ATOMIC_INTENTS:
-            code_lines.append(f"# CMD: {cmd.code}")
 
         def steer(angle_expr: str) -> str: return f"robot.set_angle({angle_expr})"
         def move(power: str, dur: str) -> str: return f"robot.move({power}, {dur})"
@@ -3260,7 +3273,32 @@ odo = Odometry()    # глобальный экземпляр одометрии
             ]
         else:
             code_lines += ["# нет шаблона"]
-        return code_lines
+        return self._strip_codegen_comments(code_lines)
+
+    @classmethod
+    def _strip_codegen_comments(cls, lines: list[str]) -> list[str]:
+        """Убирает из генерируемых call-строк всё, что выглядит как
+        комментарий: inline `  # …` и старый маркер `# CMD: …`.
+
+        Пустые строки (исключительно из-за «всё было комментарием»)
+        отбрасываются. Полностью пустых строк изначально в генерации нет,
+        поэтому случайных вырезаний не будет."""
+        out: list[str] = []
+        for line in lines:
+            stripped = line.lstrip()
+            if stripped.startswith("# CMD"):
+                # Старый маркер — главный источник путаницы (пользователь
+                # его правил, думая что это команда). Полностью удаляем.
+                continue
+            if stripped.startswith("#"):
+                # Самостоятельная строка-комментарий (плэйсхолдер вроде
+                # "# координаты не указаны") — тоже убираем, чтобы в коде
+                # не было ничего, что не является исполнимым телом.
+                continue
+            cleaned = cls._RE_INLINE_COMMENT.sub("", line).rstrip()
+            if cleaned:
+                out.append(cleaned)
+        return out
 
     # ── Выполнение одной команды ─────────────────────────────────────────────
 

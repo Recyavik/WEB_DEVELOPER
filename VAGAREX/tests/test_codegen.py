@@ -295,16 +295,20 @@ class TestCallLines(unittest.TestCase):
             self.assertFalse(line.lstrip().startswith("# CMD"),
                              f"маркер # CMD должен быть удалён: {line!r}")
 
-    def test_circle_call_has_russian_comment(self):
+    def test_circle_call_has_no_inline_comment(self):
+        """Регрессия: ранее в call-строки добавлялся inline `# окружность`
+        — пользователь правил его, думая что это и есть команда. Теперь
+        комментариев в генерируемом коде нет, источник истины — тело."""
         lines = self.s._python_call_lines_for_cmd(_cmd("circle", raw="Вега вокруг"))
         joined = "\n".join(lines)
         self.assertIn("circle_cmd(", joined)
-        self.assertRegex(joined, r"# окружность")
+        self.assertNotIn("#", joined,
+                         f"в call-строках не должно быть комментариев: {lines!r}")
 
-    def test_face_cardinal_inline_comment(self):
+    def test_face_cardinal_no_inline_comment(self):
         lines = self.s._python_call_lines_for_cmd(
             _cmd("face_s", raw="Вега на юг", code="face_s()", label="Лицом на юг"))
-        self.assertEqual(lines, ["face_cmd(180)  # на юг"])
+        self.assertEqual(lines, ["face_cmd(180)"])
 
 
 class TestParser(unittest.TestCase):
@@ -693,17 +697,25 @@ robot.set_angle(0)  # руль прямо
                          ["steer_right", "forward", "forward", "steer_center"],
                          f"должны распознаться 4 команды, найдено: {intents}")
 
-    def test_codegen_emits_marker_for_atomic_intents(self):
-        """forward/steer/stop должны генерировать `# CMD: ...` маркер."""
+    def test_codegen_no_marker_for_atomic_intents(self):
+        """Регрессия: ранее forward/steer/stop генерировали `# CMD: …`
+        маркер для парсера. Сейчас маркеров НЕТ — пользователь правил
+        этот «комментарий-команду», думая что это исполняемая строка,
+        и не понимал почему правки не применяются. Источник истины —
+        тело программы (`robot.move(...)` и т.п.)."""
         cmd = _cmd("forward", raw="Вега вперед 50 см", code="forward(50)")
         lines = self.s._python_call_lines_for_cmd(cmd)
-        self.assertTrue(any(l.lstrip().startswith("# CMD: forward(50)") for l in lines),
-                        f"forward должен иметь # CMD: маркер. Получено: {lines}")
+        for line in lines:
+            self.assertFalse(line.lstrip().startswith("# CMD"),
+                             f"маркер # CMD должен быть удалён: {line!r}")
+        # И никаких inline-комментариев тоже:
+        joined = "\n".join(lines)
+        self.assertNotIn("#", joined,
+                         f"call-строки forward не должны содержать комментариев: {lines!r}")
 
     def test_codegen_no_marker_for_compound_intents(self):
-        """face_cmd / circle_cmd / goto_cmd — call-строка сама
-        парсится, маркер не нужен (иначе двойной счёт)."""
-        # circle_cmd
+        """face_cmd / circle_cmd / goto_cmd — без маркеров и без
+        inline-комментариев."""
         cmd = _cmd("circle", raw="Вега вокруг", code="circle()")
         lines = self.s._python_call_lines_for_cmd(cmd)
         for line in lines:
