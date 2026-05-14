@@ -653,7 +653,9 @@ class RobotCanvas {
 
   _drawDangerZones() {
     const ctx = this.ctx;
-    // Счётчики по типам — для нумерации внутри каждого вида зон.
+    // Резервные счётчики по типам — только для legacy-зон без display_no.
+    // Источник истины — серверный z.display_no (компактная нумерация 1..N
+    // в пределах своего kind, см. _renumber_zones в session.py).
     let dangerNum = 0, algoNum = 0;
     // Если курсор в режиме установки зон — определим, над какой зоной
     // он сейчас находится (для подсветки кандидата на удаление).
@@ -662,7 +664,9 @@ class RobotCanvas {
       const c = this.worldToCanvas(z.x, z.y);
       const r = z.radius * this.scale;
       const isAlgo = z.kind === 'algorithm';
-      const num = isAlgo ? (++algoNum) : (++dangerNum);
+      const fallback = isAlgo ? (++algoNum) : (++dangerNum);
+      const num = (typeof z.display_no === 'number' && z.display_no > 0)
+                  ? z.display_no : fallback;
       const isHovered = cur &&
         Math.hypot(cur.wx - z.x, cur.wy - z.y) <= z.radius;
 

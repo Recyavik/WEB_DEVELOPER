@@ -12,14 +12,17 @@ from typing import List, Optional, Tuple
 
 @dataclass
 class DangerZoneXY:
-    x:      float
-    y:      float
-    radius: float = 50.0
-    label:  str   = "Опасная зона"
-    db_id:  Optional[int] = None
+    x:          float
+    y:          float
+    radius:     float = 50.0
+    label:      str   = "Опасная зона"
+    db_id:      Optional[int] = None
     # 'danger'    — красная зона обстановки
     # 'algorithm' — желтая пунктирная зона, проставленная алгоритмом
-    kind:   str   = "danger"
+    kind:       str   = "danger"
+    # Порядковый номер в своём kind (для сообщений журнала: «Опасная #2»,
+    # «Внимания #1»). 0 = не назначен (legacy zones до миграции).
+    display_no: int   = 0
 
 
 @dataclass
@@ -37,14 +40,24 @@ class RobotStateXY:
     light_color: tuple = (0, 0, 0)
     battery:    float = 100.0  # заряд аккумулятора, 0..100%
     # Состояние «робот думает» (планировщик в режиме «осторожно»):
-    #   "idle"     — обычное
-    #   "planning" — фиолетовая иконка 🖥, идет A*-поиск пути
-    #   "failed"   — красная иконка, путь не найден, нужен ручной режим
+    #   "idle"           — обычное
+    #   "planning"       — фиолетовая иконка 🖥, идет A*-поиск пути
+    #   "failed"         — красная иконка, путь не найден, нужен ручной режим
+    #   "awaiting_user"  — пауза: ждём ▶ Продолжить от пользователя
     thinking:   str   = "idle"
     # True пока идёт K-turn (разворот на месте Reeds-Shepp). На этом
     # участке робот делает forward/back и физически уходит со связи
     # waypoint-to-waypoint — оценка миссии должна игнорировать отклонения.
     turning_in_place: bool = False
+    # Программа сейчас стоит на ожидании ручного управления (cautious +
+    # algo="manual" или fallback при провале pp/stanley/linear). Выставляется
+    # в _pause_for_manual_handoff, сбрасывается при intent="resume".
+    awaiting_user:    bool = False
+    # Режим установки опасных зон мышью (⛯ Зоны). Взаимоисключающий с
+    # Инспектором и Осторожно — может быть активен только ОДИН из трёх.
+    # Пока True — handle_command отвергает команды движения/зон/режима
+    # сообщением «включён режим установки зон».
+    zone_mode:        bool = False
 
 
 @dataclass
@@ -61,9 +74,10 @@ class WorldXY:
     def add_danger_zone(self, x: float, y: float,
                         radius: float = 50.0, label: str = "Опасная зона",
                         db_id: Optional[int] = None,
-                        kind: str = "danger") -> DangerZoneXY:
+                        kind: str = "danger",
+                        display_no: int = 0) -> DangerZoneXY:
         zone = DangerZoneXY(x=x, y=y, radius=radius, label=label,
-                            db_id=db_id, kind=kind)
+                            db_id=db_id, kind=kind, display_no=display_no)
         self.danger_zones.append(zone)
         return zone
 
@@ -120,7 +134,8 @@ class WorldXY:
             "height": self.height,
             "danger_zones": [
                 {"x": z.x, "y": z.y, "radius": z.radius,
-                 "label": z.label, "db_id": z.db_id, "kind": z.kind}
+                 "label": z.label, "db_id": z.db_id, "kind": z.kind,
+                 "display_no": z.display_no}
                 for z in self.danger_zones
             ],
             "path_history":  self.path_history,
@@ -142,6 +157,8 @@ def state_to_dict(state: RobotStateXY) -> dict:
         "light_color": list(state.light_color),
         "battery":   state.battery,
         "thinking":  state.thinking,
+        "awaiting_user": state.awaiting_user,
+        "zone_mode": state.zone_mode,
     }
 
 

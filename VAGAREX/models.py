@@ -113,9 +113,12 @@ class UserSettings(Base):
     # Размер ячейки сетки A* для планировщика обхода зон в режиме «осторожно».
     # Меньше — точнее путь, медленнее счет. 10 см — хороший баланс.
     path_cell_size_cm  = Column(Integer,     default=10, nullable=False)
-    # Алгоритм следования за рассчитанным путем:
-    #   "pure_pursuit" — смотрит вперед на N см, плавно срезает углы (по умолчанию)
-    #   "stanley"      — учитывает боковое смещение, тянет робота на путь точнее
+    # Алгоритм обхода зон в режиме «осторожно»:
+    #   "pure_pursuit" — A* + Чайкин + следование по точке впереди (плавная дуга)
+    #   "stanley"      — A* + Чайкин + Stanley (учитывает боковое смещение)
+    #   "linear"       — A*-углы + face+forward (прямые с поворотом на месте)
+    #   "manual"       — стоп + пауза exec, ждём команд от пользователя
+    # При неудаче автоматических (pure_pursuit/stanley/linear) — fallback в manual.
     cautious_follow_algo  = Column(String(20),  default="pure_pursuit", nullable=False)
     # Замедлять ли робота на крутых поворотах (улучшает следование)
     cautious_slow_curves  = Column(Boolean,     default=True, nullable=False)
@@ -208,6 +211,11 @@ class DangerZone(Base):
     radius     = Column(Float, default=50.0)
     # 'danger' = опасная зона обстановки, 'algorithm' = желтая пунктирная зона алгоритма
     kind       = Column(String(20), default="danger", nullable=False)
+    # Порядковый номер зоны В ПРЕДЕЛАХ своего kind для данного user_id —
+    # «опасная #1», «опасная #2», «внимания #1», … Назначается ОДИН раз
+    # при создании (max+1), не переиспользуется после удаления. Виден
+    # только в сообщениях журнала.
+    display_no = Column(Integer, default=0, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     active     = Column(Boolean, default=True)
 

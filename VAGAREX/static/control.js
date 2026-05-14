@@ -148,6 +148,15 @@
         logMsg(msg.output || 'Выполнено.', msg.level || 'info');
         break;
 
+      case 'obstacle_block':
+        // Сервер прислал обновлённый блок «Опасные зоны обстановки»
+        // (выход из ⛯ Режим зон). Surgical replace между сентинелями
+        // в обеих textarea (боковая + fallback модалки) + CodeMirror.
+        if (typeof msg.block === 'string') {
+          updateObstacleBlockInTextareas(msg.block);
+        }
+        break;
+
 
       // ── Миссии ────────────────────────────────────────────────────────
       case 'mission_active':
@@ -607,6 +616,58 @@
     try { return localStorage.getItem(_CODE_DRAFT_KEY) || ''; }
     catch (_) { return ''; }
   }
+  // ── Surgical update блока «Опасные зоны обстановки» в textarea ────────
+  // Сентинели должны точно совпадать со строками из session.py
+  // (OBSTACLE_BLOCK_TOP/BOT). При выходе из ⛯ Режим зон сервер шлёт
+  // obstacle_block; находим блок между сентинелями и заменяем.
+  // Если блока ещё нет — вставляем перед «=== НАЧАЛО ПРОГРАММЫ ===».
+  const _OBST_TOP    = '# === Опасные зоны обстановки ===';
+  const _OBST_BOT    = '# === Конец опасных зон обстановки ===';
+  const _START_ANCHOR = '# === НАЧАЛО ПРОГРАММЫ ===';
+
+  function _replaceObstacleBlock(text, newBlock) {
+    if (typeof text !== 'string') return text;
+    // newBlock уже содержит обе сентинели и завершающий \n.
+    const topIdx = text.indexOf(_OBST_TOP);
+    if (topIdx >= 0) {
+      // Блок есть — заменяем от topIdx до конца строки с _OBST_BOT.
+      const botIdx = text.indexOf(_OBST_BOT, topIdx);
+      if (botIdx < 0) return text;       // повреждённый блок — не трогаем
+      const endOfLine = text.indexOf('\n', botIdx);
+      const endIdx = (endOfLine === -1) ? text.length : endOfLine + 1;
+      return text.slice(0, topIdx) + newBlock + text.slice(endIdx);
+    }
+    // Блока нет — вставляем перед НАЧАЛО ПРОГРАММЫ.
+    const anchorIdx = text.indexOf(_START_ANCHOR);
+    if (anchorIdx >= 0) {
+      return text.slice(0, anchorIdx) + newBlock + '\n' + text.slice(anchorIdx);
+    }
+    // Нет и anchor — приклеиваем сверху (вряд ли произойдёт).
+    return newBlock + '\n' + text;
+  }
+
+  function updateObstacleBlockInTextareas(newBlock) {
+    const ids = ['python-code', 'python-code-modal-area'];
+    let sideText = null;
+    for (const id of ids) {
+      const ta = document.getElementById(id);
+      if (!ta) continue;
+      const updated = _replaceObstacleBlock(ta.value || '', newBlock);
+      if (updated !== ta.value) {
+        ta.value = updated;
+        // input → overlay/гуттер/draft-backup пересчитываются автоматом.
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      if (id === 'python-code') sideText = ta.value;
+    }
+    // CodeMirror (когда модуль esm.sh загружен): синхронизируем тем же
+    // итоговым текстом из боковой textarea.
+    if (sideText !== null && window.cmEditor && window.cmEditor.isReady()) {
+      window.cmEditor.setValue(sideText);
+    }
+    logMsg('🗺 Блок «Опасные зоны обстановки» обновлён.', 'info');
+  }
+
   function _saveCodeDraft(text) {
     try {
       if (text && text.trim()) localStorage.setItem(_CODE_DRAFT_KEY, text);
@@ -1027,13 +1088,19 @@
     set('st-dist',    s.dist_left > 0 ? s.dist_left.toFixed(0) : '—');
     set('st-laser',   s.laser_dist > 0 ? s.laser_dist.toFixed(0) : '—');
 
-    // Один источник правды: «осторожно» имеет приоритет над модальным режимом.
+    // Три взаимоисключающих режима: zone_mode | cautious | inspector.
+    // Серверный mutex гарантирует, что одновременно установлен только один.
+    const zoneMode = !!s.zone_mode;
     const cautious = !!s.cautious;
-    const modeText = cautious ? 'осторожно' : modeLabel(s.mode);
+    let modeText;
+    if (zoneMode)      modeText = 'установка зон';
+    else if (cautious) modeText = 'осторожно';
+    else               modeText = modeLabel(s.mode);
     const stMode = document.getElementById('st-mode');
     if (stMode) {
       stMode.textContent = modeText;
       stMode.classList.toggle('state-value--cautious', cautious);
+      stMode.classList.toggle('state-value--zone', zoneMode);
     }
 
     // Зарядка: шкала с цветом как у реальных индикаторов
@@ -1054,27 +1121,47 @@
       else if (battery < 60) stFill.classList.add('battery-gauge__fill--mid');
     }
 
-    // Переключаем mode-классы ТОЛЬКО при реальной смене режима — иначе
-    // при каждом push_state (а они идут ~10/с во время движения) classList
-    // дёргается, и transition в .btn вызывает визуальное мигание кнопок
-    // «Инспектор» / «Осторожно». Кэшируем последнее значение на window.
-    if (window._lastCautious !== cautious) {
+    // Подсветка тройного mutex'а (zone / cautious / inspector). Кэшируем
+    // оба флага и обновляем только при реальной смене — иначе classList
+    // дёргается на каждом push_state (10/с во время движения).
+    if (window._lastCautious !== cautious || window._lastZoneMode !== zoneMode) {
       window._lastCautious = cautious;
+      window._lastZoneMode = zoneMode;
       const btnInsp = document.getElementById('btn-mode-inspector');
       const btnCaut = document.getElementById('btn-mode-cautious');
-      if (btnInsp) btnInsp.classList.toggle('is-active', !cautious);
-      if (btnCaut) btnCaut.classList.toggle('is-active',  cautious);
+      const btnZone = document.getElementById('btn-zone-mode');
+      // Инспектор активен ТОЛЬКО когда оба других выключены.
+      const inspector = !cautious && !zoneMode;
+      if (btnInsp) btnInsp.classList.toggle('is-active', inspector);
+      if (btnCaut) btnCaut.classList.toggle('is-active', cautious);
+      if (btnZone) btnZone.classList.toggle('is-active', zoneMode);
       const appbar = document.querySelector('.appbar');
       if (appbar) appbar.classList.toggle('appbar--cautious', cautious);
       // body.mode-cautious — глобальный сигнал «всё работает в осторожно»
       // для action-кнопок (.btn--mode-action перекрашиваются под warn).
       document.body.classList.toggle('mode-cautious', cautious);
+      document.body.classList.toggle('mode-zone', zoneMode);
+      // Синхронизуем canvas-режим зон и подвал-хинт. canvas / setStatus
+      // лежат в той же module-scope.
+      if (canvas) canvas.setZoneMode(zoneMode);
+      if (zoneMode) {
+        const r = (canvas && canvas.zoneRadius) || 30;
+        setStatus(`⛯ Режим зон  •  радиус ${r} см  •  ` +
+                  `ЛКМ — поставить, ПКМ — удалить (опасные), ` +
+                  `[+/-] — радиус, ESC — выход`, 'hint');
+      } else {
+        setStatus(null, 'hint:clear');
+      }
     }
 
     // Дублирующий бейдж больше не нужен — режим уже виден в строке «Режим».
     const caut = document.getElementById('caution-badge');
     if (caut) caut.style.display = 'none';
 
+    // ▶ Продолжить — кнопка появляется только когда программа на ручной
+    // паузе (s.awaiting_user). Источник истины — флаг с сервера.
+    const btnResume = document.getElementById('btn-resume');
+    if (btnResume) btnResume.hidden = !s.awaiting_user;
   }
 
   function modeLabel(m) {
@@ -1899,6 +1986,26 @@
       sendCmd('Вега в точку ' + cleaned);
     });
 
+    // «⌒ Дуга…» — спросить угол (и опционально направление). По умолчанию
+    // против часовой; «-N» или приставка «по часовой» = CW. Сервер кидает
+    // через NLU intent «arc», который дёргает _run_arc(N, dir).
+    document.getElementById('btn-arc')?.addEventListener('click', () => {
+      const raw = prompt(
+        'Угол дуги в градусах.\n'
+        + 'По умолчанию — ПРОТИВ часовой. Для дуги ПО часовой добавьте\n'
+        + '«-» (например «-180») или префикс «по часовой» (например\n'
+        + '«по часовой 90»). arc(360) = полный круг.',
+        '90');
+      if (raw === null) return;
+      let v = raw.trim();
+      if (!v) return;
+      // Отрицательное число → «по часовой N»; знак убираем.
+      if (/^-\d/.test(v)) {
+        v = 'по часовой ' + v.slice(1);
+      }
+      sendCmd('Вега дуга ' + v);
+    });
+
     // «🟡 Установить зону…» — спросить только радиус, поставить в
     // текущей позиции робота. Без goto: пользователь сам подъехал куда
     // надо (стрелками или «📍 В точку…»), и просто помечает место.
@@ -1947,30 +2054,34 @@
       });
 
     // ── ⛯ Режим установки опасных зон мышью ───────────────────────────
-    // Toggle-кнопка: ЛКМ ставит, Ctrl+ЛКМ удаляет, +/- меняет радиус,
-    // ESC/ПКМ выход. Видимое состояние — класс .is-active на кнопке.
+    // Взаимоисключающий с «Инспектор» и «Осторожно» (server-side mutex):
+    // только один из трёх режимов активен. Источник истины — серверный
+    // флаг s.zone_mode, клиент только отрисовывает по push_state.
     const btnZoneMode = document.getElementById('btn-zone-mode');
-    function setZoneModeActive(on) {
+    // Локальная UI-функция: применяет визуальное состояние (canvas,
+    // подсветка кнопки, подвал-хинт). НЕ шлёт ничего на сервер.
+    function applyZoneModeUI(on) {
       if (!canvas) return;
       canvas.setZoneMode(on);
       if (btnZoneMode) btnZoneMode.classList.toggle('is-active', on);
       if (on) {
-        logMsg(`⛯ Режим зон ВКЛ. Радиус ${canvas.zoneRadius} см. ` +
-               `ЛКМ ставит опасную зону, ПКМ удаляет опасную (зоны внимания не трогаются), ` +
-               `[+/-] меняет радиус, ESC выход.`, 'info');
-        // Закрепить sticky-подсказку в подвале — пока режим включён,
-        // обычные log-сообщения её не перебьют.
         setStatus(`⛯ Режим зон  •  радиус ${canvas.zoneRadius} см  •  ` +
                   `ЛКМ — поставить, ПКМ — удалить (опасные), ` +
                   `[+/-] — радиус, ESC — выход`, 'hint');
       } else {
         setStatus(null, 'hint:clear');
-        logMsg('⛯ Режим зон выключен.', 'info');
+      }
+    }
+    // Toggle: отправляем серверу намерение. Сервер выставит s.zone_mode
+    // и пришлёт state-обновление, по нему applyZoneModeUI отрендерит.
+    function requestZoneModeToggle(on) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'set_zone_mode', active: !!on }));
       }
     }
     if (btnZoneMode && canvas) {
       btnZoneMode.addEventListener('click', () => {
-        setZoneModeActive(!canvas.zoneMode);
+        requestZoneModeToggle(!canvas.zoneMode);
       });
       // Коллбеки от canvas — отправляют команды на сервер
       canvas.onZonePlace = (wx, wy, r) => {
@@ -1999,7 +2110,7 @@
         if (tag === 'INPUT' || tag === 'TEXTAREA') return;
         if (e.key === 'Escape') {
           e.preventDefault();
-          setZoneModeActive(false);
+          requestZoneModeToggle(false);
         } else if (e.key === '+' || e.key === '=') {
           e.preventDefault();
           canvas.changeZoneRadius(+canvas.zoneRadiusStep);

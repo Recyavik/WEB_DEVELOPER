@@ -39,10 +39,11 @@
         <input class="settings-input" type="number" name="move_speed"
                value="{{ cfg.move_speed }}" min="5" max="100" required>
 
-        <label class="settings-label">Угол руля, °</label>
+        <label class="settings-label">Максимальный угол руля, °</label>
         <input class="settings-input" type="number" name="turn_angle"
                value="{{ cfg.turn_angle }}" min="5" max="45" required>
-        <span class="settings-hint">Аппаратный предел 1T REX — 45°. Рекомендуется ≤36°.</span>
+        <span class="settings-hint">Аппаратный предел 1T REX — 45°. Рекомендуется ≤36°.
+          Используется в командах <code>arc</code> (дуга) и аналогах для радиуса.</span>
       </div>
     </section>
 
@@ -167,15 +168,21 @@
           узкий проход. По умолчанию 10 см.
         </span>
 
-        <label class="settings-label">Алгоритм следования</label>
+        <label class="settings-label">Алгоритм обхода</label>
         <select class="settings-input" name="cautious_follow_algo"
                 data-hint-group="follow_algo"
                 onchange="toggleHintGroup(this)">
           <option value="pure_pursuit" {% if cfg.cautious_follow_algo == "pure_pursuit" %}selected{% endif %}>
-            Pure-pursuit («почти по траектории»)
+            Pure-pursuit (плавная дуга)
           </option>
           <option value="stanley" {% if cfg.cautious_follow_algo == "stanley" %}selected{% endif %}>
             Stanley (точное следование)
+          </option>
+          <option value="linear" {% if cfg.cautious_follow_algo == "linear" %}selected{% endif %}>
+            Линейный (прямые + поворот на месте)
+          </option>
+          <option value="manual" {% if cfg.cautious_follow_algo == "manual" %}selected{% endif %}>
+            Ручной (пауза → управление пользователю)
           </option>
         </select>
         <span class="settings-hint" data-hint-group="follow_algo" data-hint-for="pure_pursuit">
@@ -185,6 +192,18 @@
         <span class="settings-hint" data-hint-group="follow_algo" data-hint-for="stanley">
           <strong>Stanley</strong> — учитывает боковое смещение и активно тянет
           робота на путь. Точнее держит линию, может быть резче на крутых поворотах.
+        </span>
+        <span class="settings-hint" data-hint-group="follow_algo" data-hint-for="linear">
+          <strong>Линейный обход</strong> — A* строит ломаную обхода, робот едет
+          прямыми отрезками с поворотами на месте (K-turn) в углах. Точно по
+          вершинам, без срезов. Дольше из-за разворотов, но предсказуемо.
+        </span>
+        <span class="settings-hint" data-hint-group="follow_algo" data-hint-for="manual">
+          <strong>Ручной</strong> — робот НЕ пытается обойти автоматически.
+          Если путь команды пересекает зону, он останавливается, программа
+          паузится, управление передаётся обучающемуся (можно ехать вручную
+          голосом/кнопками). После выезда — кнопка «▶ Продолжить» возобновляет
+          следующую команду программы.
         </span>
 
         <label class="settings-label">Замедлять на поворотах</label>

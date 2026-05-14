@@ -113,7 +113,8 @@ def _ensure_schema_migrations():
             "password_changed_by_user": "BOOLEAN NOT NULL DEFAULT TRUE",
         },
         "danger_zones": {
-            "kind": "VARCHAR(20) NOT NULL DEFAULT 'danger'",
+            "kind":       "VARCHAR(20) NOT NULL DEFAULT 'danger'",
+            "display_no": "INTEGER NOT NULL DEFAULT 0",
         },
         "robot_sessions": {
             "user_id": "INTEGER",
@@ -1271,7 +1272,9 @@ async def api_settings_save(
     row.battery_minutes   = max(1, min(720, battery_minutes))   # 1 мин — 12 ч
     row.path_cell_size_cm = max(2, min(50, path_cell_size_cm))
     row.cautious_follow_algo = (cautious_follow_algo
-                                if cautious_follow_algo in ("pure_pursuit", "stanley")
+                                if cautious_follow_algo in (
+                                    "pure_pursuit", "stanley",
+                                    "linear", "manual")
                                 else "pure_pursuit")
     row.cautious_slow_curves = (cautious_slow_curves == "1")
     row.wall_turn_strategy   = (wall_turn_strategy
@@ -1339,11 +1342,18 @@ async def api_add_zone(x: float = Form(...), y: float = Form(...),
                         current_user: User = Depends(require_user),
                         db: Session = Depends(get_db)):
     sess = await get_or_create_session(current_user.id, db)
-    dz = DangerZone(user_id=current_user.id, label=label, x=x, y=y, radius=radius)
+    # Порядковый номер опасной зоны: max display_no в kind='danger' + 1.
+    # Считаем по in-memory world (источник истины для активных зон).
+    no = sess._next_zone_display_no("danger")
+    dz = DangerZone(user_id=current_user.id, label=label, x=x, y=y,
+                    radius=radius, kind="danger", display_no=no)
     db.add(dz); db.commit()
-    sess.world.add_danger_zone(x, y, radius, label, db_id=dz.id)
+    sess.world.add_danger_zone(x, y, radius, label, db_id=dz.id,
+                                kind="danger", display_no=no)
+    await sess.push_message(
+        f"⚠ Опасная #{no} в ({x:.0f}, {y:.0f}), r={radius:.0f}.", "info")
     await sess.push_world()
-    return {"ok": True, "id": dz.id}
+    return {"ok": True, "id": dz.id, "display_no": no}
 
 
 @app.delete("/api/danger_zones/{zone_id}")
@@ -1694,6 +1704,46 @@ async def websocket_endpoint(ws: WebSocket):
                 await sess.push_message(
                     "Дальномер " + ("включен." if enabled else "выключен."),
                     "info")
+            elif t == "set_zone_mode":
+                # ⛯ «Режим зон» — взаимоисключающий с Инспектором и
+                # Осторожно. Включение чистит cautious. При включённом
+                # zone_mode handle_command блокирует команды движения.
+                active = bool(data.get("active", False))
+                s = sess.robot_state
+                # Во время миссии ⛯ Зоны заблокирован — обучающийся не
+                # может править обстановку, иначе условия миссии ломаются.
+                if active and sess._mission is not None:
+                    await sess.push_message(
+                        "⛯ Во время миссии режим установки зон "
+                        "недоступен. Заверши или останови миссию.",
+                        "warning")
+                    # Принудительно синкаем клиента (вдруг локально успел
+                    # подсветить кнопку).
+                    await sess.push_state()
+                    continue
+                s.zone_mode = active
+                if active:
+                    # Прерываем любую активную работу (на всякий случай,
+                    # если робот ехал и пользователь решил настроить зоны).
+                    await sess._do_stop()
+                    # Запрет «осторожно»: режимы взаимоисключающи.
+                    s.cautious = False
+                    s.mode = "normal"
+                    await sess.push_message(
+                        "⛯ Режим установки зон ВКЛ. Робот не выполняет "
+                        "команды — мышью кладём/убираем опасные зоны. "
+                        "Выход — клик по «⛯ Зоны» ещё раз, ESC, или "
+                        "переключение в «Инспектор»/«Осторожно».", "info")
+                else:
+                    await sess.push_message(
+                        "⛯ Режим установки зон выключен.", "info")
+                    # При выходе из режима зон — обстановка зафиксирована
+                    # и обновляется в коде программы (блок DANGER_ZONES).
+                    await sess.broadcast({
+                        "type": "obstacle_block",
+                        "block": sess._obstacle_block(),
+                    })
+                await sess.push_state()
             elif t == "ping":
                 await ws.send_json({"type": "pong"})
             # voice_listen игнорируем — голос пока выключен в мульти-режиме

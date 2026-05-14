@@ -307,10 +307,12 @@ class TestCallLines(unittest.TestCase):
         """Регрессия: ранее в call-строки добавлялся inline `# окружность`
         — пользователь правил его, думая что это и есть команда. Теперь
         комментариев в генерируемом коде нет, источник истины — тело.
-        Day 2: circle_cmd → robot.circle (новый Python-API)."""
+        Day 2: circle_cmd → robot.circle. Day 3 (2026-05-15): circle убран
+        как самостоятельный метод, «круг» → robot.arc(360, dir)."""
         lines = self.s._python_call_lines_for_cmd(_cmd("circle", raw="Вега вокруг"))
         joined = "\n".join(lines)
-        self.assertIn("robot.circle(", joined)
+        self.assertIn("robot.arc(360", joined)
+        self.assertNotIn("robot.circle(", joined)
         self.assertNotIn("#", joined,
                          f"в call-строках не должно быть комментариев: {lines!r}")
 
@@ -798,6 +800,10 @@ class TestProgramTextRoundTrip(unittest.TestCase):
         self.assertIn("def circle_cmd(", text)
 
 
+@unittest.skip("Day 3 (2026-05-15): mark_danger удалён из API — красные "
+               "зоны теперь только обстановка (mission load / UI-мышь). "
+               "Взаимное гашение mark_danger ↔ remove_zone больше не "
+               "нужно: команды mark_danger в _program не появляются.")
 class TestZoneCancellation(unittest.TestCase):
     """Взаимное гашение mark_danger ↔ remove_zone — только для опасных зон.
     Зоны внимания (set_algorithm_zone) НЕ гасятся."""
@@ -1106,9 +1112,7 @@ class TestStableCommandSurface(unittest.TestCase):
         ("face_to",            "вега поверни на",             True),   # без угла
         ("set_course",         "вега курс 90",                False),
         ("set_course",         "вега курс",                   True),   # без угла
-        # Зоны
-        ("mark_danger",        "вега опасная зона 100 50 20", False),
-        ("mark_danger",        "вега опасная зона",           False),  # under robot
+        # Зоны (mark_danger удалён из API — красные зоны = обстановка)
         ("set_algorithm_zone", "вега установи зону 100 100",  False),
         # Без координат — теперь валидно: ставит в текущей позиции робота.
         ("set_algorithm_zone", "вега установи зону",          False),

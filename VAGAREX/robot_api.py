@@ -209,14 +209,17 @@ class RobotProxy:
         Чем больше шагов, тем плавнее и компактнее манёвр."""
         self._run(self._session._k_turn_n(int(direction), int(steps)))
 
-    def circle(self, direction: int = -1):
-        """Полный круг при максимальном угле руля.
-        `direction`: +1 = по часовой, -1 = против часовой."""
-        self._run(self._session._run_circle(int(direction)))
+    def arc(self, angle_deg: float, direction: int = -1):
+        """Дуга на угол `angle_deg` градусов при МАКСИМАЛЬНОМ угле руля
+        (из настроек «Максимальный угол руля»). По умолчанию ПРОТИВ
+        часовой стрелки (математическое +). `direction`: +1 = по часовой,
+        -1 = против часовой. `arc(360)` = полный круг."""
+        self._run(self._session._run_arc(float(angle_deg), int(direction)))
 
     def figure_eight(self, direction: int = -1):
-        """Восьмёрка: круг в одну сторону + круг в другую.
-        `direction` задаёт направление ПЕРВОГО круга."""
+        """Восьмёрка через две дуги по 360°: круг в одну сторону + круг
+        в другую. `direction` задаёт направление ПЕРВОГО круга
+        (+1 = по часовой, -1 = против часовой)."""
         self._run(self._session._run_figure_eight(int(direction)))
 
     def spiral(self, direction: int = 1, outward: bool = True):
@@ -269,19 +272,57 @@ class RobotProxy:
         self._session.cfg.turn_angle = int(angle_deg)
 
     # ── Зоны (action-команды — нужен mission tracking) ──────────────────────
+    # «Опасные» (красные) зоны — это обстановка, выставляется ДО запуска
+    # программы (UI-мышь / mission_generator / pre-flight). Программно
+    # СТАВИТЬ их нельзя — только удалять командой `remove_zone*`, когда
+    # робот стоит внутри.
 
-    def mark_danger(self, x: float, y: float, radius: Optional[float] = None):
-        """Пометить опасную зону в точке (x, y)."""
-        r = float(radius) if radius is not None else None
-        self._run(self._session._run_mark_danger(float(x), float(y), r, None))
-        self._session._mission_check_action("mark_danger", float(x), float(y))
+    def load_danger_zones(self, zones) -> int:
+        """Установить опасные зоны обстановки на карте из списка
+        `[(x, y, radius), ...]`. Заменяет текущие красные зоны
+        (идемпотентно: повторный вызов с теми же данными даст тот же
+        результат). Используется в авто-генерируемом блоке начала
+        программы, чтобы пользователь видел установку явно.
 
-    def mark_danger_here(self, radius: Optional[float] = None):
-        """Пометить опасную зону в текущей позиции робота."""
-        s = self._session.robot_state
-        r = float(radius) if radius is not None else None
-        self._run(self._session._run_mark_danger(None, None, r, None))
-        self._session._mission_check_action("mark_danger", s.x, s.y)
+        Жёлтые зоны внимания (kind='algorithm') этим методом НЕ
+        затрагиваются — они часть runtime-логики, не обстановки.
+
+        Возвращает: количество установленных зон."""
+        triples: list[tuple[float, float, float]] = []
+        for item in (zones or []):
+            try:
+                x, y, r = item
+                triples.append((float(x), float(y), float(r)))
+            except (TypeError, ValueError):
+                continue
+        self._run(self._session._run_load_danger_zones(triples))
+        return len(triples)
+
+    def show_danger_zones(self) -> list[tuple[float, float, float]]:
+        """Показать активные опасные зоны в журнале и вернуть их список.
+
+        Использует текущее состояние world (то же, что в `DANGER_ZONES`
+        в преамбуле кода). Полезно для проверки обстановки в начале
+        алгоритма — обучающийся видит сколько и каких зон сейчас активно.
+
+        Возвращает: список троек (x, y, radius) в порядке номеров #1..#N.
+        Можно итерировать в своём коде:
+            for x, y, r in robot.show_danger_zones():
+                ...
+        """
+        danger = sorted(
+            (z for z in self._session.world.danger_zones if z.kind == "danger"),
+            key=lambda z: z.display_no or 0)
+        if not danger:
+            self._run(self._session.push_message(
+                "🗺 Опасных зон сейчас нет.", "info"))
+            return []
+        lines = [f"🗺 Активны опасные зоны ({len(danger)}):"]
+        for z in danger:
+            no = z.display_no or 0
+            lines.append(f"   #{no}: ({z.x:.0f}, {z.y:.0f}) r={z.radius:.0f}")
+        self._run(self._session.push_message("\n".join(lines), "info"))
+        return [(z.x, z.y, z.radius) for z in danger]
 
     def attention_zone(self, x: float, y: float, radius: Optional[float] = None):
         """Поставить жёлтую зону внимания в точке (x, y) — РИСУЕТ, не едет."""

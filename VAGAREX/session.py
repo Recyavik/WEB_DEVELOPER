@@ -107,8 +107,9 @@ class UserCfg:
     danger_zone_radius: float
     battery_minutes:    int  = 60
     path_cell_size_cm:  int  = 10
-    # Следование за рассчитанным путем в режиме «осторожно»
-    cautious_follow_algo: str  = "pure_pursuit"   # "pure_pursuit" | "stanley"
+    # Алгоритм обхода зон в режиме «осторожно»:
+    #   pure_pursuit / stanley / linear / manual (см. models.UserSettings)
+    cautious_follow_algo: str  = "pure_pursuit"
     cautious_slow_curves: bool = True
     # Стратегия разворота в тесном пространстве (см. _run_face_cardinal):
     #   "backoff"    — отъехать назад на «нужно forward_need», сделать
@@ -208,6 +209,13 @@ class UserSession:
         # настройки (код — источник истины, настройки — только дефолты).
         self._last_python_code: Optional[str] = None
 
+        # Событие для «pause/resume» в режиме обхода «manual» и fallback.
+        # При manual-handoff exec-цепочка делает `await event.wait()`, а
+        # дальше управление переходит к пользователю (голос/кнопки/руль).
+        # ▶ Продолжить (intent="resume") дёргает `event.set()` → exec
+        # просыпается и продолжает со следующей инструкции.
+        self._resume_event: asyncio.Event = asyncio.Event()
+
         # Эффективная стартовая точка — то, куда телепортируется робот
         # при reset, и где рисуется зелёный маркер на canvas. None пока
         # не было ни одного reset (новая сессия) — используется fallback
@@ -299,10 +307,9 @@ class UserSession:
           1. Загружаем миссию из БД, создаём MissionRun.
           2. Сбрасываем поле (_run_reset): робот в стартовую точку,
              зоны/путь очищаются, _program пустеет.
-          3. Опасные зоны миссии превращаются в начальные команды
-             mark_danger_cmd(...) в _program — пользователь видит их
-             как обычные команды программы (можно изучать/править/
-             запускать ▶).
+          3. Опасные зоны миссии кладутся СРАЗУ в world + DB (это
+             обстановка, а не команды программы). При ↺ Поле / ▶ Run
+             в `_run_reset` они переставляются обратно из self._mission.
           4. Широковещаем mission_active + новое состояние world/program.
         """
         from mission_state import from_mission_row
@@ -347,15 +354,24 @@ class UserSession:
                 start_x=self.robot_state.x, start_y=self.robot_state.y,
                 run_id=run.id,
             )
-            # Опасные зоны миссии → начальные команды mark_danger_cmd
-            # в _program. В world они НЕ кладутся — появятся в физике,
-            # только когда пользователь запустит ▶ Запустить код.
+            # Опасные зоны миссии — это ОБСТАНОВКА: ставятся СРАЗУ в
+            # world + DB (а не в код программы). Программа их не создаёт
+            # и не может создать (robot.mark_danger удалён из API).
+            # Удалять — можно (`robot.remove_zone*` когда робот внутри).
             for (zx, zy, zr) in self._mission.danger_zones:
-                raw = f"Вега опасная зона {int(zx)} {int(zy)} {int(zr)}"
-                cmd = self._build_cmd("mark_danger", raw)
-                if cmd is not None:
-                    self._program.append(cmd)
-            self._save_program()
+                no = self._next_zone_display_no("danger")
+                zone = self.world.add_danger_zone(
+                    float(zx), float(zy), radius=float(zr),
+                    label="Зона опасности", kind="danger",
+                    display_no=no)
+                dz = DangerZone(user_id=self.user_id, label=zone.label,
+                                x=zone.x, y=zone.y, radius=zone.radius,
+                                kind="danger", display_no=no)
+                db.add(dz)
+                db.flush()
+                zone.db_id = dz.id
+            db.commit()
+            await self.push_world()
         finally:
             db.close()
         # На миссиях с опасными зонами (уровень ≥ 2) форсим режим
@@ -598,7 +614,8 @@ class UserSession:
             for z in zones:
                 self.world.add_danger_zone(z.x, z.y, z.radius, z.label,
                                            db_id=z.id,
-                                           kind=(z.kind or "danger"))
+                                           kind=(z.kind or "danger"),
+                                           display_no=int(getattr(z, "display_no", 0) or 0))
         finally:
             db.close()
 
@@ -618,41 +635,6 @@ class UserSession:
             db.commit()
         finally:
             db.close()
-
-    def _cancel_matching_mark_danger(self, rx: float, ry: float) -> bool:
-        """Ищет в self._program последнюю команду mark_danger (КРАСНУЮ зону),
-        чьё кольцо содержит точку (rx, ry), и удаляет её из программы.
-
-        Используется при «взаимном гашении»: если пользователь поставил
-        опасную зону, а потом её удалил (мышью в режиме зон или командой
-        «убрать зону»), обе команды убираются из программы — как будто
-        их и не было. Применимо только к зонам, поставленным в этой же
-        сессии и записанным в _program; внешние зоны (расставленные
-        генератором заданий и т.п.) не задеваются.
-
-        ⚠ ЖЁЛТЫЕ зоны (set_algorithm_zone) НЕ гасятся, даже если попадают
-        под точку удаления — они создаются алгоритмом по условию
-        (радиация/температура и т.п.), и их история ВАЖНА для понимания
-        работы алгоритма. Поэтому фильтр явно по `intent == "mark_danger"`,
-        а не «любая зональная команда».
-
-        Возвращает True если что-то удалили."""
-        for idx in range(len(self._program) - 1, -1, -1):
-            prev = self._program[idx]
-            if prev.intent != "mark_danger":
-                continue
-            prev_xy = nlu.extract_coordinates(prev.raw)
-            if prev_xy is None:
-                continue
-            prev_r = nlu.extract_radius(prev.raw)
-            if prev_r is None:
-                prev_r = float(self.cfg.danger_zone_radius)
-            px, py = prev_xy
-            if math.hypot(rx - px, ry - py) <= prev_r:
-                self._program.pop(idx)
-                self._save_program()
-                return True
-        return False
 
     # ── Применение новых настроек (при сохранении в settings) ──────────────────
 
@@ -1166,15 +1148,19 @@ class UserSession:
         finally:
             s.laser_stop = False
 
-    async def _run_circle(self, direction: int = -1):
-        """Один полный круг (2π) при максимальном угле руля.
-        По умолчанию ПРОТИВ часовой стрелки (CCW, математическое
-        положительное направление, от 0 до 2π). direction=+1 — по часовой."""
+    async def _run_arc(self, angle_deg: float, direction: int = -1):
+        """Дуга на `angle_deg` градусов курса при максимальном угле руля
+        (cfg.turn_angle). По умолчанию ПРОТИВ часовой (CCW, мат. +).
+        direction=+1 — по часовой. `angle_deg` — модуль, направление
+        управляется отдельным параметром. `_run_arc(360, dir)` = полный круг."""
         s = self.robot_state
         spd = self.cfg.move_speed
         steer = direction * self.cfg.turn_angle
+        sweep = abs(float(angle_deg))
+        if sweep <= 0:
+            return
         try:
-            await self._arc_at_steer(steer, 360.0, spd)
+            await self._arc_at_steer(steer, sweep, spd)
         except asyncio.CancelledError:
             pass
         finally:
@@ -1186,16 +1172,16 @@ class UserSession:
         await self.push_state()
 
     async def _run_figure_eight(self, direction: int = -1):
-        """Восьмерка: первый круг ПРОТИВ часовой (CCW), второй — по часовой.
-        direction=+1 — наоборот, начать по часовой."""
+        """Восьмёрка через ДВЕ дуги по 360°: первый круг в `direction`,
+        второй — в противоположную. По умолчанию первый CCW, второй CW."""
         s = self.robot_state
         spd = self.cfg.move_speed
         steer = self.cfg.turn_angle
         try:
-            await self.push_message("Восьмерка: круг 1/2…", "info")
+            await self.push_message("Восьмерка: дуга 1/2 (360°)…", "info")
             await self._arc_at_steer(direction * steer, 360.0, spd)
             await asyncio.sleep(0.2)
-            await self.push_message("Восьмерка: круг 2/2…", "info")
+            await self.push_message("Восьмерка: дуга 2/2 (360°)…", "info")
             await self._arc_at_steer(-direction * steer, 360.0, spd)
         except asyncio.CancelledError:
             pass
@@ -1352,6 +1338,15 @@ class UserSession:
             await self._run_goto_direct(target_x, target_y)
             return True
 
+        # Режим manual — НЕ ищем обход вообще. Передаём управление
+        # пользователю сразу при первом goto, путь которого пересекает зону.
+        algo_choice = (cfg.cautious_follow_algo or "pure_pursuit").lower()
+        if algo_choice == "manual":
+            await self._pause_for_manual_handoff(
+                target_x, target_y,
+                "Путь к цели пересекает зону, авто-обход отключён.")
+            return True
+
         # Нужен обход — запускаем A*.
         await self.push_message(
             "⚠ Прямой путь к цели пересекает опасную зону. Ищу обход…",
@@ -1376,29 +1371,37 @@ class UserSession:
             pass
 
         if not waypoints:
-            s.thinking = "failed"
+            # A* не нашёл прохода — fallback в manual: пользователь сам
+            # объедет/удалит зону, потом ▶ Продолжить.
+            await self._pause_for_manual_handoff(
+                target_x, target_y,
+                "Авто-обход не нашёл прохода между зонами.")
+            return True
+
+        # Выбор алгоритма обхода. Linear — идём прямыми по углам A*,
+        # повороты на месте (K-turn) в каждой вершине. Остальные — гладкая
+        # дуга через Чайкин + pure-pursuit/stanley follower.
+        algo = (cfg.cautious_follow_algo or "pure_pursuit").lower()
+        if algo == "linear":
+            # Подсветка пути на canvas — сами A*-углы (полилиния).
+            self.world.add_auto_segment(waypoints)
+            s.thinking = "idle"
+            await self.push_world()
             await self.push_state()
-            await self.push_message(
-                f"🖥 Решение не найдено: между опасными зонами нет прохода "
-                f"к ({target_x:.0f}, {target_y:.0f}). "
-                f"Перейдите в ручной режим или измените зоны.",
-                "error")
-            return False
-
-        # Сглаживаем ломаную в дугообразную кривую (Чайкин 3 итерации)
-        # и пересэмплируем равномерно — pure-pursuit нужен плотный путь.
-        smooth = pp.chaikin_smooth(waypoints, iterations=3)
-        dense  = pp.resample_curve(smooth, step_cm=5.0)
-
-        # Фиксируем сегмент для фиолетовой подсветки на canvas.
-        self.world.add_auto_segment(smooth)
-        s.thinking = "idle"
-        await self.push_world()  # сегмент должен появиться сразу
-        await self.push_state()
-
-        # Pure-pursuit / Stanley follow: робот непрерывно крутит рулем
-        # к точке впереди, без K-turn'ов и резких разворотов.
-        ok = await self._follow_curve(dense)
+            ok = await self._follow_linear(waypoints)
+        else:
+            # Сглаживаем ломаную в дугообразную кривую (Чайкин 3 итерации)
+            # и пересэмплируем равномерно — pure-pursuit нужен плотный путь.
+            smooth = pp.chaikin_smooth(waypoints, iterations=3)
+            dense  = pp.resample_curve(smooth, step_cm=5.0)
+            # Фиксируем сегмент для фиолетовой подсветки на canvas.
+            self.world.add_auto_segment(smooth)
+            s.thinking = "idle"
+            await self.push_world()  # сегмент должен появиться сразу
+            await self.push_state()
+            # Pure-pursuit / Stanley follow: робот непрерывно крутит рулем
+            # к точке впереди, без K-turn'ов и резких разворотов.
+            ok = await self._follow_curve(dense)
 
         # Финальная доводка: следящий алгоритм почти всегда заканчивает
         # с небольшим отклонением (5–30 см) — pure-pursuit срезает углы,
@@ -1417,10 +1420,13 @@ class UserSession:
         if remaining < 10.0:
             return True
         if not ok:
-            await self.push_message(
-                "⚠ Не доехал до цели по запланированному пути. "
-                "Возможно касание зоны или стены.", "warning")
-            return False
+            # Follower обрвалcя (касание зоны/стены/обрыв пути). Fallback
+            # в manual: пользователь дорулит, потом ▶ Продолжить.
+            await self._pause_for_manual_handoff(
+                target_x, target_y,
+                f"Автоматическое следование сорвалось ({algo}). "
+                f"Осталось {remaining:.0f} см.")
+            return True
         return True
 
     @staticmethod
@@ -1489,12 +1495,94 @@ class UserSession:
         t = eff / max(1.0, slow_zone_cm)
         return min_factor + (1.0 - min_factor) * t
 
+    async def _pause_for_manual_handoff(self,
+                                          target_x: float, target_y: float,
+                                          reason: str) -> None:
+        """Останавливает робота и блокирует exec-цепочку программы до
+        ▶ Продолжить от пользователя. Используется когда:
+          • cautious + algo="manual" — на любой пересекающий зону goto
+          • cautious + algo=(pp|stanley|linear) FAIL — fallback из «не нашёл/
+            не доехал» в ручной режим (раз автоматика не справилась).
+        Поднимает `s.awaiting_user` и `thinking=awaiting_user` — UI показывает
+        кнопку ▶ Продолжить. Голос/кнопки/руль работают как обычно: они
+        идут через handle_command, а не через exec, поэтому не блокированы.
+        После возобновления exec продолжает СЛЕДУЮЩУЮ инструкцию (не goto)."""
+        s = self.robot_state
+        # Гарантированно тормозим и центрируем руль.
+        await self.robot.stop()
+        await self.robot.set_servo_center()
+        s.speed = 0
+        s.dist_left = 0
+        s.steer = 0.0
+        s.thinking = "awaiting_user"
+        s.awaiting_user = True
+        self._resume_event.clear()
+        await self.push_message(
+            f"⏸ {reason} Цель ({target_x:.0f}, {target_y:.0f}). "
+            f"Управление передано тебе: рули вручную (голосом/кнопками). "
+            f"Когда будешь готов — скажи «Вега продолжить» или жми "
+            f"▶ Продолжить, программа пойдёт со следующей строки.",
+            "warning")
+        await self.push_state()
+        # Ждём от пользователя ▶ Продолжить. Это блокирующая точка для
+        # exec-программы — handle_command (voice/buttons) работает в
+        # параллельной задаче и НЕ затронут.
+        await self._resume_event.wait()
+        s.thinking = "idle"
+        s.awaiting_user = False
+        await self.push_state()
+        await self.push_message("▶ Программа возобновлена.", "info")
+
     async def _follow_curve(self, points: list[tuple[float, float]]) -> bool:
         """Диспетчер следования за кривой. Алгоритм выбирается из настроек."""
         algo = self.cfg.cautious_follow_algo or "pure_pursuit"
         if algo == "stanley":
             return await self._follow_stanley(points)
         return await self._follow_pure_pursuit(points)
+
+    async def _follow_linear(self,
+                              waypoints: list[tuple[float, float]]) -> bool:
+        """Линейный обход: едем по A*-углам прямыми отрезками, в каждой
+        вершине ломаной выполняем K-turn (поворот на месте) к следующей
+        точке. Без сглаживания — точно по полилинии.
+
+        Плюсы: предсказуемо, попадает в каждую вершину; полезно для
+        учебного режима и отладки (обучающийся видит как робот
+        дискретно следует за планом).
+        Минусы: ×N дольше из-за разворотов на месте.
+
+        Возвращает True если дошли до последнего сегмента без обрыва."""
+        s = self.robot_state
+        spd = self.cfg.move_speed
+        if len(waypoints) < 2:
+            return True
+        for i in range(1, len(waypoints)):
+            nx, ny = waypoints[i]
+            dx = nx - s.x
+            dy = ny - s.y
+            dist = math.hypot(dx, dy)
+            # Очень короткий сегмент (< 2 см) — пропускаем, мы и так в точке.
+            if dist < 2.0:
+                continue
+            # Курс к следующей вершине. atan2(dx, dy) т.к. heading=0 на север (Y+).
+            target_heading = math.degrees(math.atan2(dx, dy)) % 360.0
+            diff = (target_heading - s.heading + 540.0) % 360.0 - 180.0
+            # K-turn только если курс реально не совпадает — экономим время.
+            if abs(diff) > 3.0:
+                try:
+                    await self._k_turn_to_heading(target_heading)
+                except asyncio.CancelledError:
+                    return False
+            try:
+                await self._run_forward(dist, spd)
+            except asyncio.CancelledError:
+                return False
+            # Если дальномер обрезал движение перед стеной / физика остановила
+            # раньше — не пытаемся продолжать ломаную, путь блокирован.
+            actual_to_target = math.hypot(s.x - nx, s.y - ny)
+            if actual_to_target > max(15.0, 0.3 * dist):
+                return False
+        return True
 
     async def _align_to_path_start(self,
                                     points: list[tuple[float, float]]) -> None:
@@ -2559,48 +2647,42 @@ class UserSession:
             f"и повтори команду.", "warning")
         return False
 
-    def _has_danger_zone_at(self, x: float, y: float, radius: float,
-                            tol_cm: float = 1.0) -> bool:
-        """Уже ли есть опасная зона (kind="danger") в (x, y) того же радиуса?
-        Используется для идемпотентности `mark_danger_cmd` при replay."""
-        for z in self.world.danger_zones:
-            if getattr(z, "kind", "danger") != "danger":
-                continue
-            if math.hypot(z.x - x, z.y - y) <= tol_cm and abs(z.radius - radius) <= tol_cm:
-                return True
-        return False
-
-    async def _run_mark_danger(self,
-                                target_x: Optional[float] = None,
-                                target_y: Optional[float] = None,
-                                radius:   Optional[float] = None,
-                                db: Session = None):
-        """Поставить опасную зону обстановки.
-        Если координаты не заданы — берется текущая позиция робота
-        (старое поведение: «опасно прямо здесь»).
-        Если заданы — зона ставится в (X, Y) БЕЗ движения робота:
-        это «константа обстановки», задаваемая до запуска программы."""
-        s = self.robot_state
-        if target_x is None or target_y is None:
-            x = s.x; y = s.y
-            # читаем дальномер, как раньше (для UI «впереди» в момент пометки)
-            dist = await self.robot.get_laser()
-            if dist and dist > 0:
-                s.laser_dist = dist
-        else:
-            x = float(target_x); y = float(target_y)
-        r = float(radius) if radius is not None else float(self.cfg.danger_zone_radius)
-        zone = self.world.add_danger_zone(x, y,
-                                          radius=r,
-                                          label="Зона опасности",
-                                          kind="danger")
-        if db:
-            dz = DangerZone(user_id=self.user_id, label=zone.label,
-                            x=zone.x, y=zone.y, radius=zone.radius,
-                            kind="danger")
-            db.add(dz)
+    async def _run_load_danger_zones(self,
+                                       zones: list[tuple[float, float, float]]):
+        """Идемпотентная установка списка опасных зон на карте.
+        Очищает все текущие kind='danger' зоны пользователя (включая
+        «осиротевшие» active-строки от прошлых runs) и кладёт новые
+        с компактной нумерацией 1..N. Жёлтые зоны (kind='algorithm')
+        не трогаем."""
+        # 1) Снять все текущие красные зоны (in-memory) — авторитетная замена.
+        self.world.danger_zones = [z for z in self.world.danger_zones
+                                   if z.kind != "danger"]
+        db = SessionLocal()
+        try:
+            # 2) Hard-delete ВСЕ красные зоны пользователя из DB
+            #    (а не только те, чьи db_id были в текущем world) —
+            #    чтобы не накапливались «осиротевшие» active-строки.
+            (db.query(DangerZone)
+               .filter(DangerZone.user_id == self.user_id,
+                       DangerZone.kind == "danger")
+               .delete(synchronize_session=False))
             db.commit()
-            zone.db_id = dz.id
+            # 2) Положить новые с display_no 1..N.
+            for i, (zx, zy, zr) in enumerate(zones, start=1):
+                zone = self.world.add_danger_zone(
+                    float(zx), float(zy), radius=float(zr),
+                    label="Зона опасности", kind="danger", display_no=i)
+                dz = DangerZone(user_id=self.user_id, label=zone.label,
+                                x=zone.x, y=zone.y, radius=zone.radius,
+                                kind="danger", display_no=i)
+                db.add(dz)
+                db.flush()
+                zone.db_id = dz.id
+            db.commit()
+        finally:
+            db.close()
+        await self.push_message(
+            f"🗺 Загружено {len(zones)} опасных зон обстановки.", "info")
         await self.push_world()
 
     async def _run_pause(self, seconds: float):
@@ -2671,8 +2753,84 @@ class UserSession:
                    .filter(DangerZone.id.in_(ids))
                    .update({"active": False}, synchronize_session=False))
                 db.commit()
+        # Подробное сообщение с #N для каждого удалённого — обучающийся
+        # видит какую именно зону снял.
+        for z in removed:
+            kind_lbl = self._zone_label_human(z.kind)
+            if z.display_no:
+                await self.push_message(
+                    f"✓ {kind_lbl} #{z.display_no} удалена "
+                    f"в ({z.x:.0f}, {z.y:.0f}).", "info")
+        # Перенумеровываем оставшиеся зоны затронутых kind'ов компактно
+        # (без дыр в DANGER_ZONES блоке и в журнале).
+        for k in {z.kind for z in removed}:
+            self._renumber_zones(k, db)
         await self.push_world()
         return len(removed)
+
+    def _next_zone_display_no(self, kind: str) -> int:
+        """Следующий номер для НОВОЙ зоны указанного kind. Нумерация
+        компактная (без пропусков): благодаря `_renumber_zones`,
+        активные зоны всегда занимают 1..N, значит новая получит N+1."""
+        n_active = sum(1 for z in self.world.danger_zones if z.kind == kind)
+        return n_active + 1
+
+    def _renumber_zones(self, kind: str, db_session=None) -> None:
+        """Перенумеровывает активные зоны указанного kind в 1..N по
+        порядку создания (db_id), пишет обновления в world И в DB.
+        Вызывается после удаления зон, чтобы в коде/журнале не было
+        «дыр» в нумерации (после ⛯ ставит/убирает мышью)."""
+        active = sorted(
+            (z for z in self.world.danger_zones if z.kind == kind),
+            key=lambda z: z.db_id or 0)
+        updates: list[tuple[int, int]] = []   # (db_id, new_no)
+        for idx, z in enumerate(active, start=1):
+            if z.display_no != idx:
+                z.display_no = idx
+                if z.db_id is not None:
+                    updates.append((z.db_id, idx))
+        if db_session and updates:
+            for db_id, new_no in updates:
+                (db_session.query(DangerZone)
+                    .filter(DangerZone.id == db_id)
+                    .update({"display_no": new_no},
+                            synchronize_session=False))
+            db_session.commit()
+
+    @staticmethod
+    def _zone_label_human(kind: str) -> str:
+        """Человекочитаемое название типа зоны для сообщений журнала."""
+        return "Опасная" if kind == "danger" else "Внимания"
+
+    def _obstacle_stop_message(self, direction: str = "вперёд") -> str:
+        """Сообщение для forward_to_wall/backward_to_wall в зависимости
+        от того, что реально остановило робота:
+          • стена (лазер упёрся в границу поля) — «Достиг стены»;
+          • зона (один из углов корпуса внутри зоны) — «Стоп перед
+            опасной/внимания зоной #N».
+        Анализ делается по факту: смотрим на состояние робота сразу
+        после остановки."""
+        s = self.robot_state
+        # Какая зона ближайшая к корпусу (любой угол ВНУТРИ или на краю)?
+        hit_zone = None
+        try:
+            corners = self._robot_corners()
+        except Exception:
+            corners = [(s.x, s.y)]
+        for cx, cy in corners:
+            for z in self.world.danger_zones:
+                if (cx - z.x) ** 2 + (cy - z.y) ** 2 <= z.radius ** 2:
+                    hit_zone = z
+                    break
+            if hit_zone:
+                break
+        suffix = "" if direction == "вперёд" else " (назад)"
+        if hit_zone is not None:
+            kind_lbl = self._zone_label_human(hit_zone.kind).lower()
+            no = hit_zone.display_no or 0
+            tag = f" #{no}" if no else ""
+            return f"⚠ Стоп перед {kind_lbl} зоной{tag}{suffix}."
+        return f"Достиг стены{suffix}."
 
     async def _run_remove_danger_zone_at_point(self,
                                                 target_x: float, target_y: float,
@@ -2692,10 +2850,21 @@ class UserSession:
         if db:
             ids = [z.db_id for z in removed if z.db_id is not None]
             if ids:
+                # HARD-DELETE (а не active=False). UI-мышь = pre-flight
+                # подготовка обстановки: «поставил и снял» = «как будто
+                # не было». После удаления — перенумеровываем оставшиеся
+                # красные зоны в 1..N (без дыр).
                 (db.query(DangerZone)
                    .filter(DangerZone.id.in_(ids))
-                   .update({"active": False}, synchronize_session=False))
+                   .delete(synchronize_session=False))
                 db.commit()
+        for z in removed:
+            if z.display_no:
+                await self.push_message(
+                    f"✕ Опасная #{z.display_no} снята с карты "
+                    f"в ({z.x:.0f}, {z.y:.0f}).", "info")
+        # Перенумеровываем оставшиеся красные зоны компактно.
+        self._renumber_zones("danger", db)
         await self.push_world()
         return len(removed)
 
@@ -2713,17 +2882,22 @@ class UserSession:
         await self._run_goto(float(target_x), float(target_y))
         # 2) Поставить зону внимания в текущей позиции робота
         r = float(radius) if radius is not None else float(self.cfg.danger_zone_radius)
+        no = self._next_zone_display_no("algorithm")
         zone = self.world.add_danger_zone(s.x, s.y,
                                           radius=r,
                                           label="Зона внимания",
-                                          kind="algorithm")
+                                          kind="algorithm",
+                                          display_no=no)
         if db:
             dz = DangerZone(user_id=self.user_id, label=zone.label,
                             x=zone.x, y=zone.y, radius=zone.radius,
-                            kind="algorithm")
+                            kind="algorithm", display_no=no)
             db.add(dz)
             db.commit()
             zone.db_id = dz.id
+        await self.push_message(
+            f"🟡 Внимания #{no} в ({zone.x:.0f}, {zone.y:.0f}), r={r:.0f}.",
+            "info")
         await self.push_world()
 
     async def _run_place_attention_here(self, radius: Optional[float] = None,
@@ -2733,17 +2907,19 @@ class UserSession:
         пользователь сначала вручную едет в нужное место, потом помечает."""
         s = self.robot_state
         r = float(radius) if radius is not None else float(self.cfg.danger_zone_radius)
+        no = self._next_zone_display_no("algorithm")
         await self.push_message(
-            f"🟡 Зона внимания в ({s.x:.0f}, {s.y:.0f}), радиус {r:.0f}.",
+            f"🟡 Внимания #{no} в ({s.x:.0f}, {s.y:.0f}), r={r:.0f}.",
             "info")
         zone = self.world.add_danger_zone(s.x, s.y,
                                           radius=r,
                                           label="Зона внимания",
-                                          kind="algorithm")
+                                          kind="algorithm",
+                                          display_no=no)
         if db:
             dz = DangerZone(user_id=self.user_id, label=zone.label,
                             x=zone.x, y=zone.y, radius=zone.radius,
-                            kind="algorithm")
+                            kind="algorithm", display_no=no)
             db.add(dz)
             db.commit()
             zone.db_id = dz.id
@@ -2774,6 +2950,41 @@ class UserSession:
                 return None
         return _grab("START_X"), _grab("START_Y"), _grab("START_HEADING_DEG")
 
+    @classmethod
+    def _parse_danger_zones_from_python(cls,
+                                          text: Optional[str]
+                                          ) -> list[tuple[float, float, float]]:
+        """Извлекает список (x, y, r) из блока DANGER_ZONES = [...] в
+        преамбуле программы (между сентинелями OBSTACLE_BLOCK_TOP/BOT).
+        Используется при ↺/▶ для восстановления опасных зон обстановки —
+        они в коде декларативно, но при reset их надо вернуть в world.
+
+        Парсит ТОЛЬКО внутри блока — DANGER_ZONES вне сентинелей не
+        учитывается (на случай если пользователь определил переменную
+        с тем же именем в своей логике)."""
+        if not text:
+            return []
+        top_idx = text.find(cls.OBSTACLE_BLOCK_TOP)
+        if top_idx < 0:
+            return []
+        bot_idx = text.find(cls.OBSTACLE_BLOCK_BOT, top_idx)
+        if bot_idx < 0:
+            return []
+        block = text[top_idx:bot_idx]
+        m = re.search(r'DANGER_ZONES\s*=\s*\[(.*?)\]', block, re.DOTALL)
+        if not m:
+            return []
+        zones: list[tuple[float, float, float]] = []
+        for m2 in re.finditer(
+            r'\(\s*(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)\s*\)',
+            m.group(1)):
+            try:
+                zones.append((float(m2.group(1)), float(m2.group(2)),
+                              float(m2.group(3))))
+            except ValueError:
+                pass
+        return zones
+
     async def _run_reset(self, db: Session = None, keep_mode: bool = False,
                          code_text: Optional[str] = None):
         """Сброс поля.
@@ -2792,6 +3003,13 @@ class UserSession:
           • иначе `self._last_python_code` — кэш с прошлого sync_code/▶;
           • иначе fallback к cfg (преамбула, очищенная ✕)."""
         s = self.robot_state
+        # SNAPSHOT опасных зон ДО очистки — нужен как fallback при ↺ Поле
+        # без свежего кода (когда serverкэш _last_python_code устарел и
+        # парсинг DANGER_ZONES даст пусто). Снимаем только kind="danger":
+        # зоны внимания — runtime-сущность, при reset они и должны исчезать.
+        snapshot_danger = [(z.x, z.y, z.radius)
+                           for z in self.world.danger_zones
+                           if z.kind == "danger"]
         self.world.clear_danger_zones()
         self.world.clear_path()
         self.world.clear_auto_segments()
@@ -2828,9 +3046,68 @@ class UserSession:
         self._program = []
         await self.robot.stop()
         await self.robot.set_servo_center()
-        if db:
-            db.query(DangerZone).filter(DangerZone.user_id == self.user_id).update({"active": False})
-            db.commit()
+        # Деактивация ВСЕХ зон пользователя в DB — должна происходить
+        # всегда, в т.ч. при ▶ Run (где db приходит как None). Иначе
+        # активные строки от прошлых runs накапливаются и при ребуте
+        # сессии вылезают как «зомби-зоны».
+        _dz_db = db if db is not None else SessionLocal()
+        _dz_close = (db is None)
+        try:
+            (_dz_db.query(DangerZone)
+                   .filter(DangerZone.user_id == self.user_id)
+                   .update({"active": False}))
+            _dz_db.commit()
+        finally:
+            if _dz_close:
+                _dz_db.close()
+        # Восстановление опасных зон обстановки после очистки world+DB:
+        #   1) Миссия активна → берём из self._mission (авторитет миссии).
+        #   2) ⛯ «Режим зон» активен → НЕ восстанавливаем. Пользователь
+        #      в режиме setup'а, ↺ Поле = «начать расстановку с нуля».
+        #   3) ▶ Run (code_text передан) → парсим DANGER_ZONES из СВЕЖЕГО
+        #      кода. Пользователь мог отредактировать список — его правки
+        #      должны примениться.
+        #   4) ↺ Поле без code_text → используем SNAPSHOT текущих зон.
+        #      В Инспекторе/Осторожно «обстановка» (красные) сохраняется,
+        #      ↺ только возвращает робота в старт.
+        #   5) Fallback — парсинг из кэша _last_python_code (для загрузки
+        #      сессии, когда снапшот пустой).
+        zones_to_place: list[tuple[float, float, float]] = []
+        if self._mission and self._mission.danger_zones:
+            zones_to_place = [(float(x), float(y), float(r))
+                              for (x, y, r) in self._mission.danger_zones]
+        elif s.zone_mode:
+            zones_to_place = []   # явный «полный сброс» в режиме зон
+        elif code_text is not None:
+            zones_to_place = self._parse_danger_zones_from_python(code_text)
+        elif snapshot_danger:
+            zones_to_place = snapshot_danger
+        else:
+            zones_to_place = self._parse_danger_zones_from_python(
+                self._last_python_code)
+        if zones_to_place:
+            _local_db = db
+            _close_local = False
+            if _local_db is None:
+                _local_db = SessionLocal()
+                _close_local = True
+            try:
+                for (zx, zy, zr) in zones_to_place:
+                    no = self._next_zone_display_no("danger")
+                    zone = self.world.add_danger_zone(
+                        float(zx), float(zy), radius=float(zr),
+                        label="Зона опасности", kind="danger",
+                        display_no=no)
+                    dz = DangerZone(user_id=self.user_id, label=zone.label,
+                                    x=zone.x, y=zone.y, radius=zone.radius,
+                                    kind="danger", display_no=no)
+                    _local_db.add(dz)
+                    _local_db.flush()
+                    zone.db_id = dz.id
+                _local_db.commit()
+            finally:
+                if _close_local:
+                    _local_db.close()
         await self.push_world()
         # Пушим и состояние робота: при reset s.x/s.y/s.heading изменились,
         # а push_state по умолчанию шлёт физика только когда speed != 0.
@@ -2891,10 +3168,17 @@ class UserSession:
             steps = nlu.extract_kturn_steps(raw)
             code, label = f"turn_around_place({steps})", f"Разворот на месте за {steps} шагов"
         elif intent == "circle":
+            # «Круг» — алиас для arc(360). Метода circle() больше нет.
             n = nlu.norm(raw)
             cw = any(w in n for w in ("направо", "вправо", "по часовой"))
             side = "по часовой" if cw else "против часовой"
-            code, label = "circle()", f"Круг {side}"
+            code, label = "arc(360)", f"Круг {side}"
+        elif intent == "arc":
+            n = nlu.norm(raw)
+            cw = any(w in n for w in ("направо", "вправо", "по часовой"))
+            ang = nlu.extract_arc_angle(raw)
+            side = "по часовой" if cw else "против часовой"
+            code, label = f"arc({ang})", f"Дуга {ang}° {side}"
         elif intent == "figure_eight":
             code, label = "figure_eight()", "Восьмерка"
         elif intent == "spiral_out":
@@ -2936,19 +3220,8 @@ class UserSession:
             target = nlu.extract_course(raw)
             if target is None: return None
             code, label = f"set_course({target})", f"Курс {target}°"
-        elif intent == "mark_danger":
-            xy = nlu.extract_coordinates(raw)
-            r  = nlu.extract_radius(raw)
-            if xy is not None:
-                tx, ty = xy
-                if r is not None:
-                    code  = f"mark_danger({tx:.0f}, {ty:.0f}, {r:.0f})"
-                    label = f"⚠ Опасная зона ({tx:.0f}, {ty:.0f}) r={r:.0f}"
-                else:
-                    code  = f"mark_danger({tx:.0f}, {ty:.0f})"
-                    label = f"⚠ Опасная зона ({tx:.0f}, {ty:.0f})"
-            else:
-                code, label = "mark_danger()", "⚠ Опасная зона под роботом"
+        # «mark_danger» удалён — красные зоны теперь не команды программы,
+        # а обстановка (см. mission load в session.start).
         elif intent == "pause":
             secs = nlu.extract_pause_seconds(raw)
             code, label = f"pause({secs:g})", f"⏸ Пауза {secs:g} с"
@@ -2992,6 +3265,18 @@ class UserSession:
             tx, ty = xy
             code  = f"# UI: убрать опасную зону в ({tx:.0f}, {ty:.0f})"
             label = f"✕ Убрать опасную зону в ({tx:.0f}, {ty:.0f})"
+        elif intent == "mark_danger":
+            # UI-команда из «⛯ Режим зон» (ЛКМ): pre-flight-установка
+            # красной зоны мышью. Парный с remove_danger_zone.
+            # В Python-код программы НЕ пишется (skip_record в _dispatch).
+            xy = nlu.extract_coordinates(raw)
+            if xy is None:
+                return None
+            tx, ty = xy
+            r = nlu.extract_radius(raw)
+            r_txt = f" r={r:.0f}" if r is not None else ""
+            code  = f"# UI: опасная зона ({tx:.0f}, {ty:.0f}){r_txt}"
+            label = f"⚠ Опасная зона ({tx:.0f}, {ty:.0f}){r_txt}"
         elif intent == "mode_inspector":
             code, label = "mode(inspector)", "Режим инспектор"
         elif intent == "mode_cautious":
@@ -3045,12 +3330,61 @@ class UserSession:
             f"START_HEADING_DEG = {c.start_heading_deg:.1f}\n"
         )
 
+    # Точные строки-сентинели блока обстановки — клиент использует их
+    # для surgical replace в textarea (см. obstacle_block WS-сообщение
+    # в control.js). НЕ менять без синхронной правки клиента.
+    OBSTACLE_BLOCK_TOP = "# === Опасные зоны обстановки ==="
+    OBSTACLE_BLOCK_BOT = "# === Конец опасных зон обстановки ==="
+
+    def _obstacle_block(self) -> str:
+        """Блок с текущими опасными зонами для преамбулы кода.
+
+        Обновляется автоматически на выходе из «⛯ Режим зон» (сервер шлёт
+        клиенту obstacle_block WS-сообщение, клиент заменяет блок в textarea
+        между сентинелями). Программа МОЖЕТ читать DANGER_ZONES (это
+        обычный Python-список), но НЕ может создавать новые красные зоны
+        — только удалять через `robot.remove_zone(x, y)` когда робот внутри.
+        """
+        danger = sorted(
+            (z for z in self.world.danger_zones if z.kind == "danger"),
+            key=lambda z: z.display_no or 0)
+        lines = [
+            self.OBSTACLE_BLOCK_TOP,
+            "# Автоблок: обновляется при выходе из ⛯ «Зоны».",
+            "# Программа может читать DANGER_ZONES, но НЕ создаёт новые "
+            "красные зоны.",
+        ]
+        if not danger:
+            lines.append("# Сейчас опасных зон нет.")
+            lines.append("DANGER_ZONES = []")
+        else:
+            lines.append("DANGER_ZONES = [")
+            lines.append("    # (x, y, radius)")
+            for z in danger:
+                no = z.display_no or 0
+                no_tag = f"  # Опасная #{no}" if no else ""
+                lines.append(
+                    f"    ({z.x:.1f}, {z.y:.1f}, {z.radius:.1f}),{no_tag}")
+            lines.append("]")
+        # Явный вызов установки: пользователь видит ДЕЙСТВИЕ, а не только
+        # координаты. Метод идемпотентен — повторный запуск с теми же
+        # данными не плодит дубликатов.
+        lines.append("robot.load_danger_zones(DANGER_ZONES)  "
+                     "# установить зоны на карте")
+        lines.append(self.OBSTACLE_BLOCK_BOT)
+        return "\n".join(lines) + "\n"
+
     def _python_code_preamble(self, cmds=None) -> str:
-        """Преамбула: константы + сентинель `# === НАЧАЛО ПРОГРАММЫ ===`.
+        """Преамбула: константы + блок ОБСТАНОВКА + сентинель НАЧАЛО ПРОГРАММЫ.
         Day 2: def-блоки хелперов больше не вставляются — robot.X(...)
         вызовы исполняются напрямую через robot_api. cmds-параметр
         оставлен для совместимости сигнатуры с вызывающим кодом."""
-        return self._python_constants_block() + "\n# === НАЧАЛО ПРОГРАММЫ ===\n"
+        return (
+            self._python_constants_block()
+            + "\n"
+            + self._obstacle_block()
+            + "\n# === НАЧАЛО ПРОГРАММЫ ===\n"
+        )
 
     def _python_code_for_cmd(self, cmd: RobotCmd) -> tuple[str, str]:
         """Полный Python-код одной команды для отправки клиенту:
@@ -3132,7 +3466,12 @@ class UserSession:
         elif intent == "circle":
             direction = +1 if any(w in nlu.norm(raw) for w in ("направо", "вправо", "по часовой")) else -1
             side = "по часовой" if direction > 0 else "против часовой"
-            code_lines += [f"robot.circle({direction})  # круг {side}"]
+            code_lines += [f"robot.arc(360, {direction})  # круг {side}"]
+        elif intent == "arc":
+            direction = +1 if any(w in nlu.norm(raw) for w in ("направо", "вправо", "по часовой")) else -1
+            ang = nlu.extract_arc_angle(raw)
+            side = "по часовой" if direction > 0 else "против часовой"
+            code_lines += [f"robot.arc({ang}, {direction})  # дуга {ang}° {side}"]
         elif intent == "figure_eight":
             direction = +1 if any(w in nlu.norm(raw) for w in ("направо", "вправо", "по часовой")) else -1
             code_lines += [f"robot.figure_eight({direction})  # восьмёрка"]
@@ -3177,20 +3516,8 @@ class UserSession:
                 code_lines += ["# курс не распознан"]
             else:
                 code_lines += [f"robot.set_course({target})  # выставить курс {target}°"]
-        elif intent == "mark_danger":
-            xy = nlu.extract_coordinates(raw)
-            r  = nlu.extract_radius(raw)
-            if xy is None:
-                if r is not None:
-                    code_lines += [f"robot.mark_danger_here({r:g})  # опасная зона здесь, r={r:g}"]
-                else:
-                    code_lines += ["robot.mark_danger_here()  # опасная зона здесь"]
-            else:
-                tx, ty = xy
-                if r is not None:
-                    code_lines += [f"robot.mark_danger({tx:g}, {ty:g}, {r:g})  # опасная зона ({tx:g}, {ty:g}) r={r:g}"]
-                else:
-                    code_lines += [f"robot.mark_danger({tx:g}, {ty:g})  # опасная зона ({tx:g}, {ty:g})"]
+        # «mark_danger» удалён из кодогена — программа не может создавать
+        # красные зоны (только удалять через remove_zone).
         elif intent == "pause":
             secs = nlu.extract_pause_seconds(raw)
             code_lines += [f"robot.wait({secs:g})  # пауза {secs:g} с"]
@@ -3303,11 +3630,11 @@ class UserSession:
         elif intent == "forward_to_wall":
             spd = nlu.extract_speed(raw, c.move_speed)
             await self._run_forward_to_wall(spd)
-            msg = "Достиг стены."
+            msg = self._obstacle_stop_message(direction="вперёд")
         elif intent == "backward_to_wall":
             spd = nlu.extract_speed(raw, c.move_speed)
             await self._run_backward_to_wall(spd)
-            msg = "Достиг стены (назад)."
+            msg = self._obstacle_stop_message(direction="назад")
         elif intent == "brake":
             s.speed = 0; s.dist_left = 0
             await self.robot.move(0)
@@ -3387,8 +3714,15 @@ class UserSession:
             # Только если явно сказано «направо/вправо/по часовой» — CW.
             n = nlu.norm(raw)
             direction = +1 if any(w in n for w in ("направо", "вправо", "по часовой")) else -1
-            await self._run_circle(direction)
+            await self._run_arc(360.0, direction)
             msg = "Круг завершен (" + ("по часовой" if direction > 0 else "против часовой") + ")."
+        elif intent == "arc":
+            n = nlu.norm(raw)
+            direction = +1 if any(w in n for w in ("направо", "вправо", "по часовой")) else -1
+            ang = nlu.extract_arc_angle(raw)
+            await self._run_arc(float(ang), direction)
+            side = "по часовой" if direction > 0 else "против часовой"
+            msg = f"Дуга {ang}° {side} завершена."
         elif intent == "figure_eight":
             n = nlu.norm(raw)
             direction = +1 if any(w in n for w in ("направо", "вправо", "по часовой")) else -1
@@ -3469,38 +3803,43 @@ class UserSession:
             else:
                 msg, ok = "Курс не распознан.", False
         elif intent == "mark_danger":
-            # Опасные зоны — часть pre-flight обстановки. На replay строки
-            # `mark_danger_cmd(...)` нужно воспроизводить, но идемпотентно:
-            # если в этой точке уже есть опасная зона того же радиуса —
-            # пропускаем, чтобы не плодить дубликаты при повторных запусках.
-            if cmd.playback:
-                xy = nlu.extract_coordinates(raw)
-                r  = nlu.extract_radius(raw) or float(self.cfg.danger_zone_radius)
-                if xy is not None and self._has_danger_zone_at(xy[0], xy[1], r):
-                    msg = (f"⏵ mark_danger пропущен: зона в "
-                           f"({xy[0]:.0f}, {xy[1]:.0f}) уже на карте.")
-                elif xy is not None:
-                    tx, ty = xy
-                    await self._run_mark_danger(tx, ty, r, db)
-                    msg = (f"⏵ Восстановлена опасная зона в "
-                           f"({tx:.0f}, {ty:.0f}), радиус {r:.0f}.")
-                else:
-                    msg, ok = "mark_danger: координаты не указаны.", False
+            # UI-команда из «⛯ Режим зон» (ЛКМ): pre-flight установка
+            # красной зоны мышью. НЕ записывается в Python-код программы
+            # (red zones — обстановка, не команды). Аналог remove_danger_zone
+            # для ПКМ. Сразу же кладётся в world + DB с display_no.
+            xy = nlu.extract_coordinates(raw)
+            r  = nlu.extract_radius(raw) or float(self.cfg.danger_zone_radius)
+            if xy is None:
+                msg, ok = "mark_danger: координаты не указаны.", False
             else:
-                xy = nlu.extract_coordinates(raw)
-                r  = nlu.extract_radius(raw)
-                if xy is not None:
-                    tx, ty = xy
-                    await self._run_mark_danger(tx, ty, r, db)
-                    msg = (f"Зона опасности установлена в ({tx:.0f}, {ty:.0f})"
-                           + (f", радиус {r:.0f}." if r is not None else "."))
-                else:
-                    await self._run_mark_danger(None, None, r, db)
-                    msg = f"Зона опасности в ({s.x:.0f}, {s.y:.0f})."
+                tx, ty = xy
+                no = self._next_zone_display_no("danger")
+                zone = self.world.add_danger_zone(
+                    tx, ty, radius=r, label="Зона опасности",
+                    kind="danger", display_no=no)
+                if db:
+                    dz = DangerZone(user_id=self.user_id, label=zone.label,
+                                    x=zone.x, y=zone.y, radius=zone.radius,
+                                    kind="danger", display_no=no)
+                    db.add(dz); db.flush()
+                    zone.db_id = dz.id
+                    db.commit()
+                await self.push_world()
+                # Не записываем в Python-программу: красные зоны — обстановка.
+                cmd.skip_record = True
+                msg = f"⚠ Опасная #{no} в ({tx:.0f}, {ty:.0f}), r={r:.0f}."
         elif intent == "pause":
             secs = nlu.extract_pause_seconds(raw)
             await self._run_pause(secs)
             msg = f"Пауза {secs:g} с завершена."
+        elif intent == "resume":
+            # Возобновляет программу, паузнутую _pause_for_manual_handoff.
+            # Если ждать не на чем — мягкая ошибка.
+            if not getattr(s, "awaiting_user", False):
+                msg, ok = "Сейчас программа не на паузе — нечего возобновлять.", False
+            else:
+                self._resume_event.set()
+                msg = "▶ Возобновляю программу."
         elif intent == "set_algorithm_zone":
             xy = nlu.extract_coordinates(raw)
             r = nlu.extract_radius(raw)
@@ -3530,16 +3869,7 @@ class UserSession:
                 tx, ty = xy
                 n_removed = await self._run_remove_danger_zone_at_point(tx, ty, db)
                 if n_removed > 0:
-                    # Взаимное гашение mark_danger ↔ remove_danger_zone (та же
-                    # сессия): обе команды убираются из программы целиком.
-                    cancelled = self._cancel_matching_mark_danger(tx, ty)
-                    if cancelled:
-                        await self.push_program()
-                        msg = (f"↺ Опасная зона в ({tx:.0f}, {ty:.0f}) "
-                               f"поставлена и удалена в этой же сессии — "
-                               f"команды взаимно погашены.")
-                    else:
-                        msg = (f"Удалена опасная зона в ({tx:.0f}, {ty:.0f}).")
+                    msg = (f"Удалена опасная зона в ({tx:.0f}, {ty:.0f}).")
                     # В любом случае remove_danger_zone не записывается в код:
                     # это UI-команда, а не runtime-действие алгоритма.
                     cmd.skip_record = True
@@ -3574,6 +3904,7 @@ class UserSession:
                            "миссию.", False)
             else:
                 s.mode = "normal"; s.cautious = False
+                s.zone_mode = False     # mutex с «⛯ Зоны»
                 msg = "Режим инспектор."
         elif intent == "mode_cautious":
             # Симметричная блокировка: пока идёт миссия с опасными зонами,
@@ -3584,6 +3915,7 @@ class UserSession:
                            "миссию.", False)
             else:
                 s.cautious = True
+                s.zone_mode = False     # mutex с «⛯ Зоны»
                 msg = "Режим осторожно."
         elif intent == "path_show":
             await self.broadcast({"type": "path_visible", "visible": True})
@@ -3592,11 +3924,28 @@ class UserSession:
             await self.broadcast({"type": "path_visible", "visible": False})
             msg = "Путь скрыт."
         elif intent == "reset":
-            # При playback (replay программы) сохраняем режим
-            # «осторожно» — иначе ▶ Запуск кода каждый раз гасит его
-            # и action-кнопки моргают между жёлтым и синим.
-            await self._run_reset(db, keep_mode=bool(cmd.playback))
-            msg = "Поле очищено."
+            # Во время активной миссии ↺ Поле блокирован — обучающийся
+            # не должен случайно сбрасывать обстановку миссии. Исключение —
+            # playback (▶ Run): он внутри программы делает свой reset.
+            if self._mission is not None and not cmd.playback:
+                msg, ok = ("Во время миссии ↺ Поле недоступно. Заверши или "
+                           "останови миссию, чтобы сбросить поле.", False)
+            else:
+                # В ⛯ «Режим зон» ↺ Поле = «начать расстановку с нуля»:
+                # запоминаем флаг, чтобы потом синхронизировать DANGER_ZONES
+                # в коде с очищенным world.
+                was_zone_mode = bool(s.zone_mode)
+                # При playback (replay программы) сохраняем режим
+                # «осторожно» — иначе ▶ Запуск кода каждый раз гасит его
+                # и action-кнопки моргают между жёлтым и синим.
+                await self._run_reset(db, keep_mode=bool(cmd.playback))
+                if was_zone_mode:
+                    # Зоны выпилены — обновляем блок DANGER_ZONES в textarea.
+                    await self.broadcast({
+                        "type": "obstacle_block",
+                        "block": self._obstacle_block(),
+                    })
+                msg = "Поле очищено."
         elif intent == "report_pos":
             msg = f"X={s.x:.0f}, Y={s.y:.0f}, курс={s.heading:.0f}°."
         elif intent == "report_status":
@@ -3770,10 +4119,22 @@ class UserSession:
 
     # ── Точка входа для команды ──────────────────────────────────────────────
 
+    # Команды, разрешённые при включённом «⛯ Режим зон». Всё остальное
+    # отвергается с сообщением «включён режим установки зон». В набор
+    # входят: установка/удаление красной зоны мышью, выход в другой режим,
+    # запросы статуса, сброс поля и аварийный stop.
+    _ZONE_MODE_ALLOWED_INTENTS = frozenset({
+        "mark_danger", "remove_danger_zone",
+        "mode_inspector", "mode_cautious",
+        "report_pos", "report_status",
+        "reset", "stop",
+    })
+
     async def handle_command(self, raw_text: str, db: Session = None):
         intent, conf = nlu.predict(raw_text)
         log.info("[user %d] CMD %r → intent=%s conf=%.2f", self.user_id, raw_text, intent, conf)
 
+        # Гарантированный stop игнорирует любые блокировки.
         if intent == "stop":
             await self._do_stop()
             await self.push_state()
@@ -3781,6 +4142,17 @@ class UserSession:
             cmd = self._build_cmd(intent, raw_text)
             description, code = self._python_code_for_cmd(cmd) if cmd else (None, None)
             await self.push_message("Стоп!", "success", code=code, description=description)
+            return
+
+        # Блок: пока включён «⛯ Режим зон», робот не выполняет команды
+        # движения / зон-внимания / лампы / итд. Разрешены только
+        # установка-снятие красных зон мышью + выход в другой режим.
+        if self.robot_state.zone_mode and intent not in self._ZONE_MODE_ALLOWED_INTENTS:
+            await self.push_message(
+                "⛯ Включён режим установки зон — команды роботу не "
+                "выполняются. Кликни «⛯ Зоны» ещё раз или переключись "
+                "в «Инспектор»/«Осторожно», чтобы вернуть управление.",
+                "warning")
             return
 
         # Зарядка — мгновенное действие, не должна ждать в очереди маневров.

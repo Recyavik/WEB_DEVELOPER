@@ -142,8 +142,8 @@
         <details class="ctrl-group" open>
           <summary>Траектории</summary>
           <div class="quick-extra">
-            <button class="btn btn--xs" data-cmd="Вега вокруг" title="Один круг при максимальном повороте руля">⭕ Круг</button>
-            <button class="btn btn--xs" data-cmd="Вега восьмерка" title="Круг вправо + круг влево">∞ Восьмерка</button>
+            <button class="btn btn--xs" id="btn-arc" title="Дуга на N° при максимальном угле руля. Ввод: угол, по часовой/против часовой. arc(360) = полный круг.">⌒ Дуга…</button>
+            <button class="btn btn--xs" data-cmd="Вега восьмерка" title="Восьмёрка: две дуги по 360° в разных направлениях">∞ Восьмерка</button>
             <button class="btn btn--xs" data-cmd="Вега спираль наружу" title="2 оборота, радиус растет (36°→24°)">🌀 Спираль ▸</button>
             <button class="btn btn--xs" data-cmd="Вега спираль внутрь" title="2 оборота, радиус сужается (24°→36°)">🌀 Спираль ◂</button>
             <button class="btn btn--xs" data-cmd="Вега объезд справа" title="S-волна: сначала вправо, потом обратно. Объезжает препятствие справа.">↪ Объезд справа</button>
@@ -173,6 +173,12 @@
             <button class="btn btn--xs" data-cmd="Вега пауза 4"  title="Стоять 4 секунды">⏸ 4с</button>
             <button class="btn btn--xs" data-cmd="Вега пауза 8"  title="Стоять 8 секунд">⏸ 8с</button>
             <button class="btn btn--xs" data-cmd="Вега пауза 16" title="Стоять 16 секунд">⏸ 16с</button>
+            <!-- Видна только когда программа на ручной паузе (s.awaiting_user).
+                 control.js показывает/прячет по push_state. -->
+            <button class="btn btn--xs btn--success" id="btn-resume"
+                    data-cmd="Вега продолжить"
+                    title="Возобновить программу со следующей строки (после ручного манёвра)"
+                    hidden>▶ Продолжить</button>
           </div>
         </details>
 
