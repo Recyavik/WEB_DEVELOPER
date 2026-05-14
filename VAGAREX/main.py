@@ -8,6 +8,7 @@ main.py — FastAPI приложение VEGAREX (мульти-пользова�
   3. WebSocket /ws привязывается к UserSession этого пользователя
   4. Настройки робота, размер поля, программа — у каждого свои (DB)
 """
+import asyncio
 import json
 import logging
 import re
@@ -1664,17 +1665,31 @@ async def websocket_endpoint(ws: WebSocket):
                 # Day 2: единственный путь — exec() с фасадом `robot`. Старый
                 # парсер хелперов-шаблонов удалён, codegen всегда генерит
                 # `robot.X(...)` строки.
+                # КРИТИЧНО: запускаем как фоновую задачу. Если await'ить
+                # прямо в WS-loop'е, server БЛОКИРОВАН пока exec не
+                # закончится → ■ СТОП от пользователя НЕ ПРИХОДИТ.
                 from robot_api import run_user_python
                 await ws.send_json({"type": "code_exec_result",
                                     "output": "▶ Запускаю Python-код…",
                                     "level":  "info"})
-                out = await run_user_python(sess, code)
-                # Ошибки exec (`Ошибка (NameError)`, traceback, ⏹ прервано) —
-                # уровень 'error' → красная подсветка в журнале, как IDE-консоль.
-                is_error = ("Ошибка" in out[:32]) or out.startswith("⏹")
-                await ws.send_json({"type":   "code_exec_result",
-                                    "output": out,
-                                    "level":  "error" if is_error else "ok"})
+                # Если предыдущий run ещё не закончился — отказ
+                # (двойной запуск приведёт к двум exec в разных потоках).
+                prev_run = getattr(sess, "_python_run_task", None)
+                if prev_run is not None and not prev_run.done():
+                    await ws.send_json({
+                        "type": "code_exec_result",
+                        "output": "⚠ Программа уже выполняется. "
+                                  "Нажмите ■ СТОП и попробуйте снова.",
+                        "level": "error"})
+                else:
+                    async def _runner(code_text=code):
+                        out = await run_user_python(sess, code_text)
+                        is_error = ("Ошибка" in out[:32]) or out.startswith("⏹")
+                        await sess.broadcast({
+                            "type":   "code_exec_result",
+                            "output": out,
+                            "level":  "error" if is_error else "ok"})
+                    sess._python_run_task = asyncio.create_task(_runner())
             elif t == "sync_code":
                 # Клиент синхронизирует текущий текст textarea с сервером —
                 # нужно перед «↺ Поле», чтобы reset прочитал актуальные
@@ -1721,22 +1736,32 @@ async def websocket_endpoint(ws: WebSocket):
                     # подсветить кнопку).
                     await sess.push_state()
                     continue
-                s.zone_mode = active
                 if active:
                     # Прерываем любую активную работу (на всякий случай,
                     # если робот ехал и пользователь решил настроить зоны).
                     await sess._do_stop()
-                    # Запрет «осторожно»: режимы взаимоисключающи.
-                    s.cautious = False
-                    s.mode = "normal"
+                    # Запоминаем текущий режим, чтобы вернуть его при
+                    # выходе. Без этого пользователь, бывший в «Осторожно»,
+                    # после ⛯ Зоны попадал в Инспектор и плёлся через зоны.
+                    sess._cautious_before_zone = bool(s.cautious)
+                    s.zone_mode = True
+                    s.cautious  = False
+                    s.mode      = "normal"
                     await sess.push_message(
-                        "⛯ Режим установки зон ВКЛ. Робот не выполняет "
-                        "команды — мышью кладём/убираем опасные зоны. "
-                        "Выход — клик по «⛯ Зоны» ещё раз, ESC, или "
-                        "переключение в «Инспектор»/«Осторожно».", "info")
+                        "⛯ Режим зон ВКЛ. ЛКМ — поставить, ПКМ — убрать. "
+                        "ESC или клик по «⛯ Зоны» — выход.", "info")
                 else:
+                    s.zone_mode = False
+                    # Восстанавливаем режим, который был до ⛯ Зоны.
+                    # Если в Режим зон не входили (флага нет) — оставляем
+                    # как есть (default = Инспектор).
+                    if sess._cautious_before_zone is not None:
+                        s.cautious = bool(sess._cautious_before_zone)
+                        sess._cautious_before_zone = None
+                    restored = "Осторожно" if s.cautious else "Инспектор"
                     await sess.push_message(
-                        "⛯ Режим установки зон выключен.", "info")
+                        f"⛯ Режим установки зон выключен. Режим: {restored}.",
+                        "info")
                     # При выходе из режима зон — обстановка зафиксирована
                     # и обновляется в коде программы (блок DANGER_ZONES).
                     await sess.broadcast({
@@ -1744,6 +1769,12 @@ async def websocket_endpoint(ws: WebSocket):
                         "block": sess._obstacle_block(),
                     })
                 await sess.push_state()
+            elif t == "program_pause":
+                # ⏸ Пауза — мотор глушится, exec замирает на текущей команде.
+                await sess._do_program_pause()
+            elif t == "program_resume":
+                # ▶ Продолжить — восстанавливает speed и отпускает _wait_movement.
+                await sess._do_program_resume()
             elif t == "ping":
                 await ws.send_json({"type": "pong"})
             # voice_listen игнорируем — голос пока выключен в мульти-режиме

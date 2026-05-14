@@ -22,6 +22,7 @@ tick автоматически; action-команды (mark_danger / attention_
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import threading
 import traceback
 from typing import Optional, TYPE_CHECKING
@@ -61,16 +62,25 @@ class RobotProxy:
 
     def _run(self, coro):
         """Прокидывает корутину в event-loop сервера и ждёт результат.
-        Между шагами пользовательской программы проверяет флаг отмены."""
+        Между шагами пользовательской программы проверяет флаг отмены.
+        Регистрирует активный future на session — ■ СТОП может его
+        отменить мгновенно, чтобы текущая команда не доехала до конца."""
         if self._cancel.is_set():
             raise RobotInterrupted("Прервано пользователем (■ СТОП).")
         fut = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        # Регистрируем — _do_stop отменит этот future при ■ СТОП.
+        self._session._python_active_future = fut
         try:
             return fut.result(timeout=self._CMD_TIMEOUT_SEC)
         except asyncio.TimeoutError:
             fut.cancel()
             raise RobotInterrupted(
                 f"Команда не завершилась за {self._CMD_TIMEOUT_SEC:.0f} с — прервано.")
+        except asyncio.CancelledError:
+            # _do_stop отменил future — пользователь нажал ■ СТОП.
+            raise RobotInterrupted("Прервано пользователем (■ СТОП).")
+        finally:
+            self._session._python_active_future = None
 
     @property
     def x(self) -> float:
@@ -171,8 +181,22 @@ class RobotProxy:
         self._session.robot_state.steer = 0.0
 
     def stop(self):
-        """Остановить мотор и центрировать руль."""
+        """Аварийная остановка робота И программы. Мотор глушится мгновенно,
+        дальнейшие строки кода НЕ выполняются (как ■ СТОП в UI).
+
+        Если нужно просто притормозить и продолжить — используй
+        `robot.move(0)` (без прерывания exec)."""
+        # 1) Заглушить мотор синхронно — на случай если RobotInterrupted
+        #    поймают где-то выше и обработают.
         self._run(self._session.robot.stop())
+        s = self._session.robot_state
+        s.speed = 0
+        s.dist_left = 0
+        # 2) Поднять флаг отмены — все последующие robot.X() кинут
+        #    RobotInterrupted даже если кто-то поймает наш raise ниже.
+        self._cancel.set()
+        # 3) Прервать exec прямо в этой строке.
+        raise RobotInterrupted("Остановлено командой robot.stop().")
 
     def clear(self):
         """Очистить превью: убрать опасные/жёлтые зоны, стереть пройденный
@@ -474,22 +498,33 @@ async def run_user_python(
 
     def _exec_in_thread() -> Optional[str]:
         """Запускает exec() в потоке. Возвращает None при успехе,
-        либо текст ошибки/traceback."""
+        либо короткий текст ошибки (1 строка) для журнала."""
         try:
             compiled = compile(code, "<пользовательский код>", "exec")
             exec(compiled, sandbox)
             return None
         except RobotInterrupted as e:
             return f"⏹ {e}"
+        except (asyncio.CancelledError,
+                concurrent.futures.CancelledError):
+            # ■ СТОП пришёл во время fut.result(): catches in _run могли
+            # быть обойдены если CancelledError пришёл из concurrent.futures
+            # (другая ветка иерархии BaseException/Exception в Py<3.8).
+            # Здесь — последний рубеж, форматируем как «прервано».
+            return "⏹ Прервано пользователем (■ СТОП)."
         except SyntaxError as e:
-            # Синтаксическая ошибка — самая частая у новичков. Показываем
-            # строку с номером, чтобы можно было быстро найти и поправить.
+            # Синтаксическая ошибка — компактный однострочник.
             return f"Ошибка синтаксиса в строке {e.lineno}: {e.msg}"
         except Exception as e:
-            # Любая runtime-ошибка: выдаём короткий traceback. Полный stack
-            # засоряет журнал — берём последние 3 фрейма.
-            tb = traceback.format_exc(limit=3)
-            return f"Ошибка ({type(e).__name__}): {e}\n{tb}"
+            # Любая runtime-ошибка → один компакт-line с номером строки
+            # пользовательского кода (а не глубокий traceback).
+            user_line = None
+            for fr in traceback.extract_tb(e.__traceback__):
+                if fr.filename == "<пользовательский код>":
+                    user_line = fr.lineno
+                    break
+            loc = f" в строке {user_line}" if user_line else ""
+            return f"Ошибка ({type(e).__name__}){loc}: {e}"
 
     try:
         err = await asyncio.wait_for(

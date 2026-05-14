@@ -216,6 +216,25 @@ class UserSession:
         # просыпается и продолжает со следующей инструкции.
         self._resume_event: asyncio.Event = asyncio.Event()
 
+        # Активный future от RobotProxy._run — нужен для ■ СТОП, чтобы
+        # отменить текущую корутину команды (forward/goto/arc/...) и
+        # прервать её мгновенно, не дожидаясь s.speed=0.
+        self._python_active_future = None
+
+        # Образовательная пауза (⏸ Пауза). Event начально SET = программа
+        # «не на паузе». Когда пользователь жмёт ⏸, event clear'ится,
+        # `_wait_movement` блокируется на нём; ▶ Продолжить → set'ит обратно.
+        self._program_pause_event: asyncio.Event = asyncio.Event()
+        self._program_pause_event.set()
+        # Сохранённое состояние при паузе — чтобы продолжить с того же
+        # speed/steer/dist_left, что были до паузы.
+        self._paused_state: Optional[dict] = None
+
+        # Запоминаем значение s.cautious в момент входа в ⛯ Режим зон —
+        # чтобы при выходе вернуть прежний режим (а не сбрасывать в
+        # Инспектор). None пока в Режиме зон не входили.
+        self._cautious_before_zone: Optional[bool] = None
+
         # Эффективная стартовая точка — то, куда телепортируется робот
         # при reset, и где рисуется зелёный маркер на canvas. None пока
         # не было ни одного reset (новая сессия) — используется fallback
@@ -870,26 +889,144 @@ class UserSession:
 
     # ── Остановка/ожидание ───────────────────────────────────────────────────
 
+    async def _do_program_pause(self):
+        """Образовательная пауза — мотор глушится, exec замирает на
+        текущей команде. ▶ Продолжить — возобновляет с тем же speed и
+        остатком дистанции. В отличие от ■ СТОП — программа НЕ убита."""
+        s = self.robot_state
+        if s.program_paused:
+            return
+        # Защита от «мёртвой паузы»: если exec не запущен — пауза
+        # не имеет смысла (нечего приостанавливать), сообщим и выйдем.
+        flag = getattr(self, "_python_cancel_flag", None)
+        if flag is None:
+            await self.push_message(
+                "⏸ Программа сейчас не выполняется — нечего паузить.",
+                "warning")
+            return
+        # Запоминаем состояние для восстановления.
+        self._paused_state = {
+            "speed":     float(s.speed),
+            "steer":     float(s.steer),
+            "dist_left": float(s.dist_left),
+            "laser_stop": bool(s.laser_stop),
+        }
+        # Глушим мотор.
+        await self.robot.move(0)
+        s.speed = 0
+        s.program_paused = True
+        # Блокируем _wait_movement (ждёт _program_pause_event).
+        self._program_pause_event.clear()
+        await self.push_message(
+            "⏸ Пауза. ▶ Продолжить — возобновить движение.", "info")
+        await self.push_state()
+
+    async def _do_program_resume(self):
+        """Возобновление образовательной паузы. Восстанавливает мотор и
+        отпускает _wait_movement через _program_pause_event."""
+        s = self.robot_state
+        if not s.program_paused:
+            return
+        s.program_paused = False
+        st = self._paused_state or {}
+        spd = int(st.get("speed", 0))
+        if spd != 0:
+            await self.robot.set_angle(int(st.get("steer", 0.0)))
+            await self.robot.move(spd)
+            s.speed = float(spd)
+            s.steer = float(st.get("steer", 0.0))
+            s.dist_left = float(st.get("dist_left", 0.0))
+            s.laser_stop = bool(st.get("laser_stop", False))
+        self._paused_state = None
+        # Разбудить _wait_movement, который ждёт на event.
+        self._program_pause_event.set()
+        await self.push_message("▶ Программа возобновлена.", "success")
+        await self.push_state()
+
     async def _do_stop(self):
+        """Глобальный СТОП. Останавливает робота и всё, что было запущено:
+          1) Очередь intent-команд (_pending) → очистить;
+          2) Asyncio-задача исполнителя очереди (_exec_task) → отменить;
+          3) Python-программа пользователя (другой поток) → флаг отмены,
+             следующий robot.X() кинет RobotInterrupted;
+          4) Программа в pause (manual handoff, await _resume_event) →
+             будим event'ом, плюс взводим cancel_flag — в _pause_for_manual_handoff
+             ветка проверки флага сразу же бросит RobotInterrupted без
+             «программа возобновлена»;
+          5) Драйвер → move(0), центрировать руль;
+          6) robot_state → speed/dist_left/thinking/awaiting_user = idle.
+        Должен работать для любого режима обхода (pp / stanley / linear / manual).
+        """
         self._pending.clear()
         if self._exec_task and not self._exec_task.done():
             self._exec_task.cancel()
-        # Python-код пользователя крутится в отдельном потоке (см. robot_api.py).
-        # Поднимаем флаг отмены: следующий вызов robot.* кинет RobotInterrupted.
+        # Поднимаем флаг отмены ДО event.set() — _pause_for_manual_handoff
+        # проверит флаг после пробуждения и не пойдёт «возобновлять».
         flag = getattr(self, "_python_cancel_flag", None)
         if flag is not None:
             flag.set()
-        self.robot_state.speed     = 0
-        self.robot_state.dist_left = 0
-        self.robot_state.laser_stop = False
-        self.robot_state.thinking  = "idle"
+        # Прерываем ТЕКУЩУЮ команду пользовательской программы
+        # (robot.forward/goto/arc/...) — отмена future в loop мгновенно
+        # бросает CancelledError в корутине, _run() ловит её как
+        # RobotInterrupted и выходит. Без этого forward(1000) ехал бы
+        # до конца, даже если ■ СТОП нажат на середине.
+        fut = self._python_active_future
+        if fut is not None and not fut.done():
+            try:
+                fut.cancel()
+            except Exception:
+                pass
+        # Разбудить exec-поток, заблокированный в _pause_for_manual_handoff.
+        if self._resume_event is not None:
+            self._resume_event.set()
+        # Разбудить exec-поток, который ждёт ▶ Продолжить из ⏸ Паузы.
+        # Без этого паузнутая программа НЕ умирает по ■ СТОП — exec вечно
+        # висит на `await self._program_pause_event.wait()`.
+        if self._program_pause_event is not None:
+            self._program_pause_event.set()
+        s = self.robot_state
+        s.speed     = 0
+        s.dist_left = 0
+        s.laser_stop = False
+        s.thinking  = "idle"
+        s.awaiting_user = False
+        s.program_paused = False
+        self._paused_state = None
         await self.robot.move(0)
         await self.robot.set_servo_center()
 
     async def _wait_movement(self, timeout: float = 30.0):
         steps = int(timeout / 0.05)
+        # Локальная ссылка на флаг отмены (■ СТОП). Если поднят —
+        # обрываем ожидание ЧЕРЕЗ CancelledError (не через тихий return),
+        # чтобы _run_forward/_arc_at_steer перешли в свой except-блок,
+        # а _run() поднял RobotInterrupted и exec завершил программу.
+        # Проверка флага идёт РАНЬШЕ speed==0: _do_stop ставит и флаг,
+        # и speed=0 — если проверять speed первым, мы тихо вернёмся,
+        # и пользователь не увидит сообщения «■ СТОП — прервано».
+        cancel_flag = getattr(self, "_python_cancel_flag", None)
         for _ in range(steps):
             await asyncio.sleep(0.05)
+            # ⏸ Образовательная пауза — блокируемся на event, пока не
+            # нажмут ▶ Продолжить. Мотор уже глушён в _do_program_pause,
+            # speed/dist_left восстановятся в _do_program_resume.
+            if self.robot_state.program_paused:
+                await self._program_pause_event.wait()
+                # Сразу после resume — проверка стопа (вдруг во время
+                # паузы пользователь решил всё-таки прервать программу).
+                if cancel_flag is not None and cancel_flag.is_set():
+                    self.robot_state.speed     = 0
+                    self.robot_state.dist_left = 0
+                    try:    await self.robot.move(0)
+                    except Exception: pass
+                    raise asyncio.CancelledError("■ СТОП")
+                continue
+            if cancel_flag is not None and cancel_flag.is_set():
+                self.robot_state.speed     = 0
+                self.robot_state.dist_left = 0
+                try:    await self.robot.move(0)
+                except Exception: pass
+                raise asyncio.CancelledError("■ СТОП")
             if self.robot_state.speed == 0:
                 return
         self.robot_state.speed     = 0
@@ -1001,7 +1138,19 @@ class UserSession:
     async def _run_forward(self, dist_cm: Optional[float], spd: int):
         s = self.robot_state
         if dist_cm and s.cautious:
-            dist_cm = self._clip_dist_cautious(dist_cm)
+            clipped = self._clip_dist_cautious(dist_cm)
+            # Если cautious-обрезка съела весь путь — мотор НЕ заводим.
+            # Иначе s.dist_left=0 + move(spd) → физика не декрементит
+            # (ветка декремента требует dist_left>0), робот едет до
+            # защитного стопа УЖЕ ВНУТРИ зоны.
+            if clipped < 1.0:
+                await self.robot.move(0)
+                s.speed = 0
+                s.dist_left = 0
+                await self.push_message(
+                    "⚠ Впереди опасная зона (20 см) — стою.", "warning")
+                return
+            dist_cm = clipped
         await self.robot.set_angle(int(s.steer))
         await self.robot.move(spd)
         s.speed     = float(spd)
@@ -1043,6 +1192,14 @@ class UserSession:
     async def _run_forward_to_wall(self, spd: int):
         s = self.robot_state
         zone_dist = self._clip_dist_cautious(9999.0) if s.cautious else 9999.0
+        # cautious уже упёрся в зону на margin — не двигаем мотор.
+        if s.cautious and zone_dist < 1.0:
+            await self.robot.move(0)
+            s.speed = 0
+            s.dist_left = 0
+            await self.push_message(
+                "⚠ Уже у зоны — ехать вперёд нельзя.", "warning")
+            return
         s.dist_left  = zone_dist if zone_dist < 9900.0 else 0.0
         s.laser_stop = True
         await self.robot.move(spd)
@@ -1519,9 +1676,7 @@ class UserSession:
         self._resume_event.clear()
         await self.push_message(
             f"⏸ {reason} Цель ({target_x:.0f}, {target_y:.0f}). "
-            f"Управление передано тебе: рули вручную (голосом/кнопками). "
-            f"Когда будешь готов — скажи «Вега продолжить» или жми "
-            f"▶ Продолжить, программа пойдёт со следующей строки.",
+            f"Рули вручную и жми ▶ Продолжить.",
             "warning")
         await self.push_state()
         # Ждём от пользователя ▶ Продолжить. Это блокирующая точка для
@@ -1531,6 +1686,13 @@ class UserSession:
         s.thinking = "idle"
         s.awaiting_user = False
         await self.push_state()
+        # Глобальный СТОП тоже дёргает _resume_event.set(), но при этом
+        # взводит _python_cancel_flag. Здесь молча выходим — следующий
+        # вызов robot.X() в коде пользователя сразу кинет RobotInterrupted,
+        # сообщение «программа возобновлена» в этом случае было бы ложью.
+        flag = getattr(self, "_python_cancel_flag", None)
+        if flag is not None and flag.is_set():
+            return
         await self.push_message("▶ Программа возобновлена.", "info")
 
     async def _follow_curve(self, points: list[tuple[float, float]]) -> bool:
@@ -2805,14 +2967,21 @@ class UserSession:
     def _obstacle_stop_message(self, direction: str = "вперёд") -> str:
         """Сообщение для forward_to_wall/backward_to_wall в зависимости
         от того, что реально остановило робота:
-          • стена (лазер упёрся в границу поля) — «Достиг стены»;
-          • зона (один из углов корпуса внутри зоны) — «Стоп перед
-            опасной/внимания зоной #N».
-        Анализ делается по факту: смотрим на состояние робота сразу
-        после остановки."""
+          • зона на пути (cautious-режим, _clip_dist_cautious остановил
+            ДО зоны с margin 20 см) — «Стоп перед опасной зоной #N»;
+          • корпус касается зоны (защитный стоп физики) — то же;
+          • иначе (упёрся в границу поля) — «Достиг стены»."""
         s = self.robot_state
-        # Какая зона ближайшая к корпусу (любой угол ВНУТРИ или на краю)?
-        hit_zone = None
+        suffix = "" if direction == "вперёд" else " (назад)"
+        kind_lbl_fn = self._zone_label_human
+
+        def _fmt(z) -> str:
+            kind_lbl = kind_lbl_fn(z.kind).lower()
+            no = z.display_no or 0
+            tag = f" #{no}" if no else ""
+            return f"⚠ Стоп перед {kind_lbl} зоной{tag}{suffix}."
+
+        # Check 1: угол корпуса ВНУТРИ зоны (защитный стоп).
         try:
             corners = self._robot_corners()
         except Exception:
@@ -2820,16 +2989,39 @@ class UserSession:
         for cx, cy in corners:
             for z in self.world.danger_zones:
                 if (cx - z.x) ** 2 + (cy - z.y) ** 2 <= z.radius ** 2:
-                    hit_zone = z
-                    break
-            if hit_zone:
-                break
-        suffix = "" if direction == "вперёд" else " (назад)"
-        if hit_zone is not None:
-            kind_lbl = self._zone_label_human(hit_zone.kind).lower()
-            no = hit_zone.display_no or 0
-            tag = f" #{no}" if no else ""
-            return f"⚠ Стоп перед {kind_lbl} зоной{tag}{suffix}."
+                    return _fmt(z)
+
+        # Check 2: зона на пути и робот стоит на «stop-margin» расстоянии
+        # от неё (то, что делает _clip_dist_cautious при движении к стене).
+        # Используем ту же геометрию: half-plane вперёд от носа + perp <
+        # radius+MARGIN + dot почти равен stop_r.
+        sign = 1.0 if direction == "вперёд" else -1.0
+        hrad = math.radians(s.heading)
+        dx = math.sin(hrad) * sign
+        dy = math.cos(hrad) * sign
+        MARGIN = 20.0    # совпадает с _clip_dist_cautious
+        TOL    = 6.0     # допуск «стоит у самой кромки»
+        nearest = None
+        nearest_dot = None
+        for z in self.world.danger_zones:
+            zx = z.x - s.x
+            zy = z.y - s.y
+            dot = zx * dx + zy * dy
+            if dot <= 0:
+                continue                       # зона сзади
+            perp = abs(zx * dy - zy * dx)
+            stop_r = z.radius + MARGIN
+            if perp >= stop_r:
+                continue                       # зона не на «полосе» движения
+            # Робот должен находиться в радиусе stop_r ± TOL от центра зоны
+            # по продольной оси — это «упёрся в зону по лазеру».
+            if dot - stop_r <= TOL:
+                if nearest is None or dot < nearest_dot:
+                    nearest = z
+                    nearest_dot = dot
+        if nearest is not None:
+            return _fmt(nearest)
+
         return f"Достиг стены{suffix}."
 
     async def _run_remove_danger_zone_at_point(self,
@@ -3905,6 +4097,7 @@ class UserSession:
             else:
                 s.mode = "normal"; s.cautious = False
                 s.zone_mode = False     # mutex с «⛯ Зоны»
+                self._cautious_before_zone = None  # явный выбор стирает стэш
                 msg = "Режим инспектор."
         elif intent == "mode_cautious":
             # Симметричная блокировка: пока идёт миссия с опасными зонами,
@@ -3916,6 +4109,7 @@ class UserSession:
             else:
                 s.cautious = True
                 s.zone_mode = False     # mutex с «⛯ Зоны»
+                self._cautious_before_zone = None  # явный выбор стирает стэш
                 msg = "Режим осторожно."
         elif intent == "path_show":
             await self.broadcast({"type": "path_visible", "visible": True})
@@ -4149,9 +4343,7 @@ class UserSession:
         # установка-снятие красных зон мышью + выход в другой режим.
         if self.robot_state.zone_mode and intent not in self._ZONE_MODE_ALLOWED_INTENTS:
             await self.push_message(
-                "⛯ Включён режим установки зон — команды роботу не "
-                "выполняются. Кликни «⛯ Зоны» ещё раз или переключись "
-                "в «Инспектор»/«Осторожно», чтобы вернуть управление.",
+                "⛯ Режим зон ВКЛ — команды робота отключены.",
                 "warning")
             return
 
@@ -4346,14 +4538,18 @@ class UserSession:
                 await self.robot.move(0)
 
             # Защитный стоп в режиме «осторожно»: если ЛЮБОЙ угол корпуса
-            # реально оказался ВНУТРИ опасной зоны (не в раздутой —
-            # планировщик уже ее обходит) — мгновенная остановка. Это
-            # страховка от ошибок планирования на узких проходах.
+            # вошёл в защитный буфер вокруг опасной зоны — мгновенная
+            # остановка ДО касания. Применяется к любому движению, включая
+            # дуги/спирали/восьмёрки/bypass — не только forward/goto.
+            # SAFETY_BUFFER_CM — сколько см зазора от края зоны (5 см
+            # достаточно чтобы успеть остановить мотор в течение тика).
+            SAFETY_BUFFER_CM = 5.0
             if s.cautious and not hit_wall and self.world.danger_zones:
                 hit_zone = None
                 for cx, cy in self._robot_corners():
                     for z in self.world.danger_zones:
-                        if (cx - z.x) ** 2 + (cy - z.y) ** 2 < z.radius ** 2:
+                        r_buf = z.radius + SAFETY_BUFFER_CM
+                        if (cx - z.x) ** 2 + (cy - z.y) ** 2 < r_buf * r_buf:
                             hit_zone = z
                             break
                     if hit_zone:
@@ -4363,8 +4559,11 @@ class UserSession:
                     s.dist_left = 0
                     try: await self.robot.move(0)
                     except Exception: pass
+                    kind_lbl = self._zone_label_human(hit_zone.kind).lower()
+                    no = hit_zone.display_no or 0
+                    tag = f" #{no}" if no else ""
                     await self.push_message(
-                        f"⚠ Касание зоны «{hit_zone.label}» — стоп.",
+                        f"⚠ Стоп — близко к {kind_lbl} зоне{tag}.",
                         "warning")
 
             self.world.add_path(s.x, s.y)

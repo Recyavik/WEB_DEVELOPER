@@ -1158,10 +1158,14 @@
     const caut = document.getElementById('caution-badge');
     if (caut) caut.style.display = 'none';
 
-    // ▶ Продолжить — кнопка появляется только когда программа на ручной
-    // паузе (s.awaiting_user). Источник истины — флаг с сервера.
-    const btnResume = document.getElementById('btn-resume');
-    if (btnResume) btnResume.hidden = !s.awaiting_user;
+    // ⏸ Пауза / ▶ Продолжить — обе всегда видны, чередуется только
+    // disabled-флаг по серверному s.program_paused: программа идёт →
+    // активна Пауза; на паузе → активно Продолжить.
+    const paused = !!s.program_paused;
+    const btnPause = document.getElementById('btn-program-pause');
+    const btnResumeProg = document.getElementById('btn-program-resume');
+    if (btnPause)      btnPause.disabled      = paused;
+    if (btnResumeProg) btnResumeProg.disabled = !paused;
   }
 
   function modeLabel(m) {
@@ -1277,6 +1281,10 @@
 
     if (!existing.trim() || hasDefault) {
       textarea.value = code; // первая команда — полный текст (константы + сентинель + helpers + вызов)
+      // Программное value= не триггерит input — диспатчим явно, чтобы
+      // _saveCodeDraft (на input) сохранил в localStorage. Иначе после F5
+      // только что добавленная команда пропадает.
+      textarea.dispatchEvent(new Event('input', {bubbles: true}));
       return;
     }
 
@@ -1372,6 +1380,9 @@
     flushBufferAsPlain();
 
     textarea.value = merged;
+    // Программное value= не триггерит input → draft в localStorage
+    // не сохраняется. Диспатчим вручную, чтобы при F5 команды остались.
+    textarea.dispatchEvent(new Event('input', {bubbles: true}));
     const modal = document.getElementById('python-code-modal');
     if (modal && !modal.hidden && window.cmEditor && window.cmEditor.isReady()) {
       window.cmEditor.setValue(merged);
@@ -1989,6 +2000,20 @@
     // «⌒ Дуга…» — спросить угол (и опционально направление). По умолчанию
     // против часовой; «-N» или приставка «по часовой» = CW. Сервер кидает
     // через NLU intent «arc», который дёргает _run_arc(N, dir).
+    // ⏸ Пауза / ▶ Продолжить (образовательная). Шлём WS-сообщение,
+    // сервер сделает _do_program_pause/_do_program_resume и пришлёт
+    // обновлённый s.program_paused в push_state.
+    document.getElementById('btn-program-pause')?.addEventListener('click', () => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({type: 'program_pause'}));
+      }
+    });
+    document.getElementById('btn-program-resume')?.addEventListener('click', () => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({type: 'program_resume'}));
+      }
+    });
+
     document.getElementById('btn-arc')?.addEventListener('click', () => {
       const raw = prompt(
         'Угол дуги в градусах.\n'

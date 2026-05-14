@@ -53,6 +53,11 @@ class RobotStateXY:
     # algo="manual" или fallback при провале pp/stanley/linear). Выставляется
     # в _pause_for_manual_handoff, сбрасывается при intent="resume".
     awaiting_user:    bool = False
+    # Образовательная пауза: пользователь нажал ⏸ Пауза. Робот замер,
+    # программа стоит в текущей точке движения; ▶ Продолжить — возобновляет.
+    # В отличие от ■ СТОП — exec НЕ убит, мотор возобновится с тем же
+    # speed и dist_left, что были до паузы.
+    program_paused:   bool = False
     # Режим установки опасных зон мышью (⛯ Зоны). Взаимоисключающий с
     # Инспектором и Осторожно — может быть активен только ОДИН из трёх.
     # Пока True — handle_command отвергает команды движения/зон/режима
@@ -158,6 +163,7 @@ def state_to_dict(state: RobotStateXY) -> dict:
         "battery":   state.battery,
         "thinking":  state.thinking,
         "awaiting_user": state.awaiting_user,
+        "program_paused": state.program_paused,
         "zone_mode": state.zone_mode,
     }
 

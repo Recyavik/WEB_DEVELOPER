@@ -56,10 +56,30 @@
         </div>
       </section>
 
-      <!-- Аварийный «Стоп» — всегда виден -->
-      <button class="btn btn--stop btn--stop-big" data-cmd="Вега стоп" title="Стоп (немедленно)">
-        ■ СТОП
-      </button>
+      <!-- ■ СТОП / ⏸ Пауза / ▶ Продолжить — три кнопки в одном ряду.
+           СТОП — полный обрыв exec, всегда активна.
+           Пауза глушит мотор и замирает программу; ▶ Продолжить
+           возобновляет с того же speed/dist_left. control.js по
+           s.program_paused переключает какая из ⏸/▶ активна. -->
+      <div class="control-row">
+        <button class="btn btn--stop control-btn" data-cmd="Вега стоп"
+                aria-label="Стоп"
+                title="Полная остановка робота и прерывание программы">
+          ■
+        </button>
+        <button class="btn btn--warn control-btn" id="btn-program-pause"
+                aria-label="Пауза"
+                title="⏸ Пауза. Робот замирает, программа стоит. Удобно для объяснений.">
+          ⏸
+        </button>
+        <button class="btn btn--success control-btn" id="btn-program-resume"
+                aria-label="Продолжить"
+                title="▶ Продолжить программу с того места, где остановились"
+                disabled>
+          ▶
+        </button>
+      </div>
+
 
     </div>
 
@@ -71,6 +91,8 @@
         <p class="hint">Скажите <strong>«Вега»</strong> + команда</p>
         <button id="btn-voice" class="btn btn--voice btn--mode-action"
                 title="Включить распознавание голоса (нажмите и говорите «Вега …»)">🎙 Слушать</button>
+        <!-- voice-status имеет фиксированную высоту 2 строк (см. CSS),
+             чтобы переменная длина текста не дёргала панель. -->
         <div id="voice-status" class="voice-status">Ожидание…</div>
       </section>
 
@@ -173,12 +195,6 @@
             <button class="btn btn--xs" data-cmd="Вега пауза 4"  title="Стоять 4 секунды">⏸ 4с</button>
             <button class="btn btn--xs" data-cmd="Вега пауза 8"  title="Стоять 8 секунд">⏸ 8с</button>
             <button class="btn btn--xs" data-cmd="Вега пауза 16" title="Стоять 16 секунд">⏸ 16с</button>
-            <!-- Видна только когда программа на ручной паузе (s.awaiting_user).
-                 control.js показывает/прячет по push_state. -->
-            <button class="btn btn--xs btn--success" id="btn-resume"
-                    data-cmd="Вега продолжить"
-                    title="Возобновить программу со следующей строки (после ручного манёвра)"
-                    hidden>▶ Продолжить</button>
           </div>
         </details>
 
