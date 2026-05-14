@@ -93,11 +93,22 @@
       case 'message':
         // Каждая команда приносит свой Python-код — наращиваем textarea
         // через умный merge (без дублирования преамбулы и def-блоков).
+        // С v4.10.6+ код приходит ОТДЕЛЬНЫМ сообщением 'code_append' ДО
+        // выполнения, но fallback для совместимости остаётся.
         if (msg.code) {
           appendPythonCode(msg.description || 'Python-код команды', msg.code);
         }
         logMsg(msg.text, msg.level || 'info');
         updateVoiceStatus(msg.text);
+        break;
+
+      case 'code_append':
+        // Сервер пушит код ДО выполнения команды (v4.10.6+) — чтобы
+        // ребёнок видел запись в коде, а потом наблюдал как робот её
+        // исполняет. В журнал НЕ пишется (логирование — после exec'a).
+        if (msg.code) {
+          appendPythonCode(msg.description || 'Python-код команды', msg.code);
+        }
         break;
 
       case 'program':

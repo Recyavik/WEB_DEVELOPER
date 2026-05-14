@@ -812,6 +812,18 @@ class UserSession:
         if description is not None: payload["description"] = description
         await self.broadcast(payload)
 
+    async def push_code_append(self, code: str, description: str = None):
+        """Толкнуть строку Python-кода в textarea клиента БЕЗ записи в
+        журнал. Используется в начале _dispatch — код кнопки появляется
+        В КОДЕ сразу, до того как робот начал манёвр (визуально это
+        важно: ребёнок видит «команда записана», потом смотрит как она
+        исполняется). Результат исполнения уходит обычным push_message
+        в конце _dispatch — там код уже не дублируется."""
+        payload = {"type": "code_append", "code": code}
+        if description is not None:
+            payload["description"] = description
+        await self.broadcast(payload)
+
     async def push_world(self):
         await self.broadcast({"type": "world", "world": self._world_dict()})
 
@@ -1135,22 +1147,46 @@ class UserSession:
 
     # ── Примитивы движения ───────────────────────────────────────────────────
 
+    def _line_blocked_by_zones(self, target_x: float, target_y: float) -> bool:
+        """True если прямая из текущей позиции в (target_x, target_y)
+        пересекает раздутую опасную зону. Та же геометрия что у A*-планировщика
+        (inflation = корпус + safety_margin) — проверка консистентна."""
+        if not self.world.danger_zones:
+            return False
+        import path_planner as pp
+        s = self.robot_state
+        cfg = self.cfg
+        zones = [pp.Obstacle(z.x, z.y, z.radius)
+                 for z in self.world.danger_zones]
+        robot_inflation = (max(cfg.robot_length_cm, cfg.robot_width_cm) / 2.0
+                           + cfg.robot_length_cm / 2.0)
+        safety = cfg.wall_thickness_cm
+        return pp.line_hits_zones((s.x, s.y), (target_x, target_y),
+                                   zones, robot_inflation, safety)
+
+    def _heading_target(self, distance_cm: float, backward: bool = False
+                         ) -> tuple[float, float]:
+        """Точка, куда робот хочет приехать прямолинейно: (x, y) + distance_cm
+        вдоль курса (или против, если backward=True)."""
+        s = self.robot_state
+        sign = -1.0 if backward else 1.0
+        h_rad = math.radians(s.heading)
+        return (s.x + sign * distance_cm * math.sin(h_rad),
+                s.y + sign * distance_cm * math.cos(h_rad))
+
     async def _run_forward(self, dist_cm: Optional[float], spd: int):
         s = self.robot_state
-        if dist_cm and s.cautious:
-            clipped = self._clip_dist_cautious(dist_cm)
-            # Если cautious-обрезка съела весь путь — мотор НЕ заводим.
-            # Иначе s.dist_left=0 + move(spd) → физика не декрементит
-            # (ветка декремента требует dist_left>0), робот едет до
-            # защитного стопа УЖЕ ВНУТРИ зоны.
-            if clipped < 1.0:
-                await self.robot.move(0)
-                s.speed = 0
-                s.dist_left = 0
+        # Option A: в Осторожно если прямая блокирована зоной — делегируем
+        # в _run_goto, который применяет выбранный алгоритм обхода
+        # (pure_pursuit / stanley / linear / manual) из настроек.
+        if dist_cm and s.cautious and self.world.danger_zones:
+            tx, ty = self._heading_target(dist_cm, backward=False)
+            if self._line_blocked_by_zones(tx, ty):
                 await self.push_message(
-                    "⚠ Впереди опасная зона (20 см) — стою.", "warning")
+                    f"⚠ Прямой путь блокирован — обход к "
+                    f"({tx:.0f}, {ty:.0f}).", "info")
+                await self._run_goto(tx, ty)
                 return
-            dist_cm = clipped
         await self.robot.set_angle(int(s.steer))
         await self.robot.move(spd)
         s.speed     = float(spd)
@@ -1172,6 +1208,15 @@ class UserSession:
 
     async def _run_back(self, dist_cm: Optional[float], spd: int):
         s = self.robot_state
+        # Option A: симметрично forward — назад через goto если блок.
+        if dist_cm and s.cautious and self.world.danger_zones:
+            tx, ty = self._heading_target(dist_cm, backward=True)
+            if self._line_blocked_by_zones(tx, ty):
+                await self.push_message(
+                    f"⚠ Прямой путь назад блокирован — обход к "
+                    f"({tx:.0f}, {ty:.0f}).", "info")
+                await self._run_goto(tx, ty)
+                return
         await self.robot.set_angle(int(s.steer))
         await self.robot.move(-spd)
         s.speed     = float(-spd)
@@ -1191,15 +1236,22 @@ class UserSession:
 
     async def _run_forward_to_wall(self, spd: int):
         s = self.robot_state
+        # Option A: в Осторожно цель forward_to_wall = стена в курсе.
+        # Если прямая до неё блокирована зоной — обход через _run_goto
+        # с выбранным алгоритмом (pure_pursuit/stanley/linear/manual).
+        if s.cautious and self.world.danger_zones:
+            wall_dist = self._wall_dist_for_robot()   # см до стены
+            # Берём чуть меньше, чтобы не упереться в саму стену.
+            target_d = max(0.0, wall_dist - self.cfg.wall_thickness_cm)
+            if target_d > 1.0:
+                tx, ty = self._heading_target(target_d, backward=False)
+                if self._line_blocked_by_zones(tx, ty):
+                    await self.push_message(
+                        f"⚠ Путь до стены блокирован — обход к "
+                        f"({tx:.0f}, {ty:.0f}).", "info")
+                    await self._run_goto(tx, ty)
+                    return
         zone_dist = self._clip_dist_cautious(9999.0) if s.cautious else 9999.0
-        # cautious уже упёрся в зону на margin — не двигаем мотор.
-        if s.cautious and zone_dist < 1.0:
-            await self.robot.move(0)
-            s.speed = 0
-            s.dist_left = 0
-            await self.push_message(
-                "⚠ Уже у зоны — ехать вперёд нельзя.", "warning")
-            return
         s.dist_left  = zone_dist if zone_dist < 9900.0 else 0.0
         s.laser_stop = True
         await self.robot.move(spd)
@@ -1216,6 +1268,20 @@ class UserSession:
 
     async def _run_backward_to_wall(self, spd: int):
         s = self.robot_state
+        # Option A: в Осторожно цель backward_to_wall = стена ЗА роботом.
+        # Берём wall_dist в курсе+180°, если блокирована зоной — обход.
+        if s.cautious and self.world.danger_zones:
+            back_heading = (s.heading + 180.0) % 360.0
+            wall_dist = self._wall_dist_for_robot(back_heading)
+            target_d = max(0.0, wall_dist - self.cfg.wall_thickness_cm)
+            if target_d > 1.0:
+                tx, ty = self._heading_target(target_d, backward=True)
+                if self._line_blocked_by_zones(tx, ty):
+                    await self.push_message(
+                        f"⚠ Путь назад до стены блокирован — обход к "
+                        f"({tx:.0f}, {ty:.0f}).", "info")
+                    await self._run_goto(tx, ty)
+                    return
         zone_dist = self._clip_dist_cautious(9999.0) if s.cautious else 9999.0
         s.dist_left  = zone_dist if zone_dist < 9900.0 else 0.0
         s.laser_stop = True
@@ -3809,6 +3875,15 @@ class UserSession:
         else:
             python_desc, python_code = None, None
 
+        # ── Push кода в textarea СРАЗУ, до выполнения ──────────────────
+        # Ребёнок видит как команда уже появилась в коде, и только потом
+        # робот начинает её выполнять (полусекундный визуальный effect:
+        # «вписано → поехал»). На playback и для skip_record команд кодоген
+        # либо None, либо не пишется в текст программы — там пропускаем.
+        if (python_code is not None and not cmd.playback
+                and not getattr(cmd, "skip_record", False)):
+            await self.push_code_append(python_code, python_desc)
+
         if intent == "forward":
             dist = nlu.extract_distance(raw)
             spd  = nlu.extract_speed(raw, c.move_speed)
@@ -4197,13 +4272,9 @@ class UserSession:
         self.world.add_path(s.x, s.y)
         await self.push_state()
         if msg:
-            # Если команда «погашена» (skip_record) — НЕ отправляем code,
-            # иначе клиент впишет её в textarea как обычно.
-            send_code = python_code if (ok and not cmd.skip_record) else None
-            send_desc = python_desc if (ok and not cmd.skip_record) else None
-            await self.push_message(msg, "success" if ok else "warning",
-                                    code=send_code,
-                                    description=send_desc)
+            # Код уже был отправлен ДО выполнения через push_code_append —
+            # здесь только journal-сообщение о результате, без code.
+            await self.push_message(msg, "success" if ok else "warning")
 
     # ── Фоновый исполнитель очереди ───────────────────────────────────────────
 
