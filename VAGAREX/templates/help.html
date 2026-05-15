@@ -16,10 +16,11 @@
     <span class="help-card__icon">📘</span>
     <h2 class="help-card__title">Инструкция</h2>
     <p class="help-card__desc">
-      С чего начать: голос/кнопки/код, управление выполнением
-      (■ СТОП / ⏸ Пауза / ▶ Продолжить), движение, повороты, дуги,
-      навигация, зоны и три режима (Инспектор / Осторожно / ⛯ Зоны),
-      алгоритмы обхода. Самый практичный раздел.
+      С чего начать: голос, кнопки и Python-код; управление выполнением
+      (■ СТОП / ⏸ Пауза / ▶ Продолжить); движение, повороты, дуги и
+      траектории; навигация по координатам; зоны на карте; галочки
+      <strong>«Препятствия»</strong>, режим <strong>«Обстановка»</strong> и
+      <strong>«Автопилот»</strong>. Самый практичный раздел.
     </p>
     <a href="/training" class="btn">Открыть Инструкцию →</a>
   </article>
@@ -28,14 +29,12 @@
     <span class="help-card__icon">🤖</span>
     <h2 class="help-card__title">API 1T REX</h2>
     <p class="help-card__desc">
-      Полный справочник:
-      <strong>высокоуровневый фасад VEGAREX</strong> (<code>robot.forward</code>,
-      <code>robot.goto</code>, <code>robot.arc</code>,
-      <code>robot.load_danger_zones</code> — то, что пишет каждая кнопка)
-      и <strong>низкоуровневые примитивы платы</strong>
-      (<code>robot.move</code>, <code>robot.set_angle</code>,
-      <code>robot.get_laser</code>). Код — настоящий Python, копируется
-      на реальный 1T REX как есть.
+      Полный справочник объекта <code>robot</code>: высокоуровневые
+      команды (<code>robot.forward</code>, <code>robot.goto</code>,
+      <code>robot.arc</code>, <code>robot.autopilot</code>) — то, что
+      пишет в код каждая кнопка, — и низкоуровневые примитивы платы
+      (<code>robot.move</code>, <code>robot.set_angle</code>). Код —
+      настоящий Python, исполняется кнопкой ▶.
     </p>
     <a href="/system" class="btn">Открыть API 1T REX →</a>
   </article>
@@ -45,8 +44,9 @@
     <h2 class="help-card__title">Маневры</h2>
     <p class="help-card__desc">
       Что под капотом каждой команды: 3-дуговой K-turn (Reeds-Shepp),
-      объезд S-волной, восьмёрка, спираль, A*-планировщик,
-      Линейный обход и Ручной режим. Псевдокод с построчными
+      разворот в тесноте, объезд S-волной, восьмёрка, спираль,
+      заход в точку и <strong>Автопилот</strong> (A*-планировщик,
+      ломаная и сглаженная траектории). Псевдокод с построчными
       комментариями, формулы, диаграммы.
     </p>
     <a href="/maneuvers" class="btn">Открыть Маневры →</a>
