@@ -155,9 +155,9 @@
       </div>
     </section>
 
-    <!-- Планировщик пути (A*) + развороты -->
+    <!-- Планировщик пути (A*) для Автопилота -->
     <section class="card">
-      <h3 class="card__title">Планировщик пути и развороты</h3>
+      <h3 class="card__title">Планировщик пути (Автопилот)</h3>
       <div class="settings-grid">
         <label class="settings-label">Размер ячейки A*, см</label>
         <input class="settings-input" type="number" name="path_cell_size_cm" step="1"
@@ -167,43 +167,10 @@
           протискивается между близко стоящими зонами, но медленнее. Больше —
           быстро, но может «забить» узкий проход. По умолчанию 10 см.
         </span>
-
-        <label class="settings-label">Разворот в тесноте</label>
-        <select class="settings-input" name="wall_turn_strategy"
-                data-hint-group="wall_turn"
-                onchange="toggleHintGroup(this)">
-          <option value="backoff" {% if cfg.wall_turn_strategy == "backoff" %}selected{% endif %}>
-            Отъехать и развернуться
-          </option>
-          <option value="multi_step" {% if cfg.wall_turn_strategy == "multi_step" %}selected{% endif %}>
-            Разворот за N маленьких приёмов
-          </option>
-          <option value="manual" {% if cfg.wall_turn_strategy == "manual" %}selected{% endif %}>
-            Ручной режим (стоп у препятствия)
-          </option>
-        </select>
-        <span class="settings-hint" data-hint-group="wall_turn" data-hint-for="backoff">
-          <strong>Отъехать и развернуться.</strong> Когда габариты мешают
-          (нос упёрся в стену, а ехать надо в противоположную сторону) —
-          отъезжаем назад на нужное расстояние (≥80-100 см), делаем один
-          большой 3-дуговой K-turn, компенсируем отъезд задним ходом.
-          Быстро, но требует много места впереди.
-        </span>
-        <span class="settings-hint" data-hint-group="wall_turn" data-hint-for="multi_step">
-          <strong>Разворот за N маленьких приёмов.</strong> Когда габариты
-          мешают — разбиваем поворот на N маленьких K-turn'ов (45° или
-          меньше). Каждый возвращается в свою точку — позиция не дрейфует.
-          N подбирается автоматически по доступному месту: 4 шага для 180°
-          в обычном помещении, 8-12 шагов у самой стены. Медленнее в ×N
-          раз, но обходится без длинного отъезда.
-        </span>
-        <span class="settings-hint" data-hint-group="wall_turn" data-hint-for="manual">
-          <strong>Ручной режим (стоп у препятствия).</strong> Робот НЕ
-          пытается сам разрулить тесноту. Если для разворота не хватает
-          места впереди — просто останавливается и присылает предупреждение.
-          Дальше уже задача обучающегося: отъехать назад вручную, объехать
-          препятствие и повторить команду. Полезно для отработки навыка
-          ручного управления и понимания габаритов робота.
+        <span class="settings-hint">
+          Разворот в тесноте робот выбирает сам: хватает места — обычный
+          K-turn; тесно — мелкий многошаговый разворот; развернуться негде —
+          останавливается с сообщением. Отдельной настройки больше нет.
         </span>
       </div>
     </section>

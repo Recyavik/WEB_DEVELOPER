@@ -682,7 +682,7 @@ body { padding-bottom: 22px; }
   border: 1px solid transparent;     /* единая толщина обводки у всех */
   border-radius: 6px;
   font-size: 0.85rem;
-  font-weight: 500;                  /* обычный вес; жирнее — только активные */
+  font-weight: 700;                  /* названия кнопок — жирные */
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.1s;
   background: var(--border);
@@ -692,7 +692,7 @@ body { padding-bottom: 22px; }
 }
 /* Унифицированная система кнопок:
    - Базовая толщина обводки: 1px у всех (transparent → виден цвет варианта)
-   - Жирность: 500 в обычном состоянии, 700 — только когда .is-active
+   - Жирность: 700 (жирные) у всех кнопок
    - Hover: бордер чуть ярче, фон чуть ярче (без opacity-трюков)
    - Active (нажатие): легкий «давим» через scale */
 .btn:active     { transform: scale(0.97); }
@@ -722,6 +722,16 @@ body { padding-bottom: 22px; }
 .btn--danger    { background: #3d1a1a; color: var(--caution); border-color: rgba(248,81,73,0.3); }
 .btn--danger:hover    { background: #4a1f1f; color: var(--danger); border-color: rgba(248,81,73,0.55); }
 .btn--danger.is-active{ background: #6b2424; color: #fff; border-color: var(--danger); }
+/* Кнопка «Обстановка»: в покое — очень тёмная, активна — умеренно
+   светлее. Контраст за счёт тёмного покоя, без кричащей яркости. */
+#btn-zone-mode            { background: #241010; }
+#btn-zone-mode:hover      { background: #3a1818; }
+#btn-zone-mode.is-active  {
+  background: #7a2a2a;
+  color: #fff;
+  border-color: var(--danger);
+  box-shadow: 0 0 7px rgba(248,81,73,0.40);
+}
 
 .btn--success   { background: #16321f; color: var(--success); border-color: #1f4d2c; }
 .btn--success:hover { background: #1d4028; color: #5fcc7e; border-color: rgba(63,185,80,0.5); }
@@ -947,6 +957,9 @@ body { padding-bottom: 22px; }
 }
 .toggle { display: flex; align-items: center; gap: 0.3rem; font-size: 0.78rem; cursor: pointer; }
 .toggle input { accent-color: var(--accent); }
+/* Цвет подписей галочек «Препятствия»: опасные — красным, внимания — жёлтым. */
+.obst-label--danger    { color: var(--danger);  font-weight: 600; }
+.obst-label--attention { color: var(--warning); font-weight: 600; }
 #robot-canvas { flex: 1; width: 100%; display: block; min-width: 0; }
 
 /* ── Log panel ───────────────────────────────────────────────────────────────── */

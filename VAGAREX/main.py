@@ -1719,6 +1719,12 @@ async def websocket_endpoint(ws: WebSocket):
                 await sess.push_message(
                     "Дальномер " + ("включен." if enabled else "выключен."),
                     "info")
+            elif t == "set_obstacles":
+                # Галочки «Препятствия» (Опасные зоны / Зоны внимания).
+                # data["obstacles"] — список из {"danger", "attention"}.
+                obs = data.get("obstacles", [])
+                if isinstance(obs, list):
+                    await sess.apply_obstacles_from_ui(obs)
             elif t == "set_zone_mode":
                 # ⛯ «Режим зон» — взаимоисключающий с Инспектором и
                 # Осторожно. Включение чистит cautious. При включённом
@@ -1729,8 +1735,8 @@ async def websocket_endpoint(ws: WebSocket):
                 # может править обстановку, иначе условия миссии ломаются.
                 if active and sess._mission is not None:
                     await sess.push_message(
-                        "⛯ Во время миссии режим установки зон "
-                        "недоступен. Заверши или останови миссию.",
+                        "⛯ Во время миссии «Обстановка» недоступна. "
+                        "Заверши или останови миссию.",
                         "warning")
                     # Принудительно синкаем клиента (вдруг локально успел
                     # подсветить кнопку).
@@ -1743,24 +1749,24 @@ async def websocket_endpoint(ws: WebSocket):
                     # Запоминаем текущий режим, чтобы вернуть его при
                     # выходе. Без этого пользователь, бывший в «Осторожно»,
                     # после ⛯ Зоны попадал в Инспектор и плёлся через зоны.
-                    sess._cautious_before_zone = bool(s.cautious)
+                    sess._obstacles_before_zone = set(s.obstacles)
                     s.zone_mode = True
-                    s.cautious  = False
+                    sess._apply_obstacles(set())
                     s.mode      = "normal"
                     await sess.push_message(
-                        "⛯ Режим зон ВКЛ. ЛКМ — поставить, ПКМ — убрать. "
-                        "ESC или клик по «⛯ Зоны» — выход.", "info")
+                        "⛯ Обстановка ВКЛ. ЛКМ — поставить, ПКМ — убрать. "
+                        "ESC или клик по «⛯ Обстановка» — выход.", "info")
                 else:
                     s.zone_mode = False
-                    # Восстанавливаем режим, который был до ⛯ Зоны.
+                    # Восстанавливаем набор препятствий, что был до ⛯ Зоны.
                     # Если в Режим зон не входили (флага нет) — оставляем
-                    # как есть (default = Инспектор).
-                    if sess._cautious_before_zone is not None:
-                        s.cautious = bool(sess._cautious_before_zone)
-                        sess._cautious_before_zone = None
-                    restored = "Осторожно" if s.cautious else "Инспектор"
+                    # как есть (default = только стены).
+                    if sess._obstacles_before_zone is not None:
+                        sess._apply_obstacles(sess._obstacles_before_zone)
+                        sess._obstacles_before_zone = None
                     await sess.push_message(
-                        f"⛯ Режим установки зон выключен. Режим: {restored}.",
+                        f"⛯ Обстановка выключена. "
+                        f"{sess._obstacles_human()}",
                         "info")
                     # При выходе из режима зон — обстановка зафиксирована
                     # и обновляется в коде программы (блок DANGER_ZONES).

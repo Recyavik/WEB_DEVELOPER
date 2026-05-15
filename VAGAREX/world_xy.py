@@ -34,6 +34,12 @@ class RobotStateXY:
     steer:     float = 0.0   # угол руля (-45..45), машина стоит пока не движется
     dist_left: float = 0.0   # осталось сантиметров; 0 = ехать до стопа
     mode:       str   = "normal"   # normal | marker | inspector
+    # Набор типов зон, на которые робот реагирует авто-стопом —
+    # подмножество {"danger", "attention"}. Стены препятствие ВСЕГДА,
+    # в набор не входят. Заменяет прежний бинарный режим Инспектор/Опасно.
+    obstacles:  set   = field(default_factory=set)
+    # Производное bool(obstacles): «активен ли хоть один тип зон».
+    # Оставлено для совместимости проверок и UI/CSS-подсветки.
     cautious:   bool  = False
     laser_dist: float = 0.0   # см, 0 = нет данных
     laser_stop: bool  = False  # остановить когда лазер ≤ WALL_THICKNESS_CM
@@ -158,6 +164,7 @@ def state_to_dict(state: RobotStateXY) -> dict:
         "dist_left": state.dist_left,
         "mode":      state.mode,
         "cautious":  state.cautious,
+        "obstacles": sorted(state.obstacles),
         "laser_dist": state.laser_dist,
         "light_color": list(state.light_color),
         "battery":   state.battery,

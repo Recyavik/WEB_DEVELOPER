@@ -230,10 +230,10 @@ class UserSession:
         # speed/steer/dist_left, что были до паузы.
         self._paused_state: Optional[dict] = None
 
-        # Запоминаем значение s.cautious в момент входа в ⛯ Режим зон —
-        # чтобы при выходе вернуть прежний режим (а не сбрасывать в
-        # Инспектор). None пока в Режиме зон не входили.
-        self._cautious_before_zone: Optional[bool] = None
+        # Запоминаем набор s.obstacles в момент входа в ⛯ Режим зон —
+        # чтобы при выходе вернуть прежние препятствия (а не обнулять).
+        # None пока в Режиме зон не входили.
+        self._obstacles_before_zone = None
 
         # Эффективная стартовая точка — то, куда телепортируется робот
         # при reset, и где рисуется зелёный маркер на canvas. None пока
@@ -397,11 +397,13 @@ class UserSession:
         # «осторожно». Проверка миссии должна выполняться в нём, и
         # переключиться обратно нельзя до stop/finalize (см. handler
         # mode_inspector).
-        if self._mission.danger_zones and not self.robot_state.cautious:
-            self.robot_state.cautious = True
+        if self._mission.danger_zones and "danger" not in self.robot_state.obstacles:
+            obs = set(self.robot_state.obstacles)
+            obs.add("danger")
+            self._apply_obstacles(obs)
             await self.push_message(
-                "⚠ Миссия с опасными зонами — включён режим «осторожно». "
-                "До завершения миссии переключение режима недоступно.",
+                "⚠ Миссия с опасными зонами — опасные зоны включены в "
+                "препятствия. До завершения миссии их нельзя снять.",
                 "info")
         await self.push_message(
             f"🎯 Миссия «{self._mission.title}» активирована. "
@@ -1045,16 +1047,23 @@ class UserSession:
         self.robot_state.dist_left = 0
         await self.robot.move(0)
 
-    def _clip_dist_cautious(self, dist_cm: float) -> float:
+    def _clip_dist_cautious(self, dist_cm: float,
+                            heading: Optional[float] = None) -> float:
+        """Обрезает дистанцию движения так, чтобы не въехать в зону-
+        препятствие. По умолчанию проверяет вдоль курса носа; для движения
+        ЗАДОМ вызывающий передаёт heading = (s.heading + 180) % 360."""
         s = self.robot_state
         if not s.cautious or not self.world.danger_zones:
             return dist_cm
-        hrad = math.radians(s.heading)
+        h    = s.heading if heading is None else heading
+        hrad = math.radians(h)
         dx   = math.sin(hrad)
         dy   = math.cos(hrad)
         MARGIN   = 20.0
         min_dist = dist_cm
         for zone in self.world.danger_zones:
+            if not self._zone_is_obstacle(zone):
+                continue
             zx  = zone.x - s.x
             zy  = zone.y - s.y
             dot = zx * dx + zy * dy
@@ -1089,6 +1098,9 @@ class UserSession:
         TOL_POS = 1.5
         TOL_HDG = 1.5
         MAX_ITER = 5
+        # K-turn крутится на месте — защитный стоп у зон его не обрывает
+        # (см. update_physics). Флаг снимается в finally.
+        s.turning_in_place = True
         try:
             # ── Фаза 1: N видимых пар дуг (как раньше) ────────────────────
             for i in range(steps):
@@ -1138,6 +1150,7 @@ class UserSession:
             s.speed     = 0
             s.steer     = 0.0
             s.dist_left = 0
+            s.turning_in_place = False
             await self.robot.stop()
             await self.robot.set_servo_center()
 
@@ -1214,7 +1227,19 @@ class UserSession:
 
     async def _run_backward_to_wall(self, spd: int):
         s = self.robot_state
-        zone_dist = self._clip_dist_cautious(9999.0) if s.cautious else 9999.0
+        # Едем ЗАДОМ — зоны проверяем в направлении кормы (heading+180),
+        # а не носа: _clip_dist_cautious по умолчанию смотрит вперёд.
+        back_heading = (s.heading + 180.0) % 360.0
+        zone_dist = (self._clip_dist_cautious(9999.0, back_heading)
+                     if s.cautious else 9999.0)
+        # Уже упёрлись кормой в зону — не двигаем мотор.
+        if s.cautious and zone_dist < 1.0:
+            await self.robot.move(0)
+            s.speed = 0
+            s.dist_left = 0
+            await self.push_message(
+                "⚠ Уже у зоны сзади — ехать задом нельзя.", "warning")
+            return
         s.dist_left  = zone_dist if zone_dist < 9900.0 else 0.0
         s.laser_stop = True
         await self.robot.move(-spd)
@@ -2159,8 +2184,31 @@ class UserSession:
                     f"осталось {distance:.0f} см до ({target_x:.0f}, {target_y:.0f}), "
                     f"новый курс {target_heading:.0f}°.", "warning")
 
-            # Фаза 1: повернуться лицом к цели
-            await self._k_turn_to_heading(target_heading)
+            # Фаза 1: повернуться лицом к цели — через зоно-зависимый
+            # авто-роутер (_run_face_cardinal): хватает места → обычный
+            # K-turn; тесно/зона на пути разворота → мелкий многошаговый
+            # разворот с отъездом; совсем негде → стоп. Без роутера K-turn
+            # пропахал бы сквозь зону (turning_in_place гасит защитный стоп).
+            await self._run_face_cardinal(target_heading, "цели")
+
+            # Доворот: multi-step разворот в тесноте мог включить отъезд
+            # назад и сместить робота — из-за этого курс на цель «уплыл»
+            # (target_heading считался ДО отъезда). Пересчитываем курс из
+            # НОВОЙ позиции и доворачиваем на остаток обычным 3-дуговым
+            # K-turn — он геометрически возвращается в свою точку, не
+            # смещает робота и отъезда не требует.
+            # Большой остаток (> 30°) не доводим: значит основной разворот
+            # не состоялся (некуда) — форсировать сквозь зону нельзя.
+            rdx = float(target_x) - s.x
+            rdy = float(target_y) - s.y
+            if math.hypot(rdx, rdy) > TOL_CM:
+                refined  = math.degrees(math.atan2(rdx, rdy)) % 360
+                residual = (refined - s.heading + 540.0) % 360.0 - 180.0
+                if 2.0 < abs(residual) <= 30.0:
+                    await self.push_message(
+                        f"↻ Курс на цель уточнён на {residual:+.0f}° "
+                        f"(сместился при отъезде на разворот).", "info")
+                    await self._k_turn_to_heading(refined)
 
             # Фаза 2: проехать прямой (дальномер при необходимости остановит у стены)
             dx2 = float(target_x) - s.x
@@ -2459,6 +2507,40 @@ class UserSession:
         await self.robot.set_servo_center()
         await asyncio.sleep(0.15)
 
+    def _free_forward_cm(self, heading: float) -> float:
+        """Сколько см робот может проехать в направлении `heading` до
+        защитного буфера ближайшего препятствия.
+
+        Препятствия:
+          • стены — всегда (и в «Инспекторе», и в «Опасно»);
+          • опасные зоны и зоны внимания — ТОЛЬКО в режиме «Опасно»
+            (s.cautious). В «Инспекторе» зона не препятствие — робот
+            боится только стен.
+
+        Буфер = «Толщина стены» из настроек (тот же, что у защитного
+        стопа физики). Используется при планировании разворота: помещается
+        ли K-turn / multi-step здесь, или надо отъезжать."""
+        s  = self.robot_state
+        wt = self.cfg.wall_thickness_cm
+        free = self._wall_dist_cm(heading) - wt
+        if s.cautious and self.world.danger_zones:
+            rad = math.radians(heading)
+            dx, dy = math.sin(rad), math.cos(rad)
+            for z in self.world.danger_zones:
+                if not self._zone_is_obstacle(z):
+                    continue
+                lx, ly = z.x - s.x, z.y - s.y
+                tca = lx * dx + ly * dy
+                if tca < 0:
+                    continue                       # зона позади направления
+                d2 = lx * lx + ly * ly - tca * tca
+                if d2 > z.radius * z.radius:
+                    continue                       # луч проходит мимо зоны
+                thc = math.sqrt(max(0.0, z.radius * z.radius - d2))
+                zone_free = max(0.0, (tca - thc) - wt)
+                free = min(free, zone_free)
+        return free
+
     def _kturn_forward_clearance_needed(self, delta_deg: float) -> float:
         """Сколько см свободного пространства нужно ВПЕРЁД для K-turn на delta_deg.
         Берётся из геометрии Reeds-Shepp: после первой forward-дуги α робот
@@ -2605,9 +2687,8 @@ class UserSession:
         R = (self.cfg.wheel_circ_cm * 360.0) / (
             2.0 * math.pi * self.cfg.heading_per_rot * steer_ratio_cfg)
 
-        forward_have  = self._wall_dist_cm(s.heading) - self.cfg.wall_thickness_cm
-        backward_have = (self._wall_dist_cm((s.heading + 180.0) % 360.0)
-                         - self.cfg.wall_thickness_cm - 5.0)
+        forward_have  = self._free_forward_cm(s.heading)
+        backward_have = self._free_forward_cm((s.heading + 180.0) % 360.0) - 5.0
 
         chosen_n, backup = self._pick_kturn_step_count(
             diff, forward_have, backward_have, R, SAFETY, max_n=4)
@@ -2768,20 +2849,61 @@ class UserSession:
         return max_n, backup
 
     async def _run_face_cardinal(self, deg: float, label: str):
+        """Разворот лицом к курсу `deg`. Стратегия выбирается АВТОМАТИЧЕСКИ
+        по доступному месту впереди — без ручной настройки:
+          1) места хватает → обычный 3-дуговой K-turn;
+          2) тесно → мелкий многошаговый разворот (_multi_step_kturn сам
+             подберёт число шагов и при нужде чуть отъедет назад);
+          3) развернуться негде (нет места ни впереди, ни сзади) → стоп
+             с сообщением, пользователь разруливает вручную."""
         await self.push_message(
             f"🧭 Развернуться лицом к {label} (курс {deg:.0f}°).", "info")
-        if self.cfg.wall_turn_strategy == "manual":
-            # Ручной режим: если впереди мало места — стоп, не разворачиваемся.
-            if not await self._kturn_clearance_ok(deg):
-                return
+        s = self.robot_state
+        diff = (float(deg) - s.heading + 540.0) % 360.0 - 180.0
+        if abs(diff) < 3.0:
+            s.heading = float(deg) % 360.0
+            await self.push_state()
+            return
+
+        # Сколько места впереди нужно обычному 3-дуговому K-turn'у — та же
+        # формула, что в _ensure_kturn_clearance (геометрия Reeds-Shepp +
+        # запас на габарит, лазерный зазор и дрейф интегратора).
+        forward_need = self._kturn_forward_clearance_needed(abs(diff))
+        if abs(diff) >= 90.0:
+            forward_need = max(forward_need, self.cfg.robot_length_cm)
+        forward_need += 12.5 + self.cfg.robot_width_cm / 2.0 + 15.0
+        forward_have = self._free_forward_cm(s.heading)
+
+        # 1) Места достаточно — обычный K-turn без отъезда.
+        if forward_have >= forward_need:
             await self._k_turn_to_heading(deg)
-        elif self.cfg.wall_turn_strategy == "multi_step":
-            await self._multi_step_kturn(deg)
-        else:
-            diff = (float(deg) - self.robot_state.heading + 540.0) % 360.0 - 180.0
-            backup = await self._ensure_kturn_clearance(deg)
-            await self._k_turn_to_heading(deg)
-            await self._compensate_kturn_backup(backup, total_diff_deg=abs(diff))
+            return
+
+        # Тесно. Проверяем, влезает ли хотя бы самый мелкий многошаговый
+        # разворот (макс. дробление — 4 шага).
+        SAFETY = 12.5 + self.cfg.robot_width_cm / 2.0 + 5.0
+        steer_ratio = max(1e-6, float(self.cfg.turn_angle) / 45.0)
+        R = (self.cfg.wheel_circ_cm * 360.0) / (
+            2.0 * math.pi * self.cfg.heading_per_rot * steer_ratio)
+        backward_have = self._free_forward_cm((s.heading + 180.0) % 360.0) - 5.0
+        min_step_need = self._kturn_per_step_clearance(abs(diff) / 4.0, R) + SAFETY
+
+        # 3) Совсем негде: мелкий шаг не влезает впереди и сзади нет места
+        #    отъехать → стоп, не дёргаем робота вслепую.
+        if forward_have < min_step_need and backward_have < 5.0:
+            await self.push_message(
+                f"⛔ Развернуться негде: для самого мелкого разворота нужно "
+                f"{min_step_need:.0f} см впереди (есть {forward_have:.0f}), "
+                f"сзади тоже только {max(0.0, backward_have):.0f} см. "
+                f"Отъедь вручную и повтори команду.", "warning")
+            return
+
+        # 2) Тесно, но многошаговый разворот выполним (сам подберёт число
+        #    шагов и при нужде чуть отъедет назад).
+        await self.push_message(
+            "↻ Тесно для обычного разворота — выполняю мелким многошаговым.",
+            "info")
+        await self._multi_step_kturn(deg)
 
     async def _kturn_clearance_ok(self, target_deg: float) -> bool:
         """Проверяет, достаточно ли места для K-turn'а БЕЗ отъезда.
@@ -3139,21 +3261,21 @@ class UserSession:
         return _grab("START_X"), _grab("START_Y"), _grab("START_HEADING_DEG")
 
     @staticmethod
-    def _parse_mode_from_python(text: Optional[str]) -> Optional[str]:
-        """Извлекает константу MODE из текста программы.
+    def _parse_obstacles_from_python(text: Optional[str]):
+        """Извлекает набор препятствий из строки `OBSTACLES = [...]`.
 
-        Возвращает "inspector" | "danger" — режим запуска. Код главнее
-        кнопок UI (как START_X): при ▶ Запуске режим берётся отсюда.
-        None — строки нет либо значение не распознано: вызывающий
-        подставляет дефолт."""
+        Возвращает set ⊆ {"danger", "attention"} (возможно пустой) либо
+        None, если строки нет. Код главнее галочек UI (как START_X): при
+        ▶ Запуске набор берётся отсюда. Стены в набор не входят — они
+        препятствие всегда."""
         if not text:
             return None
-        m = re.search(r'^\s*MODE\s*=\s*["\'](\w+)["\']\s*(?:#.*)?$',
+        m = re.search(r'^\s*OBSTACLES\s*=\s*\[([^\]]*)\]',
                       text, re.MULTILINE)
         if not m:
             return None
-        val = m.group(1).lower()
-        return val if val in ("inspector", "danger") else None
+        found = set(re.findall(r'["\'](\w+)["\']', m.group(1)))
+        return {k for k in found if k in ("danger", "attention")}
 
     @classmethod
     def _parse_danger_zones_from_python(cls,
@@ -3240,14 +3362,14 @@ class UserSession:
         s.dist_left = 0
         if not keep_mode:
             s.mode = "normal"
-        # Режим Инспектор/Опасно — из константы MODE в коде (код главнее
-        # кнопок, как START_X). Нет константы: при полном сбросе ↺ Поле →
-        # Инспектор; при keep_mode (▶ Run / миссия) — оставляем текущий.
-        code_mode = self._parse_mode_from_python(self._last_python_code)
-        if code_mode is not None:
-            s.cautious = (code_mode == "danger")
+        # Препятствия — из строки OBSTACLES в коде (код главнее галочек,
+        # как START_X). Нет строки: при полном сбросе ↺ Поле → только
+        # стены; при keep_mode (▶ Run / миссия) — оставляем текущий набор.
+        code_obs = self._parse_obstacles_from_python(self._last_python_code)
+        if code_obs is not None:
+            self._apply_obstacles(code_obs)
         elif not keep_mode:
-            s.cautious = False
+            self._apply_obstacles(set())
         s.thinking  = "idle"
         s.light_color = (0, 0, 0)
         # Очищаем накопленную программу — после reset поле «как новое»,
@@ -3325,6 +3447,21 @@ class UserSession:
         # а push_state по умолчанию шлёт физика только когда speed != 0.
         # Без явного push клиент не увидит телепорт при ▶ Run (а ↺ Поле
         # работало случайно — там _dispatch сам push_state шлёт в конце).
+        await self.push_state()
+
+    async def apply_obstacles_from_ui(self, obs) -> None:
+        """Галочки «Препятствия» сменены в UI. Применяем набор,
+        переписываем строку OBSTACLES в коде, синкаем состояние."""
+        if self._mission is not None and self._mission.danger_zones:
+            await self.push_message(
+                "Во время миссии с опасными зонами набор препятствий "
+                "переключать нельзя.", "warning")
+            await self.push_state()
+            return
+        self._apply_obstacles(obs)
+        await self.broadcast({"type": "obstacles_line",
+                              "obstacles": sorted(self.robot_state.obstacles)})
+        await self.push_message(self._obstacles_human(), "info")
         await self.push_state()
 
     # ── Сборка команды и Python-кода ─────────────────────────────────────────
@@ -3524,17 +3661,49 @@ class UserSession:
     # только константы (см. _python_constants_block ниже); тело программы
     # пишется в стиле robot.X(...) и исполняется напрямую через exec().
 
+    # Порядок типов в строке OBSTACLES — стабильный.
+    _OBSTACLE_ORDER = ("danger", "attention")
+
+    def _apply_obstacles(self, obs) -> None:
+        """Единая точка установки набора препятствий. Держит s.obstacles
+        и производный s.cautious согласованными. Стены в набор не входят —
+        они препятствие всегда."""
+        s = self.robot_state
+        s.obstacles = {k for k in obs if k in self._OBSTACLE_ORDER}
+        s.cautious  = bool(s.obstacles)
+
+    def _zone_is_obstacle(self, zone) -> bool:
+        """Является ли зона препятствием при текущем наборе s.obstacles.
+        kind 'algorithm' (жёлтая зона внимания) ↔ ключ 'attention'."""
+        key = ("attention" if getattr(zone, "kind", "danger") == "algorithm"
+               else "danger")
+        return key in self.robot_state.obstacles
+
+    def _obstacles_repr(self) -> str:
+        """Литерал списка для строки OBSTACLES в коде, напр. ["danger"]."""
+        obs = self.robot_state.obstacles
+        items = [k for k in self._OBSTACLE_ORDER if k in obs]
+        return "[" + ", ".join(f'"{k}"' for k in items) + "]"
+
+    def _obstacles_human(self) -> str:
+        """Человекочитаемое описание текущего набора препятствий."""
+        obs = self.robot_state.obstacles
+        parts = ["стены"]
+        if "danger" in obs:    parts.append("опасные зоны")
+        if "attention" in obs: parts.append("зоны внимания")
+        return "Препятствия: " + ", ".join(parts) + "."
+
     def _python_constants_block(self) -> str:
         c = self.cfg
-        mode = "danger" if self.robot_state.cautious else "inspector"
         return (
             "# Программа для 1T REX. Команды robot.X(...) — см. «Справка → API».\n"
             "import math, time\n"
             "\n"
-            "# ── Режим запуска ────────────────────────────────────────────\n"
-            "# \"inspector\" — авто-стоп только у стен\n"
-            "# \"danger\"    — авто-стоп у стен И у всех зон («Опасно»)\n"
-            f"MODE = \"{mode}\"\n"
+            "# ── Препятствия: на что робот реагирует авто-стопом ──────────\n"
+            "# Стены — всегда препятствие. Дополнительно (галочки в UI):\n"
+            "#   \"danger\"    — опасные зоны\n"
+            "#   \"attention\" — зоны внимания\n"
+            f"OBSTACLES = {self._obstacles_repr()}\n"
             "\n"
             "# ── RGB-индикатор на плате (для robot.set_rgb) ───────────────\n"
             f"LIGHT_INDEX         = {LIGHT_INDEX}      # индекс LED\n"
@@ -3568,7 +3737,7 @@ class UserSession:
             key=lambda z: z.display_no or 0)
         lines = [
             self.OBSTACLE_BLOCK_TOP,
-            "# Автоблок: обновляется при выходе из ⛯ «Зоны».",
+            "# Автоблок: обновляется при выходе из режима «Обстановка».",
             "# Программа может читать DANGER_ZONES, но НЕ создаёт новые "
             "красные зоны.",
         ]
@@ -3853,6 +4022,31 @@ class UserSession:
                     cmd.raw = re.sub(r'\d+', str(adj), cmd.raw, count=1)
                     cmd.code = f"forward({adj})"
                     cmd.label = f"Вперед {adj} см"
+                    raw = cmd.raw   # обновим локальную переменную
+
+        # ── Cautious + back: то же, что forward, но в направлении кормы ──
+        # Зеркало блока выше: укорачиваем back(N) до безопасной дистанции,
+        # проверяя зоны по курсу кормы (heading+180). Без этого «назад»
+        # не правил команду в программе, в отличие от «вперёд».
+        if (intent == "back" and not cmd.playback
+                and s.cautious and self.world.danger_zones):
+            req = nlu.extract_distance(raw)
+            if req:
+                back_h  = (s.heading + 180.0) % 360.0
+                clipped = self._clip_dist_cautious(float(req), back_h)
+                if clipped < 1.0:
+                    await self.push_message(
+                        f"⚠ Препятствие сзади — back({req}) "
+                        f"отменена, ехать нельзя.", "warning")
+                    return
+                if clipped < req - 0.5:
+                    adj = int(clipped)
+                    await self.push_message(
+                        f"⚠ Препятствие — back({req}) сокращена "
+                        f"до back({adj}).", "info")
+                    cmd.raw = re.sub(r'\d+', str(adj), cmd.raw, count=1)
+                    cmd.code = f"back({adj})"
+                    cmd.label = f"Назад {adj} см"
                     raw = cmd.raw   # обновим локальную переменную
 
         # ── Кодогенерация ПЕРЕД выполнением ────────────────────────────
@@ -4153,32 +4347,34 @@ class UserSession:
                 # (нет зон / робот не внутри) — здесь msg оставляем пустым.
                 msg, ok = "", False
         elif intent == "mode_inspector":
-            # На миссиях с опасными зонами (уровень ≥ 2) режим зафиксирован
-            # на «Опасно» — пока миссия активна, переключаться нельзя.
+            # Голосовой пресет «инспектор» = снять все зон-препятствия
+            # (остаются только стены). На миссии с опасными зонами —
+            # запрещено (danger-зоны зафиксированы).
             if self._mission is not None and self._mission.danger_zones:
-                msg, ok = ("Во время миссии с опасными зонами режим "
+                msg, ok = ("Во время миссии с опасными зонами препятствия "
                            "переключать нельзя. Завершите или остановите "
                            "миссию.", False)
             else:
-                s.mode = "normal"; s.cautious = False
+                s.mode = "normal"
+                self._apply_obstacles(set())
                 s.zone_mode = False     # mutex с «⛯ Зоны»
-                self._cautious_before_zone = None  # явный выбор стирает стэш
-                # Код — источник истины: переписываем MODE в textarea.
-                await self.broadcast({"type": "mode_line", "mode": "inspector"})
-                msg = "Режим Инспектор."
+                self._obstacles_before_zone = None  # явный выбор стирает стэш
+                await self.broadcast({"type": "obstacles_line",
+                                      "obstacles": sorted(s.obstacles)})
+                msg = self._obstacles_human()
         elif intent == "mode_cautious":
-            # Симметричная блокировка: пока идёт миссия с опасными зонами,
-            # «Опасно» и так уже включён, явная команда — no-op.
+            # Голосовой пресет «опасно» = реагировать на все типы зон.
             if self._mission is not None and self._mission.danger_zones:
-                msg, ok = ("Во время миссии с опасными зонами режим "
+                msg, ok = ("Во время миссии с опасными зонами препятствия "
                            "переключать нельзя. Завершите или остановите "
                            "миссию.", False)
             else:
-                s.cautious = True
+                self._apply_obstacles({"danger", "attention"})
                 s.zone_mode = False     # mutex с «⛯ Зоны»
-                self._cautious_before_zone = None  # явный выбор стирает стэш
-                await self.broadcast({"type": "mode_line", "mode": "danger"})
-                msg = "Режим Опасно."
+                self._obstacles_before_zone = None  # явный выбор стирает стэш
+                await self.broadcast({"type": "obstacles_line",
+                                      "obstacles": sorted(s.obstacles)})
+                msg = self._obstacles_human()
         elif intent == "path_show":
             await self.broadcast({"type": "path_visible", "visible": True})
             msg = "Путь показан."
@@ -4407,7 +4603,7 @@ class UserSession:
         # установка-снятие красных зон мышью + выход в другой режим.
         if self.robot_state.zone_mode and intent not in self._ZONE_MODE_ALLOWED_INTENTS:
             await self.push_message(
-                "⛯ Режим зон ВКЛ — команды робота отключены.",
+                "⛯ Обстановка ВКЛ — команды робота отключены.",
                 "warning")
             return
 
@@ -4428,11 +4624,11 @@ class UserSession:
                 db_local.close()
             return
 
-        # Переключение режима Инспектор/Опасно — мгновенное, в обход очереди
-        # манёвров: клик сразу меняет s.cautious и переписывает константу
-        # MODE в коде, не дожидаясь окончания текущего манёвра. _dispatch
-        # для этих интентов только правит состояние + шлёт mode_line —
-        # мотор и текущий манёвр не затрагиваются.
+        # Голосовые пресеты препятствий (инспектор/опасно) — мгновенные,
+        # в обход очереди манёвров: сразу меняют набор s.obstacles и
+        # переписывают строку OBSTACLES в коде, не дожидаясь окончания
+        # текущего манёвра. _dispatch для этих интентов только правит
+        # состояние + шлёт obstacles_line — мотор не затрагивается.
         if intent in ("mode_inspector", "mode_cautious"):
             cmd = self._build_cmd(intent, raw_text)
             if cmd is not None:
@@ -4618,15 +4814,23 @@ class UserSession:
 
             # Защитный стоп в режиме «Опасно»: если ЛЮБОЙ угол корпуса вошёл
             # в защитный буфер вокруг зоны — мгновенная остановка ДО касания.
-            # Применяется к любому движению (forward/goto/дуги/спирали/bypass)
-            # и ко ВСЕМ типам зон (опасные + внимания) — в «Опасно» зона
-            # ведёт себя как стена. Запас = «Толщина стены» из настроек:
-            # тот же параметр, что служит safety_margin у стен.
+            # Применяется к движению на ходу (forward/goto/дуги/спирали/
+            # bypass) и ко ВСЕМ типам зон (опасные + внимания) — в «Опасно»
+            # зона ведёт себя как стена. Запас = «Толщина стены» из настроек.
+            #
+            # ИСКЛЮЧЕНИЕ — K-turn (s.turning_in_place): разворот на месте
+            # крутится почти не смещаясь и геометрически возвращается в
+            # исходную точку. Обрыв его буфером зоны оставлял робота с
+            # недокрученным курсом → дальше он ехал «не туда». Поэтому
+            # K-turn доводится до конца; стоп у зон — только на ходу.
             SAFETY_BUFFER_CM = c.wall_thickness_cm
-            if s.cautious and not hit_wall and self.world.danger_zones:
+            if (s.cautious and not hit_wall and not s.turning_in_place
+                    and self.world.danger_zones):
                 hit_zone = None
                 for cx, cy in self._robot_corners():
                     for z in self.world.danger_zones:
+                        if not self._zone_is_obstacle(z):
+                            continue
                         r_buf = z.radius + SAFETY_BUFFER_CM
                         if (cx - z.x) ** 2 + (cy - z.y) ** 2 < r_buf * r_buf:
                             hit_zone = z

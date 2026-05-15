@@ -239,10 +239,18 @@
 
       <span class="viz-toolbar__sep" aria-hidden="true"></span>
 
-      <!-- Режим / Действия (перенесено из боковой панели) -->
-      <button id="btn-mode-inspector" class="btn btn--sm btn--info" data-cmd="Вега инспектор" title="Обычный режим инспектора">Инспектор</button>
-      <button id="btn-mode-cautious"  class="btn btn--sm btn--warn" data-cmd="Вега режим опасно" title="Режим «Опасно»: зоны опасности и внимания становятся препятствиями как стены — робот тормозит перед ними">⚠ Опасно</button>
-      <button id="btn-zone-mode"      class="btn btn--sm btn--danger" title="Режим установки опасных зон обстановки мышью: ЛКМ ставит, ПКМ удаляет (только опасные!), +/- меняет радиус, ESC или повторное нажатие — выход. Зоны внимания мышью не задеваются.">⛯ Режим зон</button>
+      <!-- Препятствия: на что робот реагирует авто-стопом. Стены — всегда.
+           Галочки фиксируются в коде строкой OBSTACLES. -->
+      <span class="viz-toolbar__obst-label">Препятствия:</span>
+      <label class="toggle" title="Робот тормозит перед опасными зонами с запасом безопасности">
+        <input type="checkbox" id="chk-obst-danger">
+        <span class="obst-label--danger">⛔ Опасные зоны</span>
+      </label>
+      <label class="toggle" title="Робот тормозит перед жёлтыми зонами внимания">
+        <input type="checkbox" id="chk-obst-attention">
+        <span class="obst-label--attention">⚠ Зоны внимания</span>
+      </label>
+      <button id="btn-zone-mode"      class="btn btn--sm btn--danger" title="Обстановка — расстановка опасных зон на карте мышью: ЛКМ ставит, ПКМ удаляет (только опасные!), +/- меняет радиус, ESC или повторное нажатие — выход. Зоны внимания мышью не задеваются.">⛯ Обстановка</button>
       <button class="btn btn--sm btn--success" data-cmd="Вега зарядить" title="Полностью зарядить батарею робота">🔋 Зарядить</button>
       <button id="btn-save-mission" class="btn btn--sm" title="Сохранить текущее состояние свободного режима как «кастомную» миссию для каталога">💾 Сохранить миссию</button>
       <button class="btn btn--sm btn--danger" data-cmd="Вега новое поле" title="Полный сброс: робот в стартовую точку, путь и зоны очищаются">↺ Поле</button>
