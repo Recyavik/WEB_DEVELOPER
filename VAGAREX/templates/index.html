@@ -223,38 +223,45 @@
   <!-- ── Центр: Canvas визуализация ──────────────────────────── -->
   <div class="viz-container">
     <div class="viz-toolbar">
-      <button id="btn-center-view" class="btn btn--sm" title="Центрировать вид на роботе (сбросить пан/зум)">⊙ Центрировать</button>
-      <label class="toggle">
-        <input type="checkbox" id="chk-grid" checked>
-        <span>Сетка</span>
-      </label>
-      <label class="toggle">
-        <input type="checkbox" id="chk-path" checked>
-        <span>Путь</span>
-      </label>
-      <label class="toggle">
-        <input type="checkbox" id="chk-laser" checked>
-        <span>Дальномер</span>
-      </label>
+      <!-- Строка 1: все флажки — отображение карты + «Препятствия». -->
+      <div class="viz-toolbar__row">
+        <label class="toggle">
+          <input type="checkbox" id="chk-grid" checked>
+          <span>Сетка</span>
+        </label>
+        <label class="toggle">
+          <input type="checkbox" id="chk-path" checked>
+          <span>Путь</span>
+        </label>
+        <label class="toggle">
+          <input type="checkbox" id="chk-laser" checked>
+          <span>Дальномер</span>
+        </label>
 
-      <span class="viz-toolbar__sep" aria-hidden="true"></span>
+        <span class="viz-toolbar__sep" aria-hidden="true"></span>
 
-      <!-- Препятствия: на что робот реагирует авто-стопом. Стены — всегда.
-           Галочки фиксируются в коде строкой OBSTACLES. -->
-      <span class="viz-toolbar__obst-label">Препятствия:</span>
-      <label class="toggle" title="Робот тормозит перед опасными зонами с запасом безопасности">
-        <input type="checkbox" id="chk-obst-danger">
-        <span class="obst-label--danger">⛔ Опасные зоны</span>
-      </label>
-      <label class="toggle" title="Робот тормозит перед жёлтыми зонами внимания">
-        <input type="checkbox" id="chk-obst-attention">
-        <span class="obst-label--attention">⚠ Зоны внимания</span>
-      </label>
-      <button id="btn-zone-mode"      class="btn btn--sm btn--danger" title="Обстановка — расстановка опасных зон на карте мышью: ЛКМ ставит, ПКМ удаляет (только опасные!), +/- меняет радиус, ESC или повторное нажатие — выход. Зоны внимания мышью не задеваются.">⛯ Обстановка</button>
-      <button id="btn-autopilot"      class="btn btn--sm btn--autopilot" title="Автопилот: введите координаты цели — робот сам построит маршрут в обход препятствий (A*) и поедет. Объезжаются стены и те зоны, что отмечены в «Препятствиях». Пройденные участки вписываются в код.">🧭 Автопилот</button>
-      <button class="btn btn--sm btn--success" data-cmd="Вега зарядить" title="Полностью зарядить батарею робота">🔋 Зарядить</button>
-      <button id="btn-save-mission" class="btn btn--sm" title="Сохранить текущее состояние свободного режима как «кастомную» миссию для каталога">💾 Сохранить миссию</button>
-      <button class="btn btn--sm btn--danger" data-cmd="Вега новое поле" title="Полный сброс: робот в стартовую точку, путь и зоны очищаются">↺ Поле</button>
+        <!-- Препятствия: на что робот реагирует авто-стопом. Стены — всегда.
+             Галочки фиксируются в коде строкой OBSTACLES. -->
+        <span class="viz-toolbar__obst-label">Препятствия:</span>
+        <label class="toggle" title="Робот тормозит перед опасными зонами с запасом безопасности">
+          <input type="checkbox" id="chk-obst-danger">
+          <span class="obst-label--danger">⛔ Опасные зоны</span>
+        </label>
+        <label class="toggle" title="Робот тормозит перед жёлтыми зонами внимания">
+          <input type="checkbox" id="chk-obst-attention">
+          <span class="obst-label--attention">⚠ Зоны внимания</span>
+        </label>
+      </div>
+
+      <!-- Строка 2: кнопки интерфейса. -->
+      <div class="viz-toolbar__row">
+        <button id="btn-center-view" class="btn btn--sm" title="Центрировать вид на роботе (сбросить пан/зум)">⊙ Центрировать</button>
+        <button id="btn-zone-mode"      class="btn btn--sm btn--danger" title="Обстановка — расстановка опасных зон на карте мышью: ЛКМ ставит, ПКМ удаляет (только опасные!), +/- меняет радиус, ESC или повторное нажатие — выход. Зоны внимания мышью не задеваются.">⛯ Обстановка</button>
+        <button id="btn-autopilot"      class="btn btn--sm btn--autopilot" title="Автопилот: введите координаты цели — робот сам построит маршрут в обход препятствий (A*) и поедет. Объезжаются стены и те зоны, что отмечены в «Препятствиях». Пройденные участки вписываются в код.">🧭 Автопилот</button>
+        <button class="btn btn--sm btn--success" data-cmd="Вега зарядить" title="Полностью зарядить батарею робота">🔋 Зарядить</button>
+        <button id="btn-save-mission" class="btn btn--sm" title="Сохранить текущее состояние свободного режима как «кастомную» миссию для каталога">💾 Сохранить миссию</button>
+        <button class="btn btn--sm btn--danger" data-cmd="Вега новое поле" title="Полный сброс: робот в стартовую точку, путь и зоны очищаются">↺ Поле</button>
+      </div>
     </div>
     <canvas id="robot-canvas"></canvas>
   </div>
