@@ -379,7 +379,6 @@ class RobotProxy:
 
     async def _add_attention_at(self, x: float, y: float, radius: Optional[float]):
         """Ставит зону внимания в произвольной точке (x, y) — без поездки."""
-        from db_models import DangerZone
         sess = self._session
         r = float(radius) if radius is not None else float(sess.cfg.danger_zone_radius)
         zone = sess.world.add_danger_zone(x, y, radius=r,

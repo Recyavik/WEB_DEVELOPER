@@ -16,9 +16,10 @@
     <span class="help-card__icon">📘</span>
     <h2 class="help-card__title">Инструкция</h2>
     <p class="help-card__desc">
-      С чего начать: голосовой режим, базовые команды, режимы движения,
-      работа с зонами и режимом «⛯ Режим зон», взаимное гашение зон,
-      советы по голосовой работе. Самый практичный раздел для новичка.
+      С чего начать: голос/кнопки/код, управление выполнением
+      (■ СТОП / ⏸ Пауза / ▶ Продолжить), движение, повороты, дуги,
+      навигация, зоны и три режима (Инспектор / Осторожно / ⛯ Зоны),
+      алгоритмы обхода. Самый практичный раздел.
     </p>
     <a href="/training" class="btn">Открыть Инструкцию →</a>
   </article>
@@ -27,12 +28,14 @@
     <span class="help-card__icon">🤖</span>
     <h2 class="help-card__title">API 1T REX</h2>
     <p class="help-card__desc">
-      Полный справочник примитивов реального робота
+      Полный справочник:
+      <strong>высокоуровневый фасад VEGAREX</strong> (<code>robot.forward</code>,
+      <code>robot.goto</code>, <code>robot.arc</code>,
+      <code>robot.load_danger_zones</code> — то, что пишет каждая кнопка)
+      и <strong>низкоуровневые примитивы платы</strong>
       (<code>robot.move</code>, <code>robot.set_angle</code>,
-      <code>robot.get_laser</code>, <code>robot.set_rgb</code>) и
-      готовых helper-функций (<code>goto_cmd</code>, <code>face_cmd</code>,
-      <code>kturn_cmd</code> и т.д.). Используется при ручной правке
-      Python-кода программы.
+      <code>robot.get_laser</code>). Код — настоящий Python, копируется
+      на реальный 1T REX как есть.
     </p>
     <a href="/system" class="btn">Открыть API 1T REX →</a>
   </article>
@@ -41,10 +44,10 @@
     <span class="help-card__icon">🧭</span>
     <h2 class="help-card__title">Маневры</h2>
     <p class="help-card__desc">
-      Подробное объяснение алгоритмов движения с диаграммами и формулами:
-      3-дуговой K-turn, объезд S-волной, восьмёрка, спираль, A*-планировщик,
-      pure-pursuit, режим осторожности, проверка проходимости. Для тех,
-      кто хочет понять, что происходит «под капотом».
+      Что под капотом каждой команды: 3-дуговой K-turn (Reeds-Shepp),
+      объезд S-волной, восьмёрка, спираль, A*-планировщик,
+      Линейный обход и Ручной режим. Псевдокод с построчными
+      комментариями, формулы, диаграммы.
     </p>
     <a href="/maneuvers" class="btn">Открыть Маневры →</a>
   </article>

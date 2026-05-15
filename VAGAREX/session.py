@@ -1147,46 +1147,8 @@ class UserSession:
 
     # ── Примитивы движения ───────────────────────────────────────────────────
 
-    def _line_blocked_by_zones(self, target_x: float, target_y: float) -> bool:
-        """True если прямая из текущей позиции в (target_x, target_y)
-        пересекает раздутую опасную зону. Та же геометрия что у A*-планировщика
-        (inflation = корпус + safety_margin) — проверка консистентна."""
-        if not self.world.danger_zones:
-            return False
-        import path_planner as pp
-        s = self.robot_state
-        cfg = self.cfg
-        zones = [pp.Obstacle(z.x, z.y, z.radius)
-                 for z in self.world.danger_zones]
-        robot_inflation = (max(cfg.robot_length_cm, cfg.robot_width_cm) / 2.0
-                           + cfg.robot_length_cm / 2.0)
-        safety = cfg.wall_thickness_cm
-        return pp.line_hits_zones((s.x, s.y), (target_x, target_y),
-                                   zones, robot_inflation, safety)
-
-    def _heading_target(self, distance_cm: float, backward: bool = False
-                         ) -> tuple[float, float]:
-        """Точка, куда робот хочет приехать прямолинейно: (x, y) + distance_cm
-        вдоль курса (или против, если backward=True)."""
-        s = self.robot_state
-        sign = -1.0 if backward else 1.0
-        h_rad = math.radians(s.heading)
-        return (s.x + sign * distance_cm * math.sin(h_rad),
-                s.y + sign * distance_cm * math.cos(h_rad))
-
     async def _run_forward(self, dist_cm: Optional[float], spd: int):
         s = self.robot_state
-        # Option A: в Осторожно если прямая блокирована зоной — делегируем
-        # в _run_goto, который применяет выбранный алгоритм обхода
-        # (pure_pursuit / stanley / linear / manual) из настроек.
-        if dist_cm and s.cautious and self.world.danger_zones:
-            tx, ty = self._heading_target(dist_cm, backward=False)
-            if self._line_blocked_by_zones(tx, ty):
-                await self.push_message(
-                    f"⚠ Прямой путь блокирован — обход к "
-                    f"({tx:.0f}, {ty:.0f}).", "info")
-                await self._run_goto(tx, ty)
-                return
         await self.robot.set_angle(int(s.steer))
         await self.robot.move(spd)
         s.speed     = float(spd)
@@ -1208,15 +1170,6 @@ class UserSession:
 
     async def _run_back(self, dist_cm: Optional[float], spd: int):
         s = self.robot_state
-        # Option A: симметрично forward — назад через goto если блок.
-        if dist_cm and s.cautious and self.world.danger_zones:
-            tx, ty = self._heading_target(dist_cm, backward=True)
-            if self._line_blocked_by_zones(tx, ty):
-                await self.push_message(
-                    f"⚠ Прямой путь назад блокирован — обход к "
-                    f"({tx:.0f}, {ty:.0f}).", "info")
-                await self._run_goto(tx, ty)
-                return
         await self.robot.set_angle(int(s.steer))
         await self.robot.move(-spd)
         s.speed     = float(-spd)
@@ -1236,22 +1189,15 @@ class UserSession:
 
     async def _run_forward_to_wall(self, spd: int):
         s = self.robot_state
-        # Option A: в Осторожно цель forward_to_wall = стена в курсе.
-        # Если прямая до неё блокирована зоной — обход через _run_goto
-        # с выбранным алгоритмом (pure_pursuit/stanley/linear/manual).
-        if s.cautious and self.world.danger_zones:
-            wall_dist = self._wall_dist_for_robot()   # см до стены
-            # Берём чуть меньше, чтобы не упереться в саму стену.
-            target_d = max(0.0, wall_dist - self.cfg.wall_thickness_cm)
-            if target_d > 1.0:
-                tx, ty = self._heading_target(target_d, backward=False)
-                if self._line_blocked_by_zones(tx, ty):
-                    await self.push_message(
-                        f"⚠ Путь до стены блокирован — обход к "
-                        f"({tx:.0f}, {ty:.0f}).", "info")
-                    await self._run_goto(tx, ty)
-                    return
         zone_dist = self._clip_dist_cautious(9999.0) if s.cautious else 9999.0
+        # cautious уже упёрся в зону на margin — не двигаем мотор.
+        if s.cautious and zone_dist < 1.0:
+            await self.robot.move(0)
+            s.speed = 0
+            s.dist_left = 0
+            await self.push_message(
+                "⚠ Уже у зоны — ехать вперёд нельзя.", "warning")
+            return
         s.dist_left  = zone_dist if zone_dist < 9900.0 else 0.0
         s.laser_stop = True
         await self.robot.move(spd)
@@ -1268,20 +1214,6 @@ class UserSession:
 
     async def _run_backward_to_wall(self, spd: int):
         s = self.robot_state
-        # Option A: в Осторожно цель backward_to_wall = стена ЗА роботом.
-        # Берём wall_dist в курсе+180°, если блокирована зоной — обход.
-        if s.cautious and self.world.danger_zones:
-            back_heading = (s.heading + 180.0) % 360.0
-            wall_dist = self._wall_dist_for_robot(back_heading)
-            target_d = max(0.0, wall_dist - self.cfg.wall_thickness_cm)
-            if target_d > 1.0:
-                tx, ty = self._heading_target(target_d, backward=True)
-                if self._line_blocked_by_zones(tx, ty):
-                    await self.push_message(
-                        f"⚠ Путь назад до стены блокирован — обход к "
-                        f"({tx:.0f}, {ty:.0f}).", "info")
-                    await self._run_goto(tx, ty)
-                    return
         zone_dist = self._clip_dist_cautious(9999.0) if s.cautious else 9999.0
         s.dist_left  = zone_dist if zone_dist < 9900.0 else 0.0
         s.laser_stop = True
@@ -1514,15 +1446,13 @@ class UserSession:
     # ── Перейти в координату / домой ────────────────────────────────────────
 
     async def _run_goto(self, target_x: float, target_y: float):
-        """Точка входа goto. В режиме «осторожно» может включить планировщик
-        обхода зон и выполнить ломаный маршрут. Иначе — обычный заход в точку."""
-        s = self.robot_state
-        if s.cautious:
-            ok = await self._run_goto_cautious(target_x, target_y)
-            if ok:
-                return
-            # cautious не нашел/не выполнил — выходим, не дергаем direct
-            return
+        """Точка входа goto — всегда прямой заход в точку.
+
+        Планировщик обхода зон (старый режим «осторожно») из goto убран:
+        в режиме «Опасно» робот едет прямо и автоматически тормозит перед
+        зоной/стеной (см. update_physics), а команда переписывается на
+        фактически достигнутую. Построение обходного маршрута — задача
+        отдельного режима «Автопилот»."""
         await self._run_goto_direct(target_x, target_y)
 
     async def _run_goto_cautious(self, target_x: float, target_y: float) -> bool:
@@ -3208,6 +3138,23 @@ class UserSession:
                 return None
         return _grab("START_X"), _grab("START_Y"), _grab("START_HEADING_DEG")
 
+    @staticmethod
+    def _parse_mode_from_python(text: Optional[str]) -> Optional[str]:
+        """Извлекает константу MODE из текста программы.
+
+        Возвращает "inspector" | "danger" — режим запуска. Код главнее
+        кнопок UI (как START_X): при ▶ Запуске режим берётся отсюда.
+        None — строки нет либо значение не распознано: вызывающий
+        подставляет дефолт."""
+        if not text:
+            return None
+        m = re.search(r'^\s*MODE\s*=\s*["\'](\w+)["\']\s*(?:#.*)?$',
+                      text, re.MULTILINE)
+        if not m:
+            return None
+        val = m.group(1).lower()
+        return val if val in ("inspector", "danger") else None
+
     @classmethod
     def _parse_danger_zones_from_python(cls,
                                           text: Optional[str]
@@ -3292,7 +3239,14 @@ class UserSession:
         s.steer     = 0.0
         s.dist_left = 0
         if not keep_mode:
-            s.mode     = "normal"
+            s.mode = "normal"
+        # Режим Инспектор/Опасно — из константы MODE в коде (код главнее
+        # кнопок, как START_X). Нет константы: при полном сбросе ↺ Поле →
+        # Инспектор; при keep_mode (▶ Run / миссия) — оставляем текущий.
+        code_mode = self._parse_mode_from_python(self._last_python_code)
+        if code_mode is not None:
+            s.cautious = (code_mode == "danger")
+        elif not keep_mode:
             s.cautious = False
         s.thinking  = "idle"
         s.light_color = (0, 0, 0)
@@ -3538,7 +3492,7 @@ class UserSession:
         elif intent == "mode_inspector":
             code, label = "mode(inspector)", "Режим инспектор"
         elif intent == "mode_cautious":
-            code, label = "mode(cautious)", "Режим осторожно"
+            code, label = "mode(cautious)", "Режим Опасно"
         elif intent == "path_show":
             code, label = "path_show()", "Показать путь"
         elif intent == "path_hide":
@@ -3572,9 +3526,15 @@ class UserSession:
 
     def _python_constants_block(self) -> str:
         c = self.cfg
+        mode = "danger" if self.robot_state.cautious else "inspector"
         return (
             "# Программа для 1T REX. Команды robot.X(...) — см. «Справка → API».\n"
             "import math, time\n"
+            "\n"
+            "# ── Режим запуска ────────────────────────────────────────────\n"
+            "# \"inspector\" — авто-стоп только у стен\n"
+            "# \"danger\"    — авто-стоп у стен И у всех зон («Опасно»)\n"
+            f"MODE = \"{mode}\"\n"
             "\n"
             "# ── RGB-индикатор на плате (для robot.set_rgb) ───────────────\n"
             f"LIGHT_INDEX         = {LIGHT_INDEX}      # индекс LED\n"
@@ -3803,7 +3763,7 @@ class UserSession:
         elif intent == "mode_inspector":
             code_lines += ["# режим «инспектор» — интерфейсный, не записывается в программу"]
         elif intent == "mode_cautious":
-            code_lines += ["# режим «осторожно» — интерфейсный, не записывается в программу"]
+            code_lines += ["# режим «Опасно» — интерфейсный, не записывается в программу"]
         elif intent == "path_show":
             code_lines += ["# показать путь — интерфейсное"]
         elif intent == "path_hide":
@@ -3864,6 +3824,36 @@ class UserSession:
         raw    = cmd.raw
         msg    = ""
         ok     = True
+
+        # ── Cautious + forward: clip & shorten вместо паузы ────────────
+        # Если впереди опасная зона, не отдаём управление в goto/manual
+        # (что вызывало бы паузу), а сами укорачиваем команду до безопасной
+        # дистанции и редактируем cmd.raw — кодоген ниже увидит уже новую
+        # длину и в textarea появится «forward(45)» вместо «forward(100)».
+        # Если приблизиться нельзя совсем — отменяем команду полностью.
+        if (intent == "forward" and not cmd.playback
+                and s.cautious and self.world.danger_zones):
+            req = nlu.extract_distance(raw)
+            if req:
+                clipped = self._clip_dist_cautious(float(req))
+                if clipped < 1.0:
+                    # Не приблизиться — отменяем команду целиком.
+                    await self.push_message(
+                        f"⚠ Препятствие на курсе — forward({req}) "
+                        f"отменена, ехать нельзя.", "warning")
+                    return
+                if clipped < req - 0.5:
+                    # Сокращаем до безопасной дистанции.
+                    adj = int(clipped)
+                    await self.push_message(
+                        f"⚠ Препятствие — forward({req}) сокращена "
+                        f"до forward({adj}).", "info")
+                    # Подменяем raw (cодержит дистанцию текстом) — кодоген
+                    # ниже снова дернёт extract_distance и увидит {adj}.
+                    cmd.raw = re.sub(r'\d+', str(adj), cmd.raw, count=1)
+                    cmd.code = f"forward({adj})"
+                    cmd.label = f"Вперед {adj} см"
+                    raw = cmd.raw   # обновим локальную переменную
 
         # ── Кодогенерация ПЕРЕД выполнением ────────────────────────────
         # Чтобы оптимизации в _python_call_lines_for_cmd (например, для goto)
@@ -4164,7 +4154,7 @@ class UserSession:
                 msg, ok = "", False
         elif intent == "mode_inspector":
             # На миссиях с опасными зонами (уровень ≥ 2) режим зафиксирован
-            # на «осторожно» — пока миссия активна, переключаться нельзя.
+            # на «Опасно» — пока миссия активна, переключаться нельзя.
             if self._mission is not None and self._mission.danger_zones:
                 msg, ok = ("Во время миссии с опасными зонами режим "
                            "переключать нельзя. Завершите или остановите "
@@ -4173,10 +4163,12 @@ class UserSession:
                 s.mode = "normal"; s.cautious = False
                 s.zone_mode = False     # mutex с «⛯ Зоны»
                 self._cautious_before_zone = None  # явный выбор стирает стэш
-                msg = "Режим инспектор."
+                # Код — источник истины: переписываем MODE в textarea.
+                await self.broadcast({"type": "mode_line", "mode": "inspector"})
+                msg = "Режим Инспектор."
         elif intent == "mode_cautious":
             # Симметричная блокировка: пока идёт миссия с опасными зонами,
-            # «осторожно» и так уже включён, явная команда — no-op.
+            # «Опасно» и так уже включён, явная команда — no-op.
             if self._mission is not None and self._mission.danger_zones:
                 msg, ok = ("Во время миссии с опасными зонами режим "
                            "переключать нельзя. Завершите или остановите "
@@ -4185,7 +4177,8 @@ class UserSession:
                 s.cautious = True
                 s.zone_mode = False     # mutex с «⛯ Зоны»
                 self._cautious_before_zone = None  # явный выбор стирает стэш
-                msg = "Режим осторожно."
+                await self.broadcast({"type": "mode_line", "mode": "danger"})
+                msg = "Режим Опасно."
         elif intent == "path_show":
             await self.broadcast({"type": "path_visible", "visible": True})
             msg = "Путь показан."
@@ -4435,6 +4428,21 @@ class UserSession:
                 db_local.close()
             return
 
+        # Переключение режима Инспектор/Опасно — мгновенное, в обход очереди
+        # манёвров: клик сразу меняет s.cautious и переписывает константу
+        # MODE в коде, не дожидаясь окончания текущего манёвра. _dispatch
+        # для этих интентов только правит состояние + шлёт mode_line —
+        # мотор и текущий манёвр не затрагиваются.
+        if intent in ("mode_inspector", "mode_cautious"):
+            cmd = self._build_cmd(intent, raw_text)
+            if cmd is not None:
+                db_local = SessionLocal()
+                try:
+                    await self._dispatch(cmd, db_local)
+                finally:
+                    db_local.close()
+            return
+
         cmd = self._build_cmd(intent, raw_text)
         if cmd is None:
             # Чаще всего _build_cmd возвращает None когда intent распознан,
@@ -4608,13 +4616,13 @@ class UserSession:
                 s.dist_left = 0
                 await self.robot.move(0)
 
-            # Защитный стоп в режиме «осторожно»: если ЛЮБОЙ угол корпуса
-            # вошёл в защитный буфер вокруг опасной зоны — мгновенная
-            # остановка ДО касания. Применяется к любому движению, включая
-            # дуги/спирали/восьмёрки/bypass — не только forward/goto.
-            # SAFETY_BUFFER_CM — сколько см зазора от края зоны (5 см
-            # достаточно чтобы успеть остановить мотор в течение тика).
-            SAFETY_BUFFER_CM = 5.0
+            # Защитный стоп в режиме «Опасно»: если ЛЮБОЙ угол корпуса вошёл
+            # в защитный буфер вокруг зоны — мгновенная остановка ДО касания.
+            # Применяется к любому движению (forward/goto/дуги/спирали/bypass)
+            # и ко ВСЕМ типам зон (опасные + внимания) — в «Опасно» зона
+            # ведёт себя как стена. Запас = «Толщина стены» из настроек:
+            # тот же параметр, что служит safety_margin у стен.
+            SAFETY_BUFFER_CM = c.wall_thickness_cm
             if s.cautious and not hit_wall and self.world.danger_zones:
                 hit_zone = None
                 for cx, cy in self._robot_corners():

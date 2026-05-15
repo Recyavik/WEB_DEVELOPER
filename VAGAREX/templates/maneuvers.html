@@ -115,11 +115,12 @@
 <div class="page-header">
   <h1>Маневры — алгоритмы и функции управления</h1>
   <p class="subtitle">
-    Полное описание всех алгоритмов движения и навигации робота 1T REX:
-    схема, формула, реализация на Python с построчными комментариями,
-    параметры и пример вызова. Все функции опираются только на примитивы
-    из раздела <a href="/system">Справка → API 1T REX</a> — их можно копировать на
-    физическую плату как есть.
+    «Под капотом» каждой команды фасада <code>robot.X(...)</code>: схема,
+    формула, реализация на <strong>настоящем Python</strong> с построчными
+    комментариями. Псевдокод ниже близок к реальному коду
+    (<code>session.py</code>, методы <code>_run_*</code>), который исполняется
+    сервером. Низкоуровневые «сырые» примитивы реальной платы —
+    в разделе <a href="/system">Справка → API 1T REX</a>.
   </p>
 </div>
 
@@ -153,8 +154,11 @@
       <a href="#a-pp">follow_path_cmd (Pure-pursuit)</a>
     <br><strong>6. Зоны и обстановка</strong> —
       <a href="#a-zones">опасная зона / зона внимания / remove</a>
-    <br><strong>7. Режим осторожности</strong> —
-      <a href="#a-cautious">smart-direction K-turn + остановка перед препятствием</a>
+    <br><strong>7. Режим «Осторожно»</strong> —
+      <a href="#a-cautious-linear">Линейный обход (A* + K-turn)</a> ·
+      <a href="#a-cautious-manual">Ручной (отказ при пересечении)</a> ·
+      защитный стоп (5 см от зоны) ·
+      <code>forward</code>/<code>back</code> с авто-сокращением
   </div>
 </section>
 
@@ -1526,130 +1530,150 @@ remove_zone_cmd(100, 50)             <span class="c"># снять зону, на
      7. РЕЖИМ ОСТОРОЖНОСТИ
      ════════════════════════════════════════════════════════════════════ -->
 <section class="card alg-card">
-  <h2 class="card__title">7. Режим осторожности — поведение перед препятствием</h2>
+  <h2 class="card__title">7. Режим «Осторожно» — поведение перед препятствием</h2>
 
-  <h3 id="a-cautious">7.1. Smart-direction K-turn</h3>
+  <p>
+    В Осторожно команда <code>robot.goto(x, y)</code> (и
+    <code>robot.home()</code>) задействует <strong>планировщик A*</strong>,
+    если прямая от текущей позиции к цели пересекает опасную зону.
+    Алгоритм поведения выбирается в <a href="/settings">настройках</a> →
+    «Алгоритм обхода». Сейчас доступны два:
+  </p>
+
+  <h3 id="a-cautious-linear">7.1. Линейный обход (Linear)</h3>
 
   <div class="alg-grid">
     <figure class="alg-svg">
       <svg viewBox="0 0 280 180">
-        <circle cx="140" cy="100" r="6" class="svg-bot"/>
-        <path d="M 140 100 q -50 -20 -60 -60" class="svg-line2" stroke-dasharray="3 3"/>
-        <rect x="60" y="20" width="30" height="20" class="svg-obs"/>
-        <text x="20" y="55" class="svg-text-sm" fill="#f85149">блокировано</text>
-        <path d="M 140 100 q 50 -20 60 -60" class="svg-line"/>
-        <text x="200" y="40" class="svg-text-sm" fill="#58a6ff">ok</text>
-        <text x="105" y="160" class="svg-text-sm">пробуем оба направления</text>
+        <!-- зоны -->
+        <circle cx="120" cy="60" r="22" class="svg-obs"/>
+        <circle cx="200" cy="110" r="22" class="svg-obs"/>
+        <!-- ломаная A* -->
+        <path d="M 40 150 L 80 100 L 160 70 L 240 140" class="svg-line" stroke-dasharray="4 3"/>
+        <!-- угловые точки -->
+        <circle cx="80" cy="100" r="4" fill="#a371f7"/>
+        <circle cx="160" cy="70" r="4" fill="#a371f7"/>
+        <!-- старт/цель -->
+        <circle cx="40" cy="150" r="6" class="svg-bot"/>
+        <text x="46" y="166" class="svg-text-sm">старт</text>
+        <circle cx="240" cy="140" r="5" fill="#3fb950"/>
+        <text x="220" y="160" class="svg-text-sm">цель</text>
+        <text x="78" y="92" class="svg-text-sm" fill="#a371f7">K-turn</text>
       </svg>
-      <figcaption>Если первое направление в зону опасности — пробуем зеркало</figcaption>
+      <figcaption>A* строит ломаную, в каждом узле — поворот на месте.</figcaption>
     </figure>
     <div>
       <h4>Идея</h4>
-      <p>Симметричные маневры (<code>face_cmd</code>,
-      <code>course_cmd</code>, <code>turn_around_cmd</code>) выполняются
-      в одном «естественном» направлении (по часовой). В режиме осторожности:</p>
-      <ol>
-        <li>Симулируем все три дуги K-turn в исходном направлении.
-            Если ни одна точка дуги не пересекает опасную зону —
-            выполняем как обычно.</li>
-        <li>Если пересечение есть — повторяем симуляцию для
-            <em>зеркального</em> направления.</li>
-        <li>Если оба направления блокированы — отказываемся выполнять
-            и предлагаем в журнале альтернативу
-            (например, <code>goto_cmd(x, y)</code> с обходом A*).</li>
-      </ol>
+      <ul>
+        <li>A* по сетке ищет проход между раздутыми (на корпус +
+            <code>safety_margin</code>) зонами и стенами.</li>
+        <li>Полученная ломаная visibility-сглажена: оставлены только
+            «существенные» угловые точки.</li>
+        <li>Робот едет вершина за вершиной: на каждой вершине —
+            <strong>поворот на месте (K-turn)</strong> к следующей точке,
+            затем <strong>прямой forward</strong> на расстояние до неё.</li>
+        <li>Без срезания углов и без Чайкин-сглаживания. Точно по
+            полилинии.</li>
+      </ul>
+      <p><strong>Плюс:</strong> предсказуемо, попадает в каждую вершину.
+      Удобно для обучения — обучающийся видит дискретные шаги.<br>
+      <strong>Минус:</strong> ×N дольше из-за разворотов на месте.</p>
     </div>
   </div>
 
-  <h4>Параметры</h4>
-  <ul class="params-list">
-    <li><code>delta_deg</code> — на сколько градусов нужно повернуть (по модулю).</li>
-    <li><code>danger_zones</code> — список <code>[(x, y, radius), ...]</code> зон опасности.</li>
+  <h4>Что под капотом</h4>
+<pre class="alg-code"><span class="c"># Упрощённый псевдокод того, что делает _follow_linear в session.py.</span>
+<span class="c"># Реальный код использует _k_turn_to_heading() и _run_forward() —</span>
+<span class="c"># это методы Python-фасада VEGAREX.</span>
+<span class="k">def</span> follow_linear(waypoints):
+    <span class="k">for</span> i <span class="k">in</span> range(1, len(waypoints)):                              <span class="c"># каждая вершина ломаной, кроме старта</span>
+        nx, ny = waypoints[i]                                             <span class="c"># следующая точка</span>
+        dx, dy = nx - robot.x, ny - robot.y                              <span class="c"># вектор от текущей позиции</span>
+        dist   = math.hypot(dx, dy)                                       <span class="c"># расстояние до неё</span>
+        <span class="k">if</span> dist < 2.0:                                                <span class="c"># уже на месте — пропускаем</span>
+            <span class="k">continue</span>
+        target_heading = math.degrees(math.atan2(dx, dy)) % 360            <span class="c"># нужный курс к точке</span>
+        diff = ((target_heading - robot.heading + 540) % 360) - 180        <span class="c"># разница курса со знаком</span>
+        <span class="k">if</span> abs(diff) > 3.0:                                           <span class="c"># нужен поворот?</span>
+            robot.face(target_heading)                                    <span class="c"># K-turn на месте к следующей вершине</span>
+        robot.forward(dist)                                               <span class="c"># прямой проезд до вершины</span></pre>
+
+
+  <h3 id="a-cautious-manual">7.2. Ручной режим (Manual)</h3>
+
+  <div class="alg-grid">
+    <figure class="alg-svg">
+      <svg viewBox="0 0 280 180">
+        <circle cx="140" cy="80" r="28" class="svg-obs"/>
+        <path d="M 40 140 L 240 140" class="svg-line" stroke-dasharray="3 3" opacity="0.4"/>
+        <line x1="40" y1="80" x2="100" y2="80" stroke="#f85149" stroke-width="2"/>
+        <line x1="40" y1="80" x2="100" y2="80" stroke-dasharray="2 2"/>
+        <text x="70" y="20" class="svg-text-sm" fill="#f85149">отказ</text>
+        <circle cx="40" cy="140" r="6" class="svg-bot"/>
+        <text x="20" y="160" class="svg-text-sm">старт</text>
+        <text x="220" y="160" class="svg-text-sm">цель</text>
+      </svg>
+      <figcaption>Путь пересекает зону → команда отклонена.</figcaption>
+    </figure>
+    <div>
+      <h4>Идея</h4>
+      <ul>
+        <li>Робот <strong>НЕ пытается</strong> обойти автоматически.</li>
+        <li>Если прямая команды (<code>robot.goto</code>) пересекает
+            опасную зону — команда <strong>не добавляется</strong> в код
+            и в журнал летит сообщение, что прямой путь блокирован.</li>
+        <li>Обучающийся сам решает: написать <code>robot.face(...)</code>,
+            проехать сбоку и потом снова <code>robot.goto(target)</code>.</li>
+      </ul>
+      <p><strong>Плюс:</strong> учит думать о пути и зонах.<br>
+      <strong>Минус:</strong> требует ручной декомпозиции — пишешь сам,
+      обходишь сам.</p>
+    </div>
+  </div>
+
+
+  <h3>7.3. Защитный стоп (для всех манёвров)</h3>
+
+  <p>
+    Независимо от выбранного алгоритма, в Осторожном режиме работает
+    <strong>защитный стоп физики</strong>: на каждом физическом тике
+    проверяется — не вошёл ли любой угол корпуса робота в зону
+    радиуса <code>z.radius + 5 см</code>. Если да — мотор глушится мгновенно,
+    в журнал — «⚠ Стоп — близко к опасной зоне #N».
+  </p>
+
+  <p class="note">
+    Это страховка от ошибок планирования и для манёвров без
+    встроенной проверки траектории (<code>robot.arc</code>,
+    <code>robot.bypass</code>, <code>robot.spiral</code>,
+    <code>robot.figure_eight</code>, K-turn внутри
+    <code>robot.face/turn_*</code>). Защитный стоп срабатывает ПОСЛЕ
+    касания буфера, не ДО — поэтому для предсказуемого обхода зон
+    нужен <code>robot.goto</code> с Linear-алгоритмом.
+  </p>
+
+
+  <h3>7.4. <code>forward</code> / <code>back</code> в Осторожно</h3>
+
+  <p>
+    Команды <code>robot.forward(N)</code> и <code>robot.back(N)</code> в
+    Осторожно проверяют, помещается ли запрошенная дистанция между
+    текущей позицией и ближайшей зоной (margin 20 см от края зоны):
+  </p>
+  <ul>
+    <li>Если <strong>помещается полностью</strong> — едем N см.</li>
+    <li>Если <strong>помещается частично</strong> — команда автоматически
+        <em>сокращается</em> до безопасной дистанции (в журнал:
+        «<em>forward(100) сокращена до forward(45)</em>»), едет на новую
+        длину. В коде программы сразу появляется уже исправленная версия.</li>
+    <li>Если <strong>не помещается вовсе</strong> (робот уже на margin) —
+        команда <strong>отменяется</strong>, в коде не появляется.</li>
   </ul>
-
-<pre class="alg-code"><span class="c"># Симуляция трёх дуг K-turn без реального движения робота — для проверки на зоны.</span>
-<span class="k">def</span> simulate_kturn(start_x, start_y, start_h, delta_deg, direction, danger_zones):
-    pts = []                                                              <span class="c"># список точек симулированной траектории</span>
-    delta = abs(delta_deg)                                                <span class="c"># работаем с положительным углом</span>
-    beta  = 2 * math.degrees(math.asin(math.sin(math.radians(delta/2)) / 2))  <span class="c"># дуга назад β по Reeds-Shepp</span>
-    alpha = (delta - beta) / 2                                            <span class="c"># дуги вперёд α (две одинаковые)</span>
-    x, y, h = start_x, start_y, start_h                                   <span class="c"># текущие позиция и курс в симуляции</span>
-    <span class="k">for</span> arc_deg, power_sign, steer_sign <span class="k">in</span> [
-            (alpha, +1, +direction),                                      <span class="c"># дуга 1: вперёд</span>
-            (beta,  -1, -direction),                                      <span class="c"># дуга 2: назад (зеркальный руль)</span>
-            (alpha, +1, +direction)]:                                     <span class="c"># дуга 3: вперёд</span>
-        steps = max(2, int(arc_deg / 5))                                  <span class="c"># дискретизация ~5° на шаг</span>
-        <span class="k">for</span> _ <span class="k">in</span> range(steps):                                       <span class="c"># микро-шаги внутри одной дуги</span>
-            ds = power_sign * 2.0                                         <span class="c"># 2 см/шаг (со знаком направления)</span>
-            dh = HEADING_DEG_PER_ROT * (ds / WHEEL_CIRC_CM) * (steer_sign * DEFAULT_TURN_ANGLE / 36.0)  <span class="c"># Δкурса за шаг</span>
-            h  = (h + dh) % 360.0                                         <span class="c"># обновить курс (нормализация в [0;360))</span>
-            x += ds * math.sin(math.radians(h))                           <span class="c"># обновить X (sin — ось x вправо)</span>
-            y += ds * math.cos(math.radians(h))                           <span class="c"># обновить Y (cos — ось y вверх)</span>
-            pts.append((x, y))                                            <span class="c"># запомнить точку траектории</span>
-            <span class="k">for</span> (zx, zy, zr) <span class="k">in</span> danger_zones:                         <span class="c"># проверка на пересечение каждой зоны</span>
-                <span class="k">if</span> (x - zx)**2 + (y - zy)**2 < zr*zr:                     <span class="c"># попали внутрь круга радиуса zr</span>
-                    <span class="k">return</span> None                                          <span class="c"># траектория небезопасна</span>
-    <span class="k">return</span> pts                                                        <span class="c"># все шаги пройдены — траектория свободна</span>
-
-
-<span class="k">def</span> kturn_smart_cmd(delta_deg, danger_zones):
-    <span class="c"># Пробуем сначала «по часовой»; если не получилось — против часовой.</span>
-    <span class="k">for</span> direction <span class="k">in</span> (+1, -1):                                    <span class="c"># перебираем оба направления</span>
-        traj = simulate_kturn(odo.x, odo.y, odo.heading,                  <span class="c"># симулируем K-turn для проверки</span>
-                              delta_deg, direction, danger_zones)
-        <span class="k">if</span> traj <span class="k">is</span> <span class="k">not</span> None:                                     <span class="c"># направление безопасно</span>
-            kturn_cmd(delta_deg, direction)                               <span class="c"># выполняем по-настоящему</span>
-            <span class="k">return</span> True                                              <span class="c"># успех</span>
-    <span class="k">return</span> False                                                      <span class="c"># оба направления блокированы — отказ</span></pre>
-
-  <h4 class="example-title">Пример вызова</h4>
-<pre class="alg-code">zones = [(100, 50, 30), (180, 80, 25)]   <span class="c"># опасные зоны на карте</span>
-ok = kturn_smart_cmd(180, zones)         <span class="c"># попробовать развернуться на 180°</span>
-<span class="k">if</span> <span class="k">not</span> ok:
-    goto_cmd(START_X, START_Y)           <span class="c"># не получилось — едем в безопасную точку</span></pre>
-
-
-  <h3>7.2. Остановка перед препятствием</h3>
-
-  <p>Для прямолинейных команд (<code>forward</code>, <code>goto_cmd</code>)
-  в режиме осторожности проверяем дальномер перед каждым микро-шагом.
-  Алгоритм такой же, как в <a href="#a-towall">to_wall_cmd</a>,
-  только при срабатывании дальномера вместо выхода — приостанавливаем
-  команду и предлагаем в журнале изменить ее на
-  <code>goto_cmd(x, y)</code> с обходом A* по карте опасных зон.</p>
-
-  <h4>Параметры</h4>
-  <ul class="params-list">
-    <li><code>distance_cm</code> — целевое расстояние в см.</li>
-    <li><code>power_pct</code> — мощность мотора.</li>
-    <li><code>stop_margin_cm</code> — минимальный зазор до препятствия, см (по умолчанию 20 см).
-        <code>robot.get_laser()</code> возвращает в см — единицы совпадают.</li>
-  </ul>
-
-<pre class="alg-code"><span class="k">def</span> safe_forward(distance_cm, power_pct=DEFAULT_SPEED, stop_margin_cm=20):
-    micro_sec = 0.1                                                       <span class="c"># шаг управления 100 мс</span>
-    target    = duration(distance_cm, power_pct)             <span class="c"># общее время на всю дистанцию</span>
-    elapsed   = 0.0                                                       <span class="c"># уже потраченное время</span>
-    robot.move(power_pct)                                                 <span class="c"># едем без duration — крутим до явного stop</span>
-    <span class="k">while</span> elapsed < target:                                           <span class="c"># пока не пройдено всё запланированное время</span>
-        d = robot.get_laser()                                             <span class="c"># расстояние до препятствия в СМ</span>
-        <span class="k">if</span> d <span class="k">is</span> <span class="k">not</span> None <span class="k">and</span> d <= stop_margin_cm:                    <span class="c"># слишком близко — препятствие!</span>
-            robot.stop()                                                  <span class="c"># экстренная остановка</span>
-            <span class="c"># Зафиксировать препятствие как опасную зону на 30 см впереди робота:</span>
-            mark_danger_cmd(odo.x + 30 * math.sin(math.radians(odo.heading)),  <span class="c"># X препятствия (по курсу)</span>
-                            odo.y + 30 * math.cos(math.radians(odo.heading)),  <span class="c"># Y препятствия (по курсу)</span>
-                            radius=20)                                    <span class="c"># радиус опасной зоны 20 см</span>
-            <span class="k">return</span> <span class="s">"blocked"</span>                                       <span class="c"># вызывающий код переключится на goto_cmd + A*</span>
-        time.sleep(micro_sec)                                             <span class="c"># подождать перед следующим тактом</span>
-        elapsed += micro_sec                                              <span class="c"># учесть прошедшие 100 мс</span>
-        odo.move_step(power_pct, micro_sec, 0)                            <span class="c"># обновить (x, y) на каждом шаге</span>
-    robot.stop()                                                          <span class="c"># финальная остановка после прохода</span>
-    <span class="k">return</span> <span class="s">"ok"</span>                                                <span class="c"># дошли до цели без срабатывания дальномера</span></pre>
-
-  <h4 class="example-title">Пример вызова</h4>
-<pre class="alg-code">result = safe_forward(200)             <span class="c"># попробовать проехать 2 м с проверкой препятствий</span>
-<span class="k">if</span> result == <span class="s">"blocked"</span>:           <span class="c"># дальномер сработал — путь заблокирован</span>
-    goto_cmd(target_x, target_y)        <span class="c"># обход через goto_cmd + A* (по карте опасных зон)</span></pre>
+  <p class="note">
+    То есть <code>forward</code>/<code>back</code> в Осторожно сами
+    «доедают до зоны» — без вызова A*, без пауз и без manual handoff'а.
+    Чтобы реально обойти зону — нужен <code>robot.goto(x, y)</code>.
+  </p>
 </section>
 
 </div>

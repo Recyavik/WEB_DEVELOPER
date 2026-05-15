@@ -168,6 +168,14 @@
         }
         break;
 
+      case 'mode_line':
+        // Нажата кнопка режима Инспектор/Опасно — переписываем строку
+        // MODE в textarea (код — источник истины при ▶ Запуске).
+        if (typeof msg.mode === 'string') {
+          updateModeLineInTextareas(msg.mode);
+        }
+        break;
+
 
       // ── Миссии ────────────────────────────────────────────────────────
       case 'mission_active':
@@ -679,6 +687,44 @@
     logMsg('🗺 Блок «Опасные зоны обстановки» обновлён.', 'info');
   }
 
+  // ── Surgical update строки MODE (режим Инспектор/Опасно) ─────────────
+  // Сервер шлёт mode_line при нажатии кнопки режима. Код — источник
+  // истины: при ▶ Запуске режим читается из этой строки (как START_X).
+  const _MODE_RE = /^MODE\s*=\s*["'][^"']*["'][^\n]*$/m;
+
+  function _replaceModeLine(text, mode) {
+    if (typeof text !== 'string') return text;
+    const line = 'MODE = "' + mode + '"';
+    if (_MODE_RE.test(text)) return text.replace(_MODE_RE, line);
+    // Строки нет (загруженный извне код) — вставляем перед блоком
+    // обстановки либо перед началом программы.
+    const block = '# ── Режим запуска: "inspector" / "danger" ──\n'
+                + line + '\n\n';
+    const obstIdx = text.indexOf(_OBST_TOP);
+    if (obstIdx >= 0) return text.slice(0, obstIdx) + block + text.slice(obstIdx);
+    const anchorIdx = text.indexOf(_START_ANCHOR);
+    if (anchorIdx >= 0) return text.slice(0, anchorIdx) + block + text.slice(anchorIdx);
+    return block + text;
+  }
+
+  function updateModeLineInTextareas(mode) {
+    const ids = ['python-code', 'python-code-modal-area'];
+    let sideText = null;
+    for (const id of ids) {
+      const ta = document.getElementById(id);
+      if (!ta) continue;
+      const updated = _replaceModeLine(ta.value || '', mode);
+      if (updated !== ta.value) {
+        ta.value = updated;
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      if (id === 'python-code') sideText = ta.value;
+    }
+    if (sideText !== null && window.cmEditor && window.cmEditor.isReady()) {
+      window.cmEditor.setValue(sideText);
+    }
+  }
+
   function _saveCodeDraft(text) {
     try {
       if (text && text.trim()) localStorage.setItem(_CODE_DRAFT_KEY, text);
@@ -1105,7 +1151,7 @@
     const cautious = !!s.cautious;
     let modeText;
     if (zoneMode)      modeText = 'установка зон';
-    else if (cautious) modeText = 'осторожно';
+    else if (cautious) modeText = 'опасно';
     else               modeText = modeLabel(s.mode);
     const stMode = document.getElementById('st-mode');
     if (stMode) {
