@@ -113,6 +113,9 @@ class UserSettings(Base):
     # Размер ячейки сетки A* для планировщика обхода зон в режиме «осторожно».
     # Меньше — точнее путь, медленнее счет. 10 см — хороший баланс.
     path_cell_size_cm  = Column(Integer,     default=10, nullable=False)
+    # Алгоритм автопилота: "polyline" — ломаная (face+forward),
+    # "smooth" — сглаженная (Чайкин + set_course-дуги).
+    autopilot_algo     = Column(String(20),  default="polyline", nullable=False)
     # Алгоритм обхода зон в режиме «осторожно»:
     #   "pure_pursuit" — A* + Чайкин + следование по точке впереди (плавная дуга)
     #   "stanley"      — A* + Чайкин + Stanley (учитывает боковое смещение)

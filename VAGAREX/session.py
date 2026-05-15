@@ -107,6 +107,8 @@ class UserCfg:
     danger_zone_radius: float
     battery_minutes:    int  = 60
     path_cell_size_cm:  int  = 10
+    # Алгоритм автопилота: "polyline" (ломаная) | "smooth" (сглаженная).
+    autopilot_algo:     str  = "polyline"
     # Алгоритм обхода зон в режиме «осторожно»:
     #   pure_pursuit / stanley / linear / manual (см. models.UserSettings)
     cautious_follow_algo: str  = "pure_pursuit"
@@ -152,6 +154,7 @@ class UserCfg:
             danger_zone_radius = row.danger_zone_radius,
             battery_minutes    = max(1, int(row.battery_minutes or 60)),
             path_cell_size_cm  = max(2, int(row.path_cell_size_cm or 10)),
+            autopilot_algo     = (row.autopilot_algo or "polyline"),
             cautious_follow_algo = (row.cautious_follow_algo or "pure_pursuit"),
             cautious_slow_curves = bool(row.cautious_slow_curves
                                         if row.cautious_slow_curves is not None else True),
@@ -185,6 +188,9 @@ class UserSession:
             y       = float(cfg.start_y_cm),
             heading = float(cfg.start_heading_deg) % 360,
         )
+        # По умолчанию робот реагирует на опасные зоны (галочка «Опасные
+        # зоны» включена). Зоны внимания — по выбору пользователя.
+        self._apply_obstacles({"danger"})
         self.robot = make_driver(cfg.simulation_mode, cfg.rex_host, cfg.rex_port)
 
         self._cmd_counter:  itertools.count = itertools.count(1)
@@ -2251,12 +2257,174 @@ class UserSession:
         code = self._python_code_preamble() + call_line
         await self.push_code_append(code, desc)
 
+    @staticmethod
+    def _autopilot_thin(points: list) -> list:
+        """Прореживает плотную кривую до «узловых» точек: оставляет старт,
+        финиш и точки, где курс заметно (> 8°) меняется. Так сглаженный
+        маршрут едется немногими участками face+forward, а трасса при
+        этом повторяет плавную кривую."""
+        pts = [(float(x), float(y)) for x, y in points]
+        if len(pts) < 3:
+            return pts
+        nodes = [pts[0]]
+        run_h = None
+        for i in range(1, len(pts)):
+            ax, ay = nodes[-1]
+            bx, by = pts[i]
+            if math.hypot(bx - ax, by - ay) < 1.0:
+                continue
+            h = math.degrees(math.atan2(bx - ax, by - ay)) % 360.0
+            if run_h is None:
+                run_h = h
+            elif abs((h - run_h + 540.0) % 360.0 - 180.0) > 8.0:
+                # Курс к текущей точке заметно отклонился от курса прогона —
+                # фиксируем предыдущую точку как узел, начинаем новый прогон.
+                nodes.append(pts[i - 1])
+                run_h = None
+        if nodes[-1] != pts[-1]:
+            nodes.append(pts[-1])
+        return nodes
+
+    @staticmethod
+    def _autopilot_clear_zones(points: list, obstacles: list,
+                               min_clear: float) -> list:
+        """Выталкивает точки сглаженной кривой НАРУЖУ из раздутых зон:
+        Чайкин мог срезать угол внутрь зоны. Точку, оказавшуюся ближе
+        чем (radius + min_clear) к центру зоны, отодвигаем радиально на
+        эту границу. min_clear = robot_infl + запас — тот же зазор, что
+        держит A*-планировщик."""
+        out: list = []
+        for px, py in points:
+            px, py = float(px), float(py)
+            for o in obstacles:
+                dx, dy = px - o.x, py - o.y
+                d = math.hypot(dx, dy)
+                need = o.radius + min_clear
+                if 1e-6 < d < need:
+                    px = o.x + dx / d * need
+                    py = o.y + dy / d * need
+            out.append((px, py))
+        return out
+
+    async def _autopilot_drive(self, waypoints) -> None:
+        """Ведёт робота по точкам `waypoints` ЗАМКНУТЫМ КОНТУРОМ: курс и
+        остаток до каждой точки пересчитываются от ФАКТИЧЕСКОЙ позиции
+        робота — не «наперёд». Ошибка не накапливается.
+
+        Поворот — face (на месте, точный), прямая — forward. Дуговой
+        set_course здесь НЕ используется: он проезжает расстояние,
+        привязанное к УГЛУ поворота, и проскакивал точки маршрута, ломая
+        пересчёт курса. Гладкость «сглаженного» режима даёт сама кривая
+        (Чайкин), а не дуговой ход. Каждый участок дописывается в код."""
+        s = self.robot_state
+        c = self.cfg
+        for wx, wy in waypoints[1:]:
+            # Курс на точку — от ТЕКУЩЕЙ фактической позиции робота.
+            dx, dy = wx - s.x, wy - s.y
+            if math.hypot(dx, dy) < 5.0:
+                continue
+            heading = math.degrees(math.atan2(dx, dy)) % 360.0
+            if abs((heading - s.heading + 540.0) % 360.0 - 180.0) > 2.0:
+                await self._autopilot_emit(
+                    f"robot.face({heading:.0f})", f"🧭 курс {heading:.0f}°")
+                await self._run_face_cardinal(heading, "точке маршрута")
+            # Остаток до точки — ПЕРЕСЧИТЫВАЕМ от позиции после поворота.
+            dx, dy = wx - s.x, wy - s.y
+            dist = math.hypot(dx, dy)
+            if dist >= 5.0:
+                d = max(1, int(round(dist)))
+                await self._autopilot_emit(
+                    f"robot.forward({d})", f"🧭 вперёд {d} см")
+                await self._run_forward(float(d), c.move_speed)
+
+    def _smooth_route(self, points) -> list:
+        """Опорные точки → плотная сглаженная (Чайкин) кривая, очищенная
+        от заезда в раздутые зоны. Используется и для плавного ведения,
+        и для отрисовки маршрута."""
+        import path_planner as pp
+        c = self.cfg
+        pts = [(float(x), float(y)) for x, y in points]
+        if len(pts) < 2:
+            return pts
+        obstacles = [pp.Obstacle(z.x, z.y, z.radius)
+                     for z in self.world.danger_zones
+                     if self._zone_is_obstacle(z)]
+        robot_infl = max(c.robot_length_cm, c.robot_width_cm) / 2.0
+        curve = pp.resample_curve(pp.chaikin_smooth(pts, iterations=2),
+                                  step_cm=5.0)
+        return self._autopilot_clear_zones(
+            curve, obstacles, robot_infl + c.wall_thickness_cm)
+
+    async def _follow_curve_smooth(self, route) -> None:
+        """Плавное НЕПРЕРЫВНОЕ ведение по кривой (pure pursuit): робот
+        едет вперёд без остановок и поворотов на месте — каждый тик
+        подруливает к точке на LOOKAHEAD см впереди по сглаженной кривой.
+        Результат — сплошная плавная дуга.
+
+        `route` — опорные точки (ломаная); внутри сглаживается Чайкином
+        и очищается от заезда в зоны (_smooth_route). Команда `robot.curve`
+        в коде вызывает этот же метод — повторный ▶ воспроизводит дугу."""
+        s = self.robot_state
+        c = self.cfg
+        pts = self._smooth_route(route)
+        if len(pts) < 2:
+            return
+        spd       = int(c.move_speed)
+        max_steer = float(c.turn_angle)
+        LOOKAHEAD = 30.0
+        GAIN      = 1.7
+        gx, gy    = pts[-1]
+        await self.robot.set_angle(0)
+        await self.robot.move(spd)
+        s.speed = float(spd)
+        s.steer = 0.0
+        ticks = 0
+        try:
+            while True:
+                ticks += 1
+                if ticks > 4000:           # страховка (~200 с)
+                    break
+                # ⏸ Пауза — глушим мотор, ждём ▶ Продолжить.
+                if not self._program_pause_event.is_set():
+                    await self.robot.move(0); s.speed = 0.0
+                    await self._program_pause_event.wait()
+                    await self.robot.move(spd); s.speed = float(spd)
+                # Физика обнулила speed (стена / зона / разряд) — стоп.
+                if s.speed == 0:
+                    break
+                # Дошли до конца кривой?
+                if math.hypot(gx - s.x, gy - s.y) < 8.0:
+                    break
+                # Ближайшая точка кривой + точка на LOOKAHEAD впереди.
+                best_i = min(range(len(pts)),
+                             key=lambda i: (pts[i][0] - s.x) ** 2
+                                         + (pts[i][1] - s.y) ** 2)
+                j, acc = best_i, 0.0
+                while j < len(pts) - 1 and acc < LOOKAHEAD:
+                    acc += math.hypot(pts[j + 1][0] - pts[j][0],
+                                      pts[j + 1][1] - pts[j][1])
+                    j += 1
+                lx, ly = pts[j]
+                bearing = math.degrees(math.atan2(lx - s.x, ly - s.y)) % 360.0
+                err = (bearing - s.heading + 540.0) % 360.0 - 180.0
+                steer = max(-max_steer, min(max_steer, err * GAIN))
+                s.steer = steer
+                await self.robot.set_angle(int(round(steer)))
+                await asyncio.sleep(0.05)
+        finally:
+            s.speed     = 0.0
+            s.steer     = 0.0
+            s.dist_left = 0.0
+            await self.robot.stop()
+            await self.robot.set_servo_center()
+        await self.push_state()
+
     async def _run_autopilot(self, target_x: float, target_y: float) -> None:
         """Автопилот — команда-помощник: строит маршрут в обход препятствий
-        (A*) и едет по нему, дописывая в код пройденные участки
-        (face + forward). Препятствия — те, на что робот реагирует
-        (s.obstacles: danger/attention) + стены. По достижении цели
-        автопилот выключается сам — это не режим."""
+        (A*) и едет по нему, дописывая в код пройденные участки.
+        Алгоритм — по настройке «Алгоритм автопилота» (polyline | smooth).
+        Препятствия — те, на что робот реагирует (s.obstacles) + стены.
+        По достижении цели автопилот выключается сам — это не режим."""
         import path_planner as pp
         s = self.robot_state
         c = self.cfg
@@ -2267,6 +2435,7 @@ class UserSession:
                 "обучающийся составляет сам.", "warning")
             return
 
+        smooth = (c.autopilot_algo or "polyline") == "smooth"
         obstacles = [pp.Obstacle(z.x, z.y, z.radius)
                      for z in self.world.danger_zones
                      if self._zone_is_obstacle(z)]
@@ -2292,35 +2461,32 @@ class UserSession:
             await self.push_state()
             return
 
-        # Фиолетовый пунктир маршрута на canvas.
+        # Маршрут для отрисовки фиолетовым пунктиром: сглаженная кривая
+        # (Чайкин + очистка от зон) либо ломаная A*.
+        draw = self._smooth_route(path) if smooth else list(path)
         self.world.clear_auto_segments()
-        self.world.add_auto_segment(path)
+        self.world.add_auto_segment(draw)
         await self.push_world()
 
-        n_seg = len(path) - 1
         await self.push_message(
-            f"🧭 Автопилот: маршрут построен — {n_seg} прямых участков "
+            f"🧭 Автопилот: маршрут построен "
+            f"({'сглаженный' if smooth else 'ломаный'}) "
             f"в обход препятствий. Поехали.", "info")
 
         try:
-            for i in range(1, len(path)):
-                ax, ay = path[i - 1]
-                bx, by = path[i]
-                seg = math.hypot(bx - ax, by - ay)
-                if seg < 1.0:
-                    continue
-                heading = math.degrees(math.atan2(bx - ax, by - ay)) % 360.0
-                diff = (heading - s.heading + 540.0) % 360.0 - 180.0
-                if abs(diff) > 2.0:
-                    await self._autopilot_emit(
-                        f"robot.face({heading:.0f})",
-                        f"🧭 курс {heading:.0f}° на участок {i}")
-                    await self._run_face_cardinal(heading, "по маршруту")
-                dist = max(1, int(round(seg)))
+            if smooth:
+                # Один НЕПРЕРЫВНЫЙ плавный проезд по кривой (pure pursuit).
+                # В код — одна строка robot.curve([...]); повторный ▶
+                # воспроизводит ту же дугу.
+                route_lit = "[" + ", ".join(
+                    f"({px:g}, {py:g})"
+                    for px, py in ((round(x, 1), round(y, 1))
+                                   for x, y in path)) + "]"
                 await self._autopilot_emit(
-                    f"robot.forward({dist})",
-                    f"🧭 участок {i}: вперёд {dist} см")
-                await self._run_forward(float(dist), c.move_speed)
+                    f"robot.curve({route_lit})", "🧭 плавный маршрут")
+                await self._follow_curve_smooth(path)
+            else:
+                await self._autopilot_drive(list(path))
         except asyncio.CancelledError:
             await self.push_message("🧭 Автопилот прерван (■ СТОП).", "warning")
             raise
@@ -3460,7 +3626,8 @@ class UserSession:
         if code_obs is not None:
             self._apply_obstacles(code_obs)
         elif not keep_mode:
-            self._apply_obstacles(set())
+            # Нет строки OBSTACLES в коде → дефолт: опасные зоны включены.
+            self._apply_obstacles({"danger"})
         s.thinking  = "idle"
         s.light_color = (0, 0, 0)
         # Очищаем накопленную программу — после reset поле «как новое»,

@@ -167,6 +167,24 @@
           протискивается между близко стоящими зонами, но медленнее. Больше —
           быстро, но может «забить» узкий проход. По умолчанию 10 см.
         </span>
+
+        <label class="settings-label">Алгоритм автопилота</label>
+        <select class="settings-input" name="autopilot_algo">
+          <option value="polyline" {% if cfg.autopilot_algo == "polyline" %}selected{% endif %}>
+            Ломаная траектория
+          </option>
+          <option value="smooth" {% if cfg.autopilot_algo == "smooth" %}selected{% endif %}>
+            Сглаженная траектория
+          </option>
+        </select>
+        <span class="settings-hint">
+          <strong>Ломаная</strong> — A*-маршрут как есть: прямые участки
+          (forward) с поворотами на месте (face) в вершинах. Предсказуемо,
+          точно по плану.<br>
+          <strong>Сглаженная</strong> — маршрут сглаживается (Чайкин), повороты
+          выполняются дугой на ходу (set_course). Плавнее, но отклонение от
+          плана чуть больше.
+        </span>
         <span class="settings-hint">
           Разворот в тесноте робот выбирает сам: хватает места — обычный
           K-turn; тесно — мелкий многошаговый разворот; развернуться негде —

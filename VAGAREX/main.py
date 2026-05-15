@@ -124,6 +124,7 @@ def _ensure_schema_migrations():
             "battery_minutes":         "INTEGER NOT NULL DEFAULT 60",
             "battery_pct":             "REAL NOT NULL DEFAULT 100.0",
             "path_cell_size_cm":       "INTEGER NOT NULL DEFAULT 10",
+            "autopilot_algo":          "VARCHAR(20) NOT NULL DEFAULT 'polyline'",
             "cautious_follow_algo":    "VARCHAR(20) NOT NULL DEFAULT 'pure_pursuit'",
             "cautious_slow_curves":    "BOOLEAN NOT NULL DEFAULT TRUE",
             "wall_turn_strategy":      "VARCHAR(20) NOT NULL DEFAULT 'backoff'",
@@ -1205,6 +1206,7 @@ async def settings_page(request: Request,
             "sonar_interval_ms":  row.sonar_interval_ms,
             "battery_minutes":    row.battery_minutes,
             "path_cell_size_cm":  row.path_cell_size_cm,
+            "autopilot_algo":     row.autopilot_algo,
             "cautious_follow_algo": row.cautious_follow_algo,
             "cautious_slow_curves": row.cautious_slow_curves,
             "wall_turn_strategy":   row.wall_turn_strategy,
@@ -1236,6 +1238,7 @@ async def api_settings_save(
     sonar_interval_ms:  int   = Form(100),
     battery_minutes:    int   = Form(60),
     path_cell_size_cm:  int   = Form(10),
+    autopilot_algo:     str   = Form("polyline"),
     cautious_follow_algo: str = Form("pure_pursuit"),
     cautious_slow_curves: str = Form("0"),
     wall_turn_strategy:   str = Form("backoff"),
@@ -1272,6 +1275,9 @@ async def api_settings_save(
     row.sonar_interval_ms = max(10, min(1000, sonar_interval_ms))
     row.battery_minutes   = max(1, min(720, battery_minutes))   # 1 мин — 12 ч
     row.path_cell_size_cm = max(2, min(50, path_cell_size_cm))
+    row.autopilot_algo    = (autopilot_algo
+                             if autopilot_algo in ("polyline", "smooth")
+                             else "polyline")
     row.cautious_follow_algo = (cautious_follow_algo
                                 if cautious_follow_algo in (
                                     "pure_pursuit", "stanley",

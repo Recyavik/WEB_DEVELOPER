@@ -281,6 +281,15 @@ class RobotProxy:
         self._center_steer()
         self._run(self._session._run_autopilot(float(x), float(y)))
 
+    def curve(self, route):
+        """Плавно проехать по кривой через опорные точки `route`
+        (список [(x, y), ...]) — одна непрерывная дуга с подруливанием
+        на ходу, без поворотов на месте. Точки сглаживаются и очищаются
+        от заезда в зоны. Этим автопилот в сглаженном режиме записывает
+        пройденный маршрут — повторный ▶ воспроизводит дугу."""
+        self._center_steer()
+        self._run(self._session._follow_curve_smooth(list(route)))
+
     def remove_zone(self, x: float, y: float):
         """Удалить зону, накрывающую точку (x, y). Робот должен быть внутри."""
         self._run(self._session._run_remove_zone(float(x), float(y), None))
