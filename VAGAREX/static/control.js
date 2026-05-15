@@ -1836,6 +1836,19 @@
     document.getElementById('chk-obst-attention')
             ?.addEventListener('change', _sendObstacles);
 
+    // 🧭 Автопилот — спрашиваем координаты цели и шлём команду.
+    // Робот сам построит маршрут в обход препятствий и поедет.
+    document.getElementById('btn-autopilot')?.addEventListener('click', () => {
+      const ans = prompt('Автопилот — координаты цели «X Y»:', '0 0');
+      if (ans === null) return;
+      const m = ans.trim().match(/^(-?\d+(?:\.\d+)?)[\s,]+(-?\d+(?:\.\d+)?)$/);
+      if (!m) {
+        logMsg('🧭 Не понял координаты. Пример: 100 -150', 'error');
+        return;
+      }
+      sendCmd(`Вега автопилот ${m[1]} ${m[2]}`);
+    });
+
     // Удаление зоны
     document.getElementById('zone-list')?.addEventListener('click', e => {
       const btn = e.target.closest('.zone-item__del');

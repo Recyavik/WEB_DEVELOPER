@@ -273,6 +273,14 @@ class RobotProxy:
         self._center_steer()
         self._run(self._session._run_goto(float(x), float(y)))
 
+    def autopilot(self, x: float, y: float):
+        """Автопилот: построить маршрут в обход опасных зон и стен (A*)
+        и доехать до точки (x, y). По ходу вписывает в код пройденные
+        участки (face/forward). По достижении цели — выключается.
+        Объезжаются те типы зон, что отмечены в «Препятствиях»."""
+        self._center_steer()
+        self._run(self._session._run_autopilot(float(x), float(y)))
+
     def remove_zone(self, x: float, y: float):
         """Удалить зону, накрывающую точку (x, y). Робот должен быть внутри."""
         self._run(self._session._run_remove_zone(float(x), float(y), None))

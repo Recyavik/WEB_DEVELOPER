@@ -722,6 +722,11 @@ body { padding-bottom: 22px; }
 .btn--danger    { background: #3d1a1a; color: var(--caution); border-color: rgba(248,81,73,0.3); }
 .btn--danger:hover    { background: #4a1f1f; color: var(--danger); border-color: rgba(248,81,73,0.55); }
 .btn--danger.is-active{ background: #6b2424; color: #fff; border-color: var(--danger); }
+
+/* Кнопка «Автопилот» — фиолетовая. */
+.btn--autopilot         { background: #2a1f44; color: #b794f6; border-color: rgba(137,87,229,0.30); }
+.btn--autopilot:hover   { background: #392a5e; color: #cdb4ff; border-color: rgba(137,87,229,0.55); }
+.btn--autopilot.is-active { background: #5a3fa0; color: #fff; border-color: #8957e5; }
 /* Кнопка «Обстановка»: в покое — очень тёмная, активна — умеренно
    светлее. Контраст за счёт тёмного покоя, без кричащей яркости. */
 #btn-zone-mode            { background: #241010; }

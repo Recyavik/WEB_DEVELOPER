@@ -2245,6 +2245,97 @@ class UserSession:
             f"Вмешайтесь вручную или выберите промежуточную точку.",
             "warning")
 
+    async def _autopilot_emit(self, call_line: str, desc: str) -> None:
+        """Дописывает строку кода автопилота (robot.face/forward) в textarea
+        клиента — обучающийся видит, как маршрут превращается в программу."""
+        code = self._python_code_preamble() + call_line
+        await self.push_code_append(code, desc)
+
+    async def _run_autopilot(self, target_x: float, target_y: float) -> None:
+        """Автопилот — команда-помощник: строит маршрут в обход препятствий
+        (A*) и едет по нему, дописывая в код пройденные участки
+        (face + forward). Препятствия — те, на что робот реагирует
+        (s.obstacles: danger/attention) + стены. По достижении цели
+        автопилот выключается сам — это не режим."""
+        import path_planner as pp
+        s = self.robot_state
+        c = self.cfg
+
+        if self._mission is not None:
+            await self.push_message(
+                "🧭 Автопилот недоступен во время миссии — маршрут "
+                "обучающийся составляет сам.", "warning")
+            return
+
+        obstacles = [pp.Obstacle(z.x, z.y, z.radius)
+                     for z in self.world.danger_zones
+                     if self._zone_is_obstacle(z)]
+        robot_infl = max(c.robot_length_cm, c.robot_width_cm) / 2.0
+
+        await self.push_message(
+            f"🧭 Автопилот: строю маршрут к ({target_x:.0f}, {target_y:.0f})…",
+            "info")
+        s.thinking = "planning"
+        await self.push_state()
+        path = pp.plan_path(
+            (s.x, s.y), (float(target_x), float(target_y)),
+            obstacles, c.world_w_cm, c.world_h_cm, c.wall_thickness_cm,
+            robot_infl, cell_size=float(c.path_cell_size_cm),
+            safety_margin=c.wall_thickness_cm)
+        s.thinking = "idle"
+
+        if not path or len(path) < 2:
+            await self.push_message(
+                f"🧭 Автопилот: маршрут к ({target_x:.0f}, {target_y:.0f}) "
+                f"не найден — цель недостижима или окружена зонами. "
+                f"Выбери другую цель.", "warning")
+            await self.push_state()
+            return
+
+        # Фиолетовый пунктир маршрута на canvas.
+        self.world.clear_auto_segments()
+        self.world.add_auto_segment(path)
+        await self.push_world()
+
+        n_seg = len(path) - 1
+        await self.push_message(
+            f"🧭 Автопилот: маршрут построен — {n_seg} прямых участков "
+            f"в обход препятствий. Поехали.", "info")
+
+        try:
+            for i in range(1, len(path)):
+                ax, ay = path[i - 1]
+                bx, by = path[i]
+                seg = math.hypot(bx - ax, by - ay)
+                if seg < 1.0:
+                    continue
+                heading = math.degrees(math.atan2(bx - ax, by - ay)) % 360.0
+                diff = (heading - s.heading + 540.0) % 360.0 - 180.0
+                if abs(diff) > 2.0:
+                    await self._autopilot_emit(
+                        f"robot.face({heading:.0f})",
+                        f"🧭 курс {heading:.0f}° на участок {i}")
+                    await self._run_face_cardinal(heading, "по маршруту")
+                dist = max(1, int(round(seg)))
+                await self._autopilot_emit(
+                    f"robot.forward({dist})",
+                    f"🧭 участок {i}: вперёд {dist} см")
+                await self._run_forward(float(dist), c.move_speed)
+        except asyncio.CancelledError:
+            await self.push_message("🧭 Автопилот прерван (■ СТОП).", "warning")
+            raise
+
+        final = math.hypot(float(target_x) - s.x, float(target_y) - s.y)
+        if final <= 12.0:
+            await self.push_message(
+                f"🧭 Автопилот: цель ({target_x:.0f}, {target_y:.0f}) "
+                f"достигнута. Выключаюсь.", "success")
+        else:
+            await self.push_message(
+                f"🧭 Автопилот: остановился в ({s.x:.0f}, {s.y:.0f}), "
+                f"{final:.0f} см от цели. Выключаюсь.", "warning")
+        await self.push_state()
+
     async def _run_home(self):
         """Возврат в стартовую точку — это тот же `goto` с координатами
         из настроек (`START_X`, `START_Y`)."""
@@ -3543,6 +3634,12 @@ class UserSession:
             if xy is None: return None
             tx, ty = xy
             code, label = f"goto({tx:.0f}, {ty:.0f})", f"В точку ({tx:.0f}, {ty:.0f})"
+        elif intent == "autopilot":
+            xy = nlu.extract_coordinates(raw)
+            if xy is None: return None
+            tx, ty = xy
+            code  = f"autopilot({tx:.0f}, {ty:.0f})"
+            label = f"🧭 Автопилот → ({tx:.0f}, {ty:.0f})"
         elif intent == "home":
             code, label = "home()", "🏠 Домой"
         elif intent == "face_n":
@@ -3879,6 +3976,10 @@ class UserSession:
             else:
                 tx, ty = xy
                 code_lines += [f"robot.goto({tx:g}, {ty:g})  # перейти в точку ({tx:g}, {ty:g})"]
+        elif intent == "autopilot":
+            # Сам autopilot строку не эмитит — _run_autopilot впишет в код
+            # фактически пройденные участки (face/forward).
+            code_lines += ["# автопилот — маршрут впишется при выполнении"]
         elif intent == "home":
             code_lines += ["robot.home()  # вернуться в стартовую точку"]
         elif intent in ("face_n", "face_ne", "face_e", "face_se",
@@ -4220,6 +4321,17 @@ class UserSession:
                         msg = f"Остался в точке ({s.x:.0f}, {s.y:.0f})."
                     else:
                         msg = f"Прибыл в окрестность ({tx:.0f}, {ty:.0f})."
+        elif intent == "autopilot":
+            # Автопилот сам впишет маршрут в код — сам autopilot не пишем.
+            cmd.skip_record = True
+            xy = nlu.extract_coordinates(raw)
+            if xy is None:
+                msg, ok = ("Координаты не распознаны "
+                           "(нужно: «автопилот X Y»).", False)
+            else:
+                tx, ty = xy
+                await self._run_autopilot(tx, ty)
+                msg = ""   # _run_autopilot сам шлёт сообщения о маршруте
         elif intent == "home":
             await self._run_home()
             msg = "🏠 Возврат в стартовую точку завершен."
