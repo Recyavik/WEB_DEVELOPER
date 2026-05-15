@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="/static/style.css?v={{ robot_version }}">
   {% block head %}{% endblock %}
 </head>
-<body>
+<body class="{% if request.url.path in ['/help', '/training', '/system', '/maneuvers', '/about'] %}page-docs{% endif %}">
 
 <header class="topbar">
   <div class="topbar__brand">

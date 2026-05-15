@@ -113,14 +113,16 @@
 
 {% block content %}
 <div class="page-header">
-  <h1>Маневры — алгоритмы и функции управления</h1>
+  <h1>Маневры — что под капотом каждой команды</h1>
   <p class="subtitle">
-    «Под капотом» каждой команды фасада <code>robot.X(...)</code>: схема,
-    формула, реализация на <strong>настоящем Python</strong> с построчными
-    комментариями. Псевдокод ниже близок к реальному коду
-    (<code>session.py</code>, методы <code>_run_*</code>), который исполняется
-    сервером. Низкоуровневые «сырые» примитивы реальной платы —
-    в разделе <a href="/system">Справка → API 1T REX</a>.
+    Каждая команда фасада <code>robot.X(...)</code> на сервере разворачивается
+    в манёвр: схема, формула, псевдокод. Псевдокод ниже близок к реальным
+    методам <code>_run_*</code> из <code>session.py</code>, которые исполняет
+    сервер. Сами движения интегрирует физический цикл симулятора
+    (<code>update_physics</code>, тик 0.1 с). Полный список вызовов
+    <code>robot</code> — в разделе
+    <a href="/system">Справка → API 1T REX</a>; как этим пользоваться —
+    в <a href="/training">Инструкции</a>.
   </p>
 </div>
 
@@ -133,32 +135,32 @@
     <strong>1. Базовые движения</strong> —
       <a href="#a-forward">forward / back</a> ·
       <a href="#a-towall">forward_to_wall</a> ·
-      <a href="#a-steer">руль</a> ·
+      <a href="#a-steer">руль set_angle</a> ·
       <a href="#a-light">RGB-индикатор</a>
-    <br><strong>2. Одометрия</strong> —
-      <a href="#a-odo">класс Odometry</a> ·
-      <a href="#a-duration">duration</a>
-    <br><strong>3. Развороты и стороны света</strong> —
-      <a href="#a-turn180">turn_around_cmd (по дуге)</a> ·
+    <br><strong>2. Как симулятор знает позицию</strong> —
+      <a href="#a-deadreckoning">счисление пути (dead reckoning)</a>
+    <br><strong>3. Развороты курса</strong> —
+      <a href="#a-turn180">turn_around (180°)</a> ·
       <a href="#a-kturn">3-дуговой K-turn (Reeds-Shepp)</a> ·
-      <a href="#a-face">face_cmd (компас)</a> ·
-      <a href="#a-course">course_cmd</a> ·
-      <a href="#a-turnplace">kturn_cmd (зигзаг)</a>
-    <br><strong>4. Маневры</strong> —
-      <a href="#a-circle">круг</a> ·
-      <a href="#a-eight">восьмерка</a> ·
-      <a href="#a-spiral">спираль</a> ·
-      <a href="#a-bypass">объезд (S-волна)</a>
-    <br><strong>5. Навигация</strong> —
-      <a href="#a-goto">goto_cmd / home_cmd</a> ·
-      <a href="#a-pp">follow_path_cmd (Pure-pursuit)</a>
-    <br><strong>6. Зоны и обстановка</strong> —
-      <a href="#a-zones">опасная зона / зона внимания / remove</a>
-    <br><strong>7. Режим «Осторожно»</strong> —
-      <a href="#a-cautious-linear">Линейный обход (A* + K-turn)</a> ·
-      <a href="#a-cautious-manual">Ручной (отказ при пересечении)</a> ·
-      защитный стоп (5 см от зоны) ·
-      <code>forward</code>/<code>back</code> с авто-сокращением
+      <a href="#a-router">авто-роутер разворота</a> ·
+      <a href="#a-face">face / turn_right / turn_left</a> ·
+      <a href="#a-course">set_course (дугой на ходу)</a> ·
+      <a href="#a-turnplace">kturn (на месте, N шагов)</a>
+    <br><strong>4. Дуги и фигуры</strong> —
+      <a href="#a-arc">arc / круг</a> ·
+      <a href="#a-eight">figure_eight</a> ·
+      <a href="#a-spiral">spiral</a> ·
+      <a href="#a-bypass">bypass (S-волна)</a>
+    <br><strong>5. Навигация по координатам</strong> —
+      <a href="#a-goto">goto</a> ·
+      <a href="#a-home">home</a>
+    <br><strong>6. Автопилот</strong> —
+      <a href="#a-autopilot">A*-планировщик</a> ·
+      ломаная (<a href="#a-autopilot">face + forward</a>) ·
+      сглаженная (<a href="#a-autopilot">curve, pure-pursuit</a>)
+    <br><strong>7. Препятствия и защита</strong> —
+      <a href="#a-zones">опасные зоны / зоны внимания</a> ·
+      <a href="#a-obstacles">галочки «Препятствия», защитный стоп, авто-сокращение</a>
   </div>
 </section>
 
@@ -169,7 +171,7 @@
 <section class="card alg-card">
   <h2 class="card__title">1. Базовые движения</h2>
 
-  <h3 id="a-forward">1.1. forward / back — прямолинейное движение на расстояние</h3>
+  <h3 id="a-forward">1.1. robot.forward / robot.back — прямолинейное движение</h3>
 
   <div class="alg-grid">
     <figure class="alg-svg">
@@ -183,54 +185,57 @@
         <circle cx="40"  cy="70" r="9" class="svg-bot"/>
         <circle cx="240" cy="70" r="9" class="svg-bot" opacity="0.4"/>
         <line x1="50" y1="70" x2="225" y2="70" class="svg-line" marker-end="url(#arr1)"/>
-        <text x="120" y="58" class="svg-text">distance_cm</text>
+        <text x="125" y="58" class="svg-text">distance_cm</text>
         <text x="40"  y="95" class="svg-text-sm">старт</text>
         <text x="220" y="95" class="svg-text-sm">финиш</text>
       </svg>
-      <figcaption>Прямая линия, руль на нуле</figcaption>
+      <figcaption>Прямая линия, руль в нейтрали</figcaption>
     </figure>
     <div>
       <h4>Идея</h4>
-      <p>У робота нет энкодера колес. Расстояние пересчитываем через
-      калибровку «скорость при 100% мощности»:
-      <code>v = SPEED_CM_PER_S_AT_100 × power / 100</code>.
-      Время удержания мотора:</p>
+      <p><code>robot.forward(N)</code> не «считает секунды». Команда задаёт
+      серверу <em>остаток пути</em> <code>dist_left = N</code> и включает
+      мотор. Дальше дистанцию «откусывает» физический цикл симулятора:
+      на каждом тике <code>Δt = 0.1 с</code> робот проходит малый
+      отрезок Δs и <code>dist_left</code> уменьшается. Когда остаток
+      исчерпан — мотор глохнет.</p>
       <div class="formula">
-        <em>duration</em> = distance_cm / v = distance_cm × 100 / (<em>SPEED_CM_PER_S_AT_100</em> × <em>power_pct</em>)
+        <em>v</em> = <em>SPEED_CM_PER_S_AT_100</em> × |speed| / 100 &nbsp;(см/с)
+        <br>Δs = <em>v</em> × Δt
+        <br>dist_left ← dist_left − Δs &nbsp;&nbsp;(≤ 0 → стоп)
       </div>
-      <p>Назад — отрицательная мощность, длительность та же.</p>
+      <p><code>robot.back(N)</code> — то же самое с отрицательной
+      мощностью; робот едет кормой вперёд, курс не меняется.</p>
     </div>
   </div>
 
-  <h4>Параметры функции <code>duration(distance_cm, power_pct)</code></h4>
+  <h4>Параметры</h4>
   <ul class="params-list">
-    <li><code>distance_cm</code> — нужное расстояние в см. Только положительное; направление задается знаком мощности в <code>robot.move</code>.</li>
-    <li><code>power_pct</code> — мощность мотора в процентах (по умолчанию <code>DEFAULT_SPEED</code>). Берется по модулю — направление неважно.</li>
+    <li><code>distance_cm</code> — длина пути в см. Только положительная;
+        направление задаёт сама команда (<code>forward</code> / <code>back</code>).</li>
+    <li><code>speed</code> — мощность мотора в процентах. Если не передана —
+        берётся <code>DEFAULT_SPEED</code> из настроек.</li>
+  </ul>
+
+  <h4>Что делает сервер сверху алгоритма</h4>
+  <ul>
+    <li><strong>Стена.</strong> Дальномер включён → физика остановит робота,
+        не доезжая запрошенных см, у границы «толщина стены». Команда в коде
+        переписывается на фактически пройденное расстояние.</li>
+    <li><strong>Опасная зона.</strong> Если включены «Препятствия» и впереди
+        зона — команда <em>заранее укорачивается</em> до безопасной
+        дистанции (см. <a href="#a-obstacles">§7</a>): в коде сразу
+        появляется <code>forward(45)</code> вместо <code>forward(100)</code>.</li>
   </ul>
 
   <h4 class="example-title">Пример вызова</h4>
-<pre class="alg-code"><span class="c"># Едем 100 см вперёд на 40% мощности — duration() вычисляет секунды.</span>
-robot.set_angle(0)                              <span class="c"># руль прямо — поедем строго вперёд</span>
-robot.move(40, duration(100, 40))               <span class="c"># 100 см на 40% ≈ 3.13 с</span>
-robot.stop()                                    <span class="c"># явная остановка после длительности</span>
-
-<span class="c"># Едем 100 см назад на 40% — отрицательная мощность.</span>
-robot.set_angle(0)                              <span class="c"># руль прямо</span>
-robot.move(-40, duration(100, 40))              <span class="c"># минус → задний ход, длительность та же</span>
-robot.stop()                                    <span class="c"># остановиться</span>
-
-<span class="c"># Можно задать секунды напрямую без duration():</span>
-robot.move(40, 2.5)                             <span class="c"># 2.5 секунды на 40% — таймаут известен</span>
-robot.stop()
-
-<span class="c"># Совсем без таймаута — едем «бесконечно» до явного stop().</span>
-robot.move(40)                                  <span class="c"># поехали (мотор не выключится сам)</span>
-time.sleep(2.0)                                 <span class="c"># едем 2 секунды</span>
-robot.stop()                                    <span class="c"># остановились</span></pre>
+<pre class="alg-code">robot.forward(100)        <span class="c"># 100 см вперёд на скорости по умолчанию</span>
+robot.forward(50, 80)     <span class="c"># 50 см вперёд на 80% мощности</span>
+robot.back(30)            <span class="c"># 30 см назад (кормой вперёд), курс не меняется</span></pre>
 
 
   <!-- ── forward_to_wall ──────────────────────────────────────────────── -->
-  <h3 id="a-towall">1.2. to_wall_cmd — движение до препятствия по дальномеру</h3>
+  <h3 id="a-towall">1.2. robot.forward_to_wall / backward_to_wall — до препятствия</h3>
 
   <div class="alg-grid">
     <figure class="alg-svg">
@@ -238,50 +243,32 @@ robot.stop()                                    <span class="c"># останов
         <circle cx="40" cy="70" r="9" class="svg-bot"/>
         <line x1="50" y1="70" x2="220" y2="70" class="svg-line" stroke-dasharray="3 3"/>
         <rect x="225" y="40" width="20" height="60" class="svg-obs"/>
-        <text x="120" y="58" class="svg-text">пока laser > stop_margin</text>
-        <text x="222" y="115" class="svg-text-sm">препятствие</text>
+        <text x="105" y="58" class="svg-text">едем, пока есть зазор</text>
+        <text x="222" y="115" class="svg-text-sm">стена</text>
       </svg>
-      <figcaption>Постоянный опрос дальномера в цикле</figcaption>
+      <figcaption>Дальномер постоянно опрашивается физикой</figcaption>
     </figure>
     <div>
       <h4>Идея</h4>
-      <p>Включаем мотор без аргумента <code>duration</code> (бесконечно)
-      и в цикле читаем дальномер. Как только расстояние до препятствия
-      опустится до <code>stop_margin_cm</code> (по умолчанию 15 см) —
-      останавливаемся.</p>
-      <p>Шаг опроса 50 мс — компромисс между реакцией и нагрузкой
-      на I²C-шину дальномера.</p>
+      <p>Мотор включается без заданной дистанции — робот едет
+      «бесконечно». Физический цикл на каждом тике сравнивает показание
+      дальномера со стеной и гасит мотор, когда зазор сжимается до
+      <code>WALL_THICKNESS_CM</code>. Флаг <code>laser_stop</code>
+      разрешает физике этот аварийный стоп.</p>
+      <p>В режиме с препятствиями робот так же упрётся в опасную зону
+      на безопасном отступе, а не только в стену.
+      <code>backward_to_wall</code> — зеркало: едет кормой и смотрит
+      дальномером назад (heading + 180°).</p>
     </div>
   </div>
 
-  <h4>Параметры</h4>
-  <ul class="params-list">
-    <li><code>power_pct</code> — мощность мотора (по умолчанию <code>DEFAULT_SPEED</code>).</li>
-    <li><code>stop_margin_cm</code> — минимальный «зазор» до препятствия, см (15 см по умолчанию).
-        <code>robot.get_laser()</code> возвращает дальность в см — единицы совпадают.</li>
-  </ul>
-
-<pre class="alg-code"><span class="k">def</span> to_wall_cmd(power_pct=DEFAULT_SPEED, stop_margin_cm=15):
-    robot.move(power_pct)                                  <span class="c"># мотор без duration — едет до явного stop</span>
-    <span class="k">while</span> True:                                        <span class="c"># бесконечный цикл, выход — break внутри</span>
-        dist = robot.get_laser()                           <span class="c"># расстояние в СМ (или None — нет данных)</span>
-        <span class="k">if</span> dist <span class="k">is</span> None <span class="k">or</span> dist <= stop_margin_cm:    <span class="c"># нет данных или подъехали слишком близко</span>
-            robot.stop()                                   <span class="c"># экстренная остановка</span>
-            <span class="k">break</span>                                      <span class="c"># выйти из цикла</span>
-        time.sleep(0.05)                                   <span class="c"># 50 мс между опросами дальномера</span></pre>
-
   <h4 class="example-title">Пример вызова</h4>
-<pre class="alg-code">to_wall_cmd()                  <span class="c"># до 15 см перед стеной на DEFAULT_SPEED</span>
-to_wall_cmd(60, 30)            <span class="c"># помедленнее (60%) и с большим зазором (30 см)</span></pre>
-
-  <p class="note"><strong>Замечание.</strong> Зеркальная функция
-  <code>back_to_wall_cmd</code> — то же самое, но с
-  <code>robot.move(-power_pct)</code> и задним дальномером, если он есть
-  (на 1T REX без заднего сенсора алгоритм опирается на одометрию).</p>
+<pre class="alg-code">robot.forward_to_wall()    <span class="c"># вперёд до ближайшей стены/зоны</span>
+robot.backward_to_wall()   <span class="c"># назад до ближайшей стены/зоны</span></pre>
 
 
   <!-- ── Руль ─────────────────────────────────────────────────────────── -->
-  <h3 id="a-steer">1.3. Руль — set_angle(deg)</h3>
+  <h3 id="a-steer">1.3. Руль — robot.set_angle(deg)</h3>
 
   <div class="alg-grid">
     <figure class="alg-svg">
@@ -298,58 +285,52 @@ to_wall_cmd(60, 30)            <span class="c"># помедленнее (60%) и
     </figure>
     <div>
       <h4>Идея</h4>
-      <p>Серво-привод передних колес физически принимает значения
-      <strong>−45…+45°</strong>. Сама ось колес не движется, пока стоит мотор —
-      поворот видно только при последующем <code>move()</code>.</p>
-      <p>Радиус разворота при максимальном угле:</p>
+      <p>Серво-привод передних колёс физически принимает значения
+      <strong>−45…+45°</strong>. Сам по себе поворот руля робота не
+      двигает — эффект виден только в следующем движении
+      (<code>forward</code> поедет по дуге). Все манёвры из этого
+      раздела внутри только и делают, что чередуют <code>set_angle</code>
+      и движение.</p>
+      <p>Радиус дуги при максимальном угле руля:</p>
       <div class="formula">
-        <em>R</em> = 360 × <em>WHEEL_CIRC_CM</em> / (2π × <em>HEADING_DEG_PER_ROT</em>) ≈ 65 см
+        <em>R</em> = 360 × <em>WHEEL_CIRC_CM</em> / (2π × <em>HEADING_DEG_PER_ROT</em> × steer/45)
       </div>
+      <p>Чем меньше угол руля — тем больше радиус.</p>
     </div>
   </div>
 
   <h4 class="example-title">Пример вызова</h4>
-<pre class="alg-code">robot.set_angle(36)        <span class="c"># направо на 36°</span>
-robot.set_angle(-36)       <span class="c"># налево на 36°</span>
-robot.set_angle(0)         <span class="c"># прямо (нейтраль)</span>
-robot.set_servo_center()   <span class="c"># эквивалент set_angle(0)</span></pre>
+<pre class="alg-code">robot.set_angle(36)        <span class="c"># руль направо на 36°</span>
+robot.set_angle(-36)       <span class="c"># руль налево на 36°</span>
+robot.set_angle(0)         <span class="c"># руль прямо (нейтраль)</span>
+robot.set_servo_center()   <span class="c"># то же, что set_angle(0)</span>
+robot.forward(80)          <span class="c"># с ненулевым рулём forward едет по дуге</span></pre>
 
 
   <!-- ── RGB-индикатор ───────────────────────────────────────────────── -->
-  <h3 id="a-light">1.4. RGB-индикатор</h3>
+  <h3 id="a-light">1.4. RGB-индикатор — robot.set_rgb(index, (R, G, B), delay)</h3>
 
-  <p>Сигнатура: <code>robot.set_rgb(index, (R, G, B), delay=1.2)</code>.
-  Адресуем светодиод по индексу из <code>robot.leds</code>. Тройка
-  <code>(R, G, B)</code> — 0..255 (прямая яркость каналов; 255 — горит,
-  0 — не горит). <strong>Третий параметр — <code>delay</code> в СЕКУНДАХ</strong>
-  (задержка между установкой каналов): default 1.2 = плавный fade,
-  <code>0.0</code> = мгновенно. Для индикации режима используем 0.0.</p>
+  <p>Адресуем светодиод по индексу. Тройка <code>(R, G, B)</code> —
+  каналы 0..255 (255 — горит на полную, 0 — погашен). Третий параметр
+  <code>delay</code> — задержка между установкой каналов <strong>в
+  секундах</strong>: <code>0.0</code> — мгновенно, большее значение —
+  плавный fade. Команда световая, робота не двигает.</p>
 
   <h4 class="example-title">Пример вызова</h4>
-<pre class="alg-code">robot.set_rgb(0, (0, 255, 0), 0.0)   <span class="c"># зажечь зелёный мгновенно (idx=0)</span>
+<pre class="alg-code">robot.set_rgb(0, (0, 255, 0), 0.0)   <span class="c"># зажечь зелёный мгновенно</span>
 robot.set_rgb(0, (255, 80, 0), 0.0)  <span class="c"># оранжевый</span>
-robot.set_rgb(0, (0, 0, 0),   0.0)   <span class="c"># погасить</span>
-robot.set_rgb(0, (0, 0, 255), 1.5)   <span class="c"># синий с плавным fade 1.5 с</span></pre>
-
-  <p class="note">
-    <strong>Внимание:</strong> раньше в наших примерах в этом месте стояло
-    <code>1</code> с подписью «1 диод» — это была ошибка документации.
-    Параметр <code>count</code> у платы НЕТ; передача <code>1</code>
-    интерпретируется как <code>delay=1.0 сек</code> и даёт заметный fade.
-    Для управления несколькими светодиодами используется
-    <code>robot.leds.bind([адреса…])</code> и обращение по индексу
-    <code>robot.set_rgb(robot.leds[i], …)</code>.
-  </p>
+robot.set_rgb(0, (0, 0, 255), 1.5)   <span class="c"># синий с плавным переходом 1.5 с</span>
+robot.set_rgb(0, (0, 0, 0),   0.0)   <span class="c"># погасить</span></pre>
 </section>
 
 
 <!-- ════════════════════════════════════════════════════════════════════
-     2. ОДОМЕТРИЯ
+     2. КАК СИМУЛЯТОР ЗНАЕТ ПОЗИЦИЮ
      ════════════════════════════════════════════════════════════════════ -->
 <section class="card alg-card">
-  <h2 class="card__title">2. Одометрия — где находится робот</h2>
+  <h2 class="card__title">2. Как симулятор знает позицию</h2>
 
-  <h3 id="a-odo">2.1. Класс Odometry</h3>
+  <h3 id="a-deadreckoning">2.1. Счисление пути (dead reckoning)</h3>
 
   <div class="alg-grid">
     <figure class="alg-svg">
@@ -369,83 +350,46 @@ robot.set_rgb(0, (0, 0, 255), 1.5)   <span class="c"># синий с плавн�
         <circle cx="200" cy="60" r="6" class="svg-bot"/>
         <text x="180" y="50" class="svg-text-sm">(x, y)</text>
         <line x1="200" y1="60" x2="240" y2="40" class="svg-line2" marker-end="url(#arr2)"/>
-        <text x="225" y="38" class="svg-text-sm">heading</text>
+        <text x="218" y="36" class="svg-text-sm">heading</text>
       </svg>
-      <figcaption>Позицию интегрируем сами</figcaption>
+      <figcaption>Позиция набирается шаг за шагом</figcaption>
     </figure>
     <div>
       <h4>Зачем</h4>
-      <p>На 1T REX <em>нет GPS</em>. Координаты <code>(x, y)</code>
-      получаем интегрированием перемещения за каждый малый шаг времени:</p>
+      <p>У 1T REX нет GPS. Координаты <code>(x, y)</code> и курс
+      <code>heading</code> симулятор <em>интегрирует сам</em> — это и есть
+      счисление пути. Один общий цикл <code>update_physics()</code>
+      работает с тиком <code>Δt = 0.1 с</code> и на каждом тике:</p>
       <div class="formula">
-        Δs = <em>SPEED_CM_PER_S_AT_100</em> × power_pct/100 × Δt
+        Δs = <em>v</em> × Δt &nbsp;&nbsp;(<em>v</em> — текущая скорость)
+        <br>Δheading = <em>HEADING_DEG_PER_ROT</em> × (Δs / <em>WHEEL_CIRC_CM</em>) × steer/45
         <br>x ← x + Δs · sin(heading)
         <br>y ← y + Δs · cos(heading)
       </div>
-      <p>Курс <code>heading</code> берем с гироскопа: <code>robot.get_angle()['Z']</code>.
-      Это намного точнее интегрирования угла поворота колес.</p>
+      <p>0° = север = +y, 90° = восток = +x — поэтому в формуле
+      <code>sin</code> у X, а <code>cos</code> у Y. Координаты
+      <code>(x, y)</code> робота — это координаты его <strong>носа</strong>.</p>
     </div>
   </div>
 
-  <h4>Параметры конструктора</h4>
-  <ul class="params-list">
-    <li><code>x</code>, <code>y</code> — стартовая позиция (по умолчанию <code>START_X</code>, <code>START_Y</code>).</li>
-    <li><code>heading</code> — стартовый курс в градусах (0..359, 0 = север).</li>
-  </ul>
-  <h4>Параметры <code>move_step(power_pct, duration_sec, steer_deg=0)</code></h4>
-  <ul class="params-list">
-    <li><code>power_pct</code> — мощность мотора, та же что в <code>robot.move</code>.</li>
-    <li><code>duration_sec</code> — длительность шага в секундах.</li>
-    <li><code>steer_deg</code> — угол руля во время шага (для коррекции курса).</li>
-  </ul>
-
-<pre class="alg-code"><span class="k">class</span> Odometry:
-    <span class="k">def</span> __init__(self, x=START_X, y=START_Y, heading=START_HEADING_DEG):
-        self.x = float(x)                       <span class="c"># текущая координата по оси X (число в системе мира)</span>
-        self.y = float(y)                       <span class="c"># текущая координата по оси Y (число в системе мира)</span>
-        self.heading = float(heading)           <span class="c"># курс: 0=север (+y), 90=восток (+x)</span>
-
-    <span class="k">def</span> sync_heading(self):
-        <span class="c"># Подменить интегральный heading реальным курсом с гироскопа.</span>
-        <span class="c"># Делать каждые 5..10 шагов, чтобы не накапливать ошибку поворота.</span>
-        z = robot.get_angle().get(<span class="s">'Z'</span>)        <span class="c"># 'Z' = yaw в градусах</span>
-        <span class="k">if</span> z <span class="k">is</span> <span class="k">not</span> None:                       <span class="c"># гироскоп может вернуть None при инициализации</span>
-            self.heading = float(z) % 360.0     <span class="c"># нормализуем в [0; 360)</span>
-
-    <span class="k">def</span> move_step(self, power_pct, duration_sec, steer_deg=0):
-        <span class="c"># Вызывать ПОСЛЕ каждого robot.move(...). Δs = v·Δt.</span>
-        sign     = 1 <span class="k">if</span> power_pct >= 0 <span class="k">else</span> -1                <span class="c"># знак направления (вперёд/назад)</span>
-        cm_per_s = SPEED_CM_PER_S_AT_100 * abs(power_pct) / 100.0    <span class="c"># фактическая скорость в см/с</span>
-        ds       = cm_per_s * duration_sec                           <span class="c"># пройденная длина по дуге в см</span>
-        <span class="k">if</span> abs(steer_deg) > 1:                                       <span class="c"># был поворот руля → корректируем heading</span>
-            steer_ratio = steer_deg / 45.0                           <span class="c"># нормировка на максимум 45°</span>
-            d_head = HEADING_DEG_PER_ROT * (ds / WHEEL_CIRC_CM) * steer_ratio * sign  <span class="c"># Δкурса по геометрии Аккермана</span>
-            self.heading = (self.heading + d_head) % 360.0           <span class="c"># обновить курс, нормализовать в [0;360)</span>
-        rad = math.radians(self.heading)                             <span class="c"># градусы → радианы для тригонометрии</span>
-        self.x += sign * math.sin(rad) * ds                          <span class="c"># sin — ось X идёт вправо</span>
-        self.y += sign * math.cos(rad) * ds                          <span class="c"># cos — ось Y идёт вверх</span>
-
-odo = Odometry()                                                     <span class="c"># глобальный экземпляр для goto_cmd / follow_path_cmd</span></pre>
-
-  <h4 class="example-title">Пример использования</h4>
-<pre class="alg-code"><span class="c"># Едем 50 см вперёд на 60% мощности и сами обновляем одометрию.</span>
-secs = duration(50, 60)                      <span class="c"># расчёт длительности по дистанции и мощности</span>
-robot.set_angle(0)                           <span class="c"># руль прямо</span>
-robot.move(60, secs)                         <span class="c"># едем 60% на расчётное время</span>
-odo.move_step(60, secs, 0)                   <span class="c"># обновить (x, y) после движения</span>
-robot.stop()                                 <span class="c"># явная остановка</span>
-print(odo.x, odo.y, odo.heading)             <span class="c"># где мы теперь — координаты и курс</span></pre>
-
-
-  <h3 id="a-duration">2.2. duration(distance_cm, power_pct)</h3>
-<pre class="alg-code"><span class="k">def</span> duration(distance_cm, power_pct=DEFAULT_SPEED):
-    <span class="c"># Сколько секунд держать мотор на power_pct, чтобы пройти distance_cm.</span>
-    speed_cm_s = SPEED_CM_PER_S_AT_100 * abs(power_pct) / 100.0   <span class="c"># см/с при заданной мощности</span>
-    <span class="k">return</span> max(0.05, distance_cm / max(1.0, speed_cm_s))           <span class="c"># защита: power=0 → не делим на 0</span></pre>
+  <p>Всё, что доступно программе — это <code>robot.x</code>,
+  <code>robot.y</code>, <code>robot.heading</code>: текущие значения
+  того же интегратора. Никакого отдельного класса одометрии в коде
+  программы нет — счисление целиком на стороне сервера, а команды
+  навигации (<a href="#a-goto">goto</a>, <a href="#a-autopilot">автопилот</a>)
+  считают курс и остаток от этих свойств.</p>
 
   <h4 class="example-title">Пример вызова</h4>
-<pre class="alg-code">duration(100, 40)   <span class="c"># 100 см на 40% → ≈ 3.13 с</span>
-duration(50,  80)   <span class="c"># 50 см на 80% → ≈ 0.78 с</span></pre>
+<pre class="alg-code">print(robot.x, robot.y)    <span class="c"># текущие координаты носа робота</span>
+print(robot.heading)       <span class="c"># текущий курс в градусах (0 = север)</span></pre>
+
+  <p class="note">
+    Поскольку позиция набирается шагами, на длинных манёврах
+    накапливается небольшой дрейф (несколько см на разворот 180°).
+    Команды захода в точку с этим борются: <a href="#a-goto">goto</a>
+    пересчитывает курс от фактической позиции и при промахе
+    повторяет попытку.
+  </p>
 </section>
 
 
@@ -455,85 +399,43 @@ duration(50,  80)   <span class="c"># 50 см на 80% → ≈ 0.78 с</span></p
 <section class="card alg-card">
   <h2 class="card__title">3. Развороты курса</h2>
 
-  <p>В роботе доступны <strong>два пользовательских разворота на 180°</strong>:</p>
+  <p>Сменить курс можно по-разному, и каждая команда — это свой манёвр:</p>
   <ul>
-    <li><strong>3.1 turn_around_cmd</strong> — обычный разворот: одна большая
-        K-turn-пара (петля-«teardrop»). Кнопка <em>«↺ Разворот»</em>,
-        голос «<em>Вега разворот</em>». Нужна свободная зона ≈ 1.3 м.</li>
-    <li><strong>3.5 kturn_cmd</strong> — разворот на месте:
-        N коротких пар «вперёд-право → назад-лево» (≈ 30°/пара).
-        Кнопка <em>«↺ На месте»</em>, голос «<em>Вега разворот на месте</em>».
-        Помещается в тесном пространстве.</li>
-  </ul>
-  <p>Дополнительные функции этого раздела — <em>не</em> отдельные команды
-  «развернуться», а смежные алгоритмы ориентации:</p>
-  <ul>
-    <li><strong>3.2 kturn_cmd (Reeds-Shepp)</strong> — внутренний помощник для
-        поворота на произвольный угол Δh. Используется внутри
-        <code>face_cmd</code>, отдельной кнопки/голоса не имеет.</li>
-    <li><strong>3.3 face_cmd</strong> — повернуться лицом к стороне
-        света (С/Ю/В/З и т.д.). Кнопки компаса, голос «<em>Вега на север</em>».</li>
-    <li><strong>3.4 course_cmd</strong> — выйти на нужный курс плавной
-        дугой <em>на ходу</em> (без разворота на месте).</li>
+    <li><strong>3.1 turn_around</strong> — развернуться на 180°.</li>
+    <li><strong>3.2 K-turn</strong> — 3-дуговой разворот «на месте» с
+        возвратом в исходную точку (геометрия Reeds-Shepp). Это
+        внутренний механизм, на котором стоят <code>face</code>,
+        <code>turn_right/left</code>, <code>turn_around</code>, <code>goto</code>.</li>
+    <li><strong>3.3 Авто-роутер</strong> — сервер сам решает, каким
+        способом разворачиваться, исходя из свободного места.</li>
+    <li><strong>3.4 face / turn_right / turn_left</strong> — повернуться
+        к абсолютному или относительному курсу.</li>
+    <li><strong>3.5 set_course</strong> — выйти на курс <em>дугой на
+        ходу</em>, без разворота на месте.</li>
+    <li><strong>3.6 kturn</strong> — разворот на 180° на месте за N
+        видимых шагов; помещается в тесноте.</li>
   </ul>
 
-  <!-- ── 3.1. turn_around_cmd (одна K-turn-пара) ─────────────────────── -->
-  <h3 id="a-turn180">3.1. turn_around_cmd — разворот на 180° (K-turn-пара)</h3>
+  <!-- ── 3.1. turn_around ─────────────────────────────────────────────── -->
+  <h3 id="a-turn180">3.1. robot.turn_around(direction) — разворот на 180°</h3>
 
   <div>
     <h4>Идея</h4>
-    <p>Одна K-turn-пара: робот сначала едет вперёд с рулём в сторону
-    разворота (~1.5 c), затем перекладывает руль в зеркало и
-    едет назад столько же. Геометрия Аккермана гарантирует, что робот
-    возвращается ≈ в исходную точку, но курс развёрнут на 180°.</p>
-    <p>Зона разворота — небольшая «петля» диаметром ≈ 1.3 м (зависит
-    от калибровки). В тесном пространстве — используйте
-    <a href="#a-turnplace">kturn_cmd</a> с большим
-    количеством шагов.</p>
+    <p><code>robot.turn_around(+1)</code> поворачивает курс на 180°
+    вправо, <code>-1</code> — влево. Команда не «зашита» в один манёвр:
+    она вычисляет целевой курс <code>heading ± 180°</code> и передаёт его
+    <a href="#a-router">авто-роутеру разворота</a>. Тот сам выберет
+    обычный K-turn или мелкий многошаговый — в зависимости от того,
+    сколько места вокруг.</p>
   </div>
 
-  <h4>Параметры</h4>
-  <ul class="params-list">
-    <li><code>direction</code> — <code>+1</code> разворот по часовой (вправо), <code>-1</code> — против часовой (влево).</li>
-    <li><code>power_pct</code> — мощность мотора (по умолчанию <code>DEFAULT_SPEED</code>).</li>
-  </ul>
-
-<pre class="alg-code"><span class="k">def</span> turn_around_cmd(direction=1, power_pct=DEFAULT_SPEED):
-    <span class="c"># Один K-turn-шаг: робот возвращается в исходную точку,</span>
-    <span class="c"># курс развёрнут на 180°. Траектория — «петля» (teardrop).</span>
-    robot.set_angle(direction * DEFAULT_TURN_ANGLE)    <span class="c"># руль в сторону разворота</span>
-    robot.move(power_pct, 1.5)                         <span class="c"># вперёд по дуге (≈ 1.5 с)</span>
-    robot.set_angle(-direction * DEFAULT_TURN_ANGLE)   <span class="c"># руль в зеркальную сторону</span>
-    robot.move(-power_pct, 1.5)                        <span class="c"># назад по зеркальной дуге</span>
-    robot.stop()                                       <span class="c"># окончательный стоп</span>
-    robot.set_servo_center()                           <span class="c"># вернуть руль в нейтраль</span></pre>
-
   <h4 class="example-title">Пример вызова</h4>
-<pre class="alg-code">turn_around_cmd()         <span class="c"># разворот направо на 180° (по умолчанию +1)</span>
-turn_around_cmd(-1)       <span class="c"># разворот налево на 180°</span>
-turn_around_cmd(1, 60)    <span class="c"># разворот направо на скорости 60%</span></pre>
-
-  <h4>Что делает симулятор сверху алгоритма</h4>
-  <p>Перед K-turn-парой симулятор автоматически выполняет:</p>
-  <ul>
-    <li><strong>Проверка clearance.</strong> По геометрии Reeds-Shepp считается,
-        сколько свободного пространства нужно ВПЕРЁД (≈ R·sin(α) + 20 см запаса,
-        для 180° получается ~92 см). Если впереди стена ближе — робот сначала
-        отъезжает назад на нужную величину (ограничено доступным местом сзади).
-        В журнале: <em>«⚠ Для разворота нужно 92 см впереди, есть 45.
-        Отъезжаю назад на 47 см»</em>.</li>
-    <li><strong>Возврат в исходную точку.</strong> После K-turn-пары из-за
-        погрешностей физики робот может уехать на 30-40 см от старта.
-        Итеративно: P-регулятор довозит обратно (фаза 2), затем мелкими
-        дугами 5-8° корректирует курс (фаза 3). Цикл до 5 итераций.</li>
-  </ul>
-  <p>В сгенерированный Python-код эти проверки <em>не</em> попадают — они
-  специфичны для симулятора. На реальном роботе нужно добавить свою логику
-  проверки границ (или просто доверять оператору, что места хватит).</p>
+<pre class="alg-code">robot.turn_around()      <span class="c"># развернуться на 180° (по умолчанию вправо)</span>
+robot.turn_around(-1)    <span class="c"># развернуться на 180° влево</span></pre>
 
 
   <!-- ── 3.2. K-turn ──────────────────────────────────────────────────── -->
-  <h3 id="a-kturn">3.2. 3-дуговой K-turn (Reeds-Shepp) — разворот на месте</h3>
+  <h3 id="a-kturn">3.2. 3-дуговой K-turn (Reeds-Shepp)</h3>
 
   <div class="alg-grid">
     <figure class="alg-svg">
@@ -546,54 +448,25 @@ turn_around_cmd(1, 60)    <span class="c"># разворот направо на
             <polygon points="0,0 5,2.5 0,5" class="svg-arrow2"/>
           </marker>
         </defs>
-
-        <!-- Три дуги одного радиуса R=50, конфигурация для Δh=180°, α=β=60°.
-             Дуга 1 (вперёд+право, синяя):  центр (210, 180), 60° по часовой
-             Дуга 2 (назад+лево, оранжевая): центр (160, 93.4), 60° против часовой
-             Дуга 3 (вперёд+право, синяя):  центр (110, 180), 60° по часовой
-             Все три дуги касаются друг друга в точках (185, 137) и (135, 137) —
-             там robot останавливается и меняет направление движения (касп). -->
-
-        <!-- Окружности-радиусы (тонкие, для наглядности) -->
         <circle cx="210" cy="180" r="50" fill="none" stroke="#1f2a36" stroke-width="0.6" stroke-dasharray="2 3"/>
         <circle cx="110" cy="180" r="50" fill="none" stroke="#1f2a36" stroke-width="0.6" stroke-dasharray="2 3"/>
         <circle cx="160" cy="93.4" r="50" fill="none" stroke="#1f2a36" stroke-width="0.6" stroke-dasharray="2 3"/>
-
-        <!-- Центры окружностей (мелкие точки) -->
         <circle cx="210" cy="180" r="1.5" fill="#444"/>
         <circle cx="110" cy="180" r="1.5" fill="#444"/>
         <circle cx="160" cy="93.4" r="1.5" fill="#444"/>
-
-        <!-- Дуга 1: вперёд (синяя) -->
         <path d="M 160 180 A 50 50 0 0 1 185 136.7" class="svg-line" marker-end="url(#arrK1)"/>
         <text x="225" y="125" class="svg-text" fill="#58a6ff">1) вперёд α</text>
-
-        <!-- Касп 1 (точка реверса) -->
         <circle cx="185" cy="136.7" r="3" fill="#ffd166" stroke="#000" stroke-width="0.5"/>
-
-        <!-- Дуга 2: назад (оранжевая) — центр сверху (160, 93.4), дуга «провисает» вниз -->
         <path d="M 185 136.7 A 50 50 0 0 1 135 136.7" class="svg-line2" marker-end="url(#arrK2)"/>
         <text x="135" y="170" class="svg-text" fill="#f0883e">2) назад β</text>
-
-        <!-- Касп 2 (точка реверса) -->
         <circle cx="135" cy="136.7" r="3" fill="#ffd166" stroke="#000" stroke-width="0.5"/>
-
-        <!-- Дуга 3: вперёд (синяя) -->
         <path d="M 135 136.7 A 50 50 0 0 1 160 180" class="svg-line" marker-end="url(#arrK1)"/>
         <text x="35" y="125" class="svg-text" fill="#58a6ff">3) вперёд α</text>
-
-        <!-- Робот в стартовой/финишной точке -->
         <circle cx="160" cy="180" r="7" class="svg-bot"/>
-
-        <!-- Стрелка курса в старте (зелёная, вверх) -->
         <line x1="160" y1="180" x2="160" y2="158" stroke="#2ea043" stroke-width="2"/>
         <polygon points="156,160 164,160 160,150" fill="#2ea043"/>
-
-        <!-- Стрелка курса в финише (серая, вниз — для Δh=180°) -->
         <line x1="172" y1="180" x2="172" y2="202" stroke="#888" stroke-width="2"/>
         <polygon points="168,200 176,200 172,210" fill="#888"/>
-
-        <!-- Подписи -->
         <text x="100" y="225" class="svg-text-sm">старт = финиш</text>
         <text x="180" y="225" class="svg-text-sm" fill="#888">курс ↻ Δh</text>
         <text x="195" y="153" class="svg-text-sm" fill="#ffd166">касп</text>
@@ -603,57 +476,114 @@ turn_around_cmd(1, 60)    <span class="c"># разворот направо на
     </figure>
     <div>
       <h4>Геометрия Reeds-Shepp</h4>
-      <p>Чтобы развернуться на угол <em>Δh</em> (в градусах) и вернуться
-      в исходную позицию, выбираем такие α (вперед) и β (назад), чтобы:</p>
+      <p>Чтобы повернуть курс на <em>Δh</em> и вернуться <strong>точно в
+      исходную точку</strong>, нужны такие углы α (две дуги вперёд) и
+      β (одна дуга назад), чтобы выполнялось:</p>
       <div class="formula">
         2α + β = |Δh|
         <br>sin(β/2) = sin(|Δh|/2) / 2
       </div>
-      <p>Из второго уравнения β однозначно вычисляется, потом α =
-      (|Δh| − β)/2. Полный цикл: <em>forward(α)</em> → <em>backward(β)</em>
-      → <em>forward(α)</em> при максимальном угле руля. Гироскоп
-      контролирует фактический поворот в каждой дуге.</p>
+      <p>Из второго уравнения β вычисляется однозначно, затем
+      α = (|Δh| − β)/2. Полный цикл при максимальном угле руля:
+      <em>вперёд(α)</em> → <em>назад(β)</em> → <em>вперёд(α)</em>.
+      Решение есть для любого |Δh| ∈ (0°; 180°].</p>
+      <p>Это и есть «разворот на месте»: робот съезжает с точки на
+      дугах, но геометрия гарантирует возврат. Дрейф симулятора
+      (~5–15 см на 180°) компенсирует следующая команда движения —
+      она работает к абсолютным координатам.</p>
     </div>
   </div>
 
-  <h4>Параметры</h4>
-  <ul class="params-list">
-    <li><code>delta_deg</code> — на сколько градусов нужно повернуть курс (по модулю).</li>
-    <li><code>direction</code> — <code>+1</code> по часовой, <code>-1</code> против часовой.</li>
-    <li><code>power_pct</code> — мощность мотора.</li>
-  </ul>
+  <h4>Что под капотом</h4>
+  <p>Псевдокод метода <code>_k_turn_to_heading(target_deg)</code>:</p>
+<pre class="alg-code"><span class="k">def</span> k_turn_to_heading(target_deg):                   <span class="c"># развернуть курс на target_deg «на месте»</span>
+    diff = (target_deg - heading + 540) % 360 - 180   <span class="c"># кратчайший знаковый угол [-180..180]</span>
+    <span class="k">if</span> abs(diff) &lt; 3:                                  <span class="c"># уже почти на курсе — дед-зона</span>
+        <span class="k">return</span>                                         <span class="c"># разворачиваться не нужно — выходим</span>
+    direction = +1 <span class="k">if</span> diff &gt; 0 <span class="k">else</span> -1                <span class="c"># знак невязки → сторона вращения</span>
 
-<pre class="alg-code"><span class="k">def</span> kturn_cmd(delta_deg, direction=1, power_pct=DEFAULT_SPEED):
-    delta = abs(delta_deg)                                                  <span class="c"># работаем с положительным углом</span>
-    beta  = 2 * math.degrees(math.asin(math.sin(math.radians(delta/2)) / 2))<span class="c"># дуга назад β по формуле Reeds-Shepp</span>
-    alpha = (delta - beta) / 2                                              <span class="c"># дуги вперёд α (две одинаковые)</span>
+    <span class="c"># Углы дуг по Reeds-Shepp — возврат в исходную точку гарантирован.</span>
+    beta  = 2 * degrees(asin(sin(radians(abs(diff)/2)) / 2))    <span class="c"># дуга назад β</span>
+    alpha = (abs(diff) - beta) / 2                              <span class="c"># две дуги вперёд α</span>
 
-    <span class="k">def</span> arc(target_dh, power_sign, steer_sign):                         <span class="c"># внутренняя функция — одна дуга</span>
-        <span class="c"># Едем, пока |фактическое изменение курса| не достигнет target_dh.</span>
-        h0 = robot.get_angle()[<span class="s">'Z'</span>]                                <span class="c"># курс на старте дуги</span>
-        robot.set_angle(steer_sign * DEFAULT_TURN_ANGLE)                    <span class="c"># руль на полный угол в нужную сторону</span>
-        robot.move(power_sign * power_pct)                                  <span class="c"># без duration — крутим до условия</span>
-        <span class="k">while</span> True:                                                     <span class="c"># опрашиваем гироскоп каждые 50 мс</span>
-            cur = robot.get_angle()[<span class="s">'Z'</span>]                            <span class="c"># текущий курс с гироскопа</span>
-            done = abs(((cur - h0 + 540) % 360) - 180) >= target_dh         <span class="c"># знаковая разница ≥ цели?</span>
-            <span class="k">if</span> done:                                                    <span class="c"># дуга пройдена</span>
-                robot.stop()                                                <span class="c"># останавливаем мотор</span>
-                <span class="k">break</span>                                                   <span class="c"># выходим из цикла</span>
-            time.sleep(0.05)                                                <span class="c"># 50 мс между проверками гироскопа</span>
-
-    arc(alpha, +1, +direction)                  <span class="c"># дуга 1: вперёд, руль в сторону разворота</span>
-    arc(beta,  -1, -direction)                  <span class="c"># дуга 2: назад, руль в обратную сторону (sign−)</span>
-    arc(alpha, +1, +direction)                  <span class="c"># дуга 3: вперёд, руль снова в сторону разворота</span>
-    robot.set_servo_center()                    <span class="c"># вернуть руль в нейтраль</span></pre>
+    turning_in_place = True             <span class="c"># флаг: защитный стоп зон НЕ обрывает разворот</span>
+    arc(direction * STEER,  alpha, forward=True)    <span class="c"># дуга 1: вперёд, руль в сторону разворота</span>
+    arc(-direction * STEER, beta,  forward=False)   <span class="c"># дуга 2: назад, руль зеркально</span>
+    arc(direction * STEER,  alpha, forward=True)    <span class="c"># дуга 3: вперёд, руль как в дуге 1</span>
+    turning_in_place = False            <span class="c"># разворот окончен — снимаем флаг</span>
+    heading = target_deg                <span class="c"># финальный снэп точного курса</span></pre>
 
   <h4 class="example-title">Пример вызова</h4>
-<pre class="alg-code">kturn_cmd(90)        <span class="c"># повернуться на 90° по часовой</span>
-kturn_cmd(180, -1)   <span class="c"># развернуться на 180° против часовой</span>
-kturn_cmd(45,  +1)   <span class="c"># повернуться на 45° по часовой</span></pre>
+  <p>K-turn — внутренний механизм, прямой команды нет. Его запускает
+  <a href="#a-router">авто-роутер</a>, когда места для разворота
+  достаточно:</p>
+<pre class="alg-code">robot.face(180)        <span class="c"># поворот к курсу → авто-роутер → 3-дуговой K-turn</span>
+robot.turn_around()    <span class="c"># разворот на 180° → авто-роутер → 3-дуговой K-turn</span></pre>
+
+  <p class="note">
+    <strong>Флаг <code>turning_in_place</code>.</strong> Пока он поднят,
+    физика не глушит мотор при касании опасной зоны (иначе дуга
+    оборвалась бы на середине и курс ушёл бы неверный). K-turn — единственный
+    манёвр, которому защитный стоп зон отключают; поэтому разворот
+    выполняют не «вслепую», а через авто-роутер (§3.3), который заранее
+    проверяет, что развернуться есть где.
+  </p>
 
 
-  <!-- ── 3.3. face_cmd ──────────────────────────────────────── -->
-  <h3 id="a-face">3.3. face_cmd(target_deg) — повернуться лицом к произвольному курсу</h3>
+  <!-- ── 3.3. Авто-роутер ─────────────────────────────────────────────── -->
+  <h3 id="a-router">3.3. Авто-роутер разворота — выбор стратегии по месту</h3>
+
+  <div>
+    <h4>Идея</h4>
+    <p>Метод <code>_run_face_cardinal(deg)</code> — общая точка входа
+    всех разворотов лицом к курсу (<code>face</code>,
+    <code>turn_right/left</code>, <code>turn_around</code>, фаза поворота
+    в <code>goto</code> и автопилоте). Он <strong>сам выбирает</strong>,
+    как разворачиваться, исходя из свободного места впереди:</p>
+    <ol>
+      <li><strong>Места хватает</strong> → обычный 3-дуговой
+          <a href="#a-kturn">K-turn</a>.</li>
+      <li><strong>Тесно</strong> → мелкий многошаговый разворот: серия
+          коротких пар «вперёд-назад»; роутер сам подберёт число шагов и
+          при нужде немного отъедет назад.</li>
+      <li><strong>Развернуться негде</strong> (мало места и впереди, и
+          сзади) → стоп с сообщением; оператор разруливает вручную.</li>
+    </ol>
+    <p>Сколько места нужно K-turn'у — считается из той же геометрии
+    Reeds-Shepp плюс запас на габарит робота и дрейф.</p>
+  </div>
+
+  <h4>Что под капотом</h4>
+<pre class="alg-code"><span class="k">def</span> run_face_cardinal(deg):                <span class="c"># повернуться к курсу deg, стратегию выбрать самому</span>
+    diff = (deg - heading + 540) % 360 - 180  <span class="c"># кратчайший знаковый угол поворота</span>
+    <span class="k">if</span> abs(diff) &lt; 3:                       <span class="c"># уже на курсе</span>
+        <span class="k">return</span>                                 <span class="c"># поворот не нужен — выходим</span>
+    forward_need = kturn_forward_clearance(abs(diff))   <span class="c"># сколько см нужно K-turn'у впереди</span>
+    forward_have = free_forward_cm(heading)             <span class="c"># сколько реально есть (стены + зоны)</span>
+
+    <span class="k">if</span> forward_have &gt;= forward_need:        <span class="c"># 1) места достаточно</span>
+        k_turn_to_heading(deg)                          <span class="c">#    обычный 3-дуговой K-turn</span>
+    <span class="k">elif</span> tight_turn_fits():                  <span class="c"># 2) тесно, но мелкий разворот влезает</span>
+        multi_step_kturn(deg)                           <span class="c">#    серия коротких пар + отъезд при нужде</span>
+    <span class="k">else</span>:                                   <span class="c"># 3) совсем негде</span>
+        warn(<span class="s">"⛔ Развернуться негде"</span>)         <span class="c"># стоп — оператор разруливает вручную</span></pre>
+
+  <p class="note">
+    Свободное место впереди (<code>free_forward_cm</code>) считается с
+    учётом стен <strong>всегда</strong>, а с учётом опасных зон —
+    только когда зоны включены в «Препятствиях».
+  </p>
+
+  <h4 class="example-title">Пример вызова</h4>
+  <p>Авто-роутер — внутренний; отдельной команды нет. Через него
+  проходят все развороты лицом к курсу:</p>
+<pre class="alg-code">robot.face(90)         <span class="c"># повернуться к востоку</span>
+robot.turn_right(45)   <span class="c"># повернуть на 45° вправо от текущего курса</span>
+robot.turn_around()    <span class="c"># развернуться на 180°</span></pre>
+
+
+  <!-- ── 3.4. face ────────────────────────────────────────────────────── -->
+  <h3 id="a-face">3.4. robot.face / turn_right / turn_left — повернуться к курсу</h3>
 
   <div class="alg-grid">
     <figure class="alg-svg">
@@ -663,118 +593,60 @@ kturn_cmd(45,  +1)   <span class="c"># повернуться на 45° по ч�
             <polygon points="0,0 5,2.5 0,5" fill="#d2a8ff"/>
           </marker>
         </defs>
-
-        <!-- Внешняя окружность компаса -->
         <circle cx="140" cy="120" r="90" fill="none" stroke="#30363d" stroke-width="1"/>
         <circle cx="140" cy="120" r="65" fill="none" stroke="#30363d" stroke-width="0.5" stroke-dasharray="2 2"/>
-
-        <!-- 8 направлений: N, NE, E, SE, S, SW, W, NW -->
         <text x="140" y="22" text-anchor="middle" class="svg-text">С 0°</text>
         <text x="140" y="226" text-anchor="middle" class="svg-text">Ю 180°</text>
         <text x="245" y="125" text-anchor="middle" class="svg-text">В 90°</text>
         <text x="35" y="125" text-anchor="middle" class="svg-text">З 270°</text>
-
         <text x="215" y="50" text-anchor="middle" class="svg-text-sm">СВ 45°</text>
         <text x="215" y="200" text-anchor="middle" class="svg-text-sm">ЮВ 135°</text>
         <text x="65" y="200" text-anchor="middle" class="svg-text-sm">ЮЗ 225°</text>
         <text x="65" y="50" text-anchor="middle" class="svg-text-sm">СЗ 315°</text>
-
-        <!-- Tick marks по 8 направлениям -->
         <line x1="140" y1="30" x2="140" y2="40" stroke="#aaa" stroke-width="1"/>
         <line x1="140" y1="200" x2="140" y2="210" stroke="#aaa" stroke-width="1"/>
         <line x1="230" y1="120" x2="220" y2="120" stroke="#aaa" stroke-width="1"/>
         <line x1="50" y1="120" x2="60" y2="120" stroke="#aaa" stroke-width="1"/>
-        <line x1="204" y1="56" x2="197" y2="63" stroke="#888" stroke-width="0.7"/>
-        <line x1="76" y1="184" x2="83" y2="177" stroke="#888" stroke-width="0.7"/>
-        <line x1="204" y1="184" x2="197" y2="177" stroke="#888" stroke-width="0.7"/>
-        <line x1="76" y1="56" x2="83" y2="63" stroke="#888" stroke-width="0.7"/>
-
-        <!-- Робот по центру -->
         <circle cx="140" cy="120" r="9" class="svg-bot"/>
-
-        <!-- Текущий курс (зелёная стрелка): на восток (90°) -->
         <line x1="140" y1="120" x2="195" y2="120" stroke="#2ea043" stroke-width="2.5"/>
         <polygon points="190,116 200,120 190,124" fill="#2ea043"/>
-        <text x="160" y="113" class="svg-text-sm" fill="#2ea043">текущий курс</text>
-
-        <!-- Целевой курс (оранжевая пунктирная): на юг (180°) -->
+        <text x="158" y="113" class="svg-text-sm" fill="#2ea043">текущий курс</text>
         <line x1="140" y1="120" x2="140" y2="180" stroke="#f0883e" stroke-width="2" stroke-dasharray="3 2"/>
         <polygon points="136,176 144,176 140,186" fill="#f0883e"/>
         <text x="148" y="155" class="svg-text-sm" fill="#f0883e">цель</text>
-
-        <!-- Кратчайшая дуга поворота: от 90° к 180° = +90° по часовой -->
         <path d="M 175 120 A 35 35 0 0 1 140 155" stroke="#d2a8ff" stroke-width="2" fill="none"
               stroke-dasharray="3 2" marker-end="url(#arrFC)"/>
         <text x="170" y="155" class="svg-text-sm" fill="#d2a8ff">+90°</text>
       </svg>
-      <figcaption>Считаем кратчайшую разницу курса и крутим в нужную сторону</figcaption>
+      <figcaption>Кратчайшая разница курса → разворот в нужную сторону</figcaption>
     </figure>
     <div>
       <h4>Идея</h4>
-      <p>Тонкая обёртка вокруг K-turn: считает кратчайшую разницу курса
-      по формуле:</p>
+      <p><code>robot.face(deg)</code> поворачивает робота лицом к
+      <strong>абсолютному</strong> курсу: 0° — север, 90° — восток,
+      180° — юг, 270° — запад, и любые промежуточные (70°, 137° …).
+      Кратчайший знаковый поворот:</p>
       <div class="formula">
-        diff = ((target − heading + 540) mod 360) − 180
+        diff = ((deg − heading + 540) mod 360) − 180
       </div>
-      <p>Это даёт знаковый угол в диапазоне [−180; +180]:
-      положительный — поворот по часовой (вправо),
-      отрицательный — против часовой (влево).
-      Затем вызывается <code>kturn_cmd(|diff|, sign(diff))</code>.</p>
-      <p>Условие <code>|diff| &lt; 3°</code> — деадзона, чтобы не дёргать робота
-      на мелких рассинхронизациях гироскопа.</p>
+      <p>Положительный diff — поворот вправо, отрицательный — влево.
+      Дальше команда отдаёт цель <a href="#a-router">авто-роутеру</a>.</p>
+      <p><code>turn_right(N)</code> / <code>turn_left(N)</code> — то же
+      самое, но угол <strong>относительный</strong>: они считают
+      <code>heading ± N</code> и тоже вызывают авто-роутер.</p>
     </div>
   </div>
 
-  <h4>Параметры</h4>
-  <ul class="params-list">
-    <li><code>target_deg</code> — целевой курс в градусах (любое значение 0–359°).
-        Для сторон света — 0/45/90/135/180/225/270/315°. Для произвольных
-        углов (70°, 137°, 210° …) — алгоритм ровно тот же.</li>
-  </ul>
-
-  <h4>Голосовые фразы</h4>
-  <p>Эти фразы — <strong>одна и та же команда</strong>, маршрутизируются
-     в один и тот же <code>face_cmd(N)</code>:</p>
-  <ul class="params-list">
-    <li><code>Вега поверни на 70</code> · <code>Вега повернись на 70</code>
-        · <code>Вега поворот на 70</code></li>
-    <li><code>Вега разверни на 70</code> · <code>Вега развернись на 70 градусов</code></li>
-    <li><code>Вега лицом на 70</code> (с числом — face_to; без числа —
-        «лицом на восток» — это сторона света)</li>
-  </ul>
-  <p>Без числа: «Вега развернись» = разворот на 180°
-     (<a href="#a-turn180">turn_around_cmd</a>); «Вега лицом на восток» =
-     одна из 8 сторон света (<a href="#a-face">face_X</a>).</p>
-
-<pre class="alg-code"><span class="k">def</span> face_cmd(target_deg):
-    cur  = robot.get_angle()[<span class="s">'Z'</span>]               <span class="c"># текущий курс с гироскопа</span>
-    diff = ((target_deg - cur + 540) % 360) - 180   <span class="c"># кратчайший знаковый угол [-180..+180]</span>
-    <span class="k">if</span> abs(diff) < 3:                            <span class="c"># уже почти смотрим куда надо</span>
-        <span class="k">return</span>                                   <span class="c"># ничего не делаем (дед-зона)</span>
-    direction = +1 <span class="k">if</span> diff > 0 <span class="k">else</span> -1         <span class="c"># знак невязки → направление поворота</span>
-    kturn_cmd(abs(diff), direction)                 <span class="c"># делегируем 3-дуговой K-turn</span></pre>
-
   <h4 class="example-title">Пример вызова</h4>
-<pre class="alg-code">face_cmd(0)     <span class="c"># встать лицом на север</span>
-face_cmd(45)    <span class="c"># на северо-восток</span>
-face_cmd(90)    <span class="c"># на восток</span>
-face_cmd(180)   <span class="c"># на юг</span>
-face_cmd(70)    <span class="c"># произвольный угол: «Вега поверни на 70»</span>
-face_cmd(210)   <span class="c"># «Вега развернись на 210»</span></pre>
-
-  <h4>Что делает симулятор сверху алгоритма</h4>
-  <p>То же самое, что у <a href="#a-turn180">turn_around_cmd</a>:</p>
-  <ul>
-    <li>Перед K-turn — <strong>проверка clearance</strong> (помещается ли разворот),
-        и при необходимости автоматический отъезд назад на безопасное расстояние.</li>
-    <li>После K-turn — <strong>возврат в исходную точку</strong> (фаза 2: P-регулятор)
-        и <strong>коррекция курса</strong> (фаза 3: мелкие дуги по 5-8°),
-        итеративно до 5 раз пока не сойдётся к ±1.5 см / ±1.5°.</li>
-  </ul>
+<pre class="alg-code">robot.face(0)        <span class="c"># встать лицом на север</span>
+robot.face(90)       <span class="c"># на восток</span>
+robot.face(70)       <span class="c"># произвольный курс 70°</span>
+robot.turn_right(45) <span class="c"># повернуть на 45° вправо от текущего курса</span>
+robot.turn_left(90)  <span class="c"># повернуть на 90° влево</span></pre>
 
 
-  <!-- ── 3.4. course_cmd ─────────────────────────────────────────── -->
-  <h3 id="a-course">3.4. course_cmd(target_deg) — выставить курс на ходу</h3>
+  <!-- ── 3.5. set_course ──────────────────────────────────────────────── -->
+  <h3 id="a-course">3.5. robot.set_course(deg) — выйти на курс дугой</h3>
 
   <div class="alg-grid">
     <figure class="alg-svg">
@@ -784,75 +656,53 @@ face_cmd(210)   <span class="c"># «Вега развернись на 210»</sp
             <polygon points="0,0 5,2.5 0,5" class="svg-arrow"/>
           </marker>
         </defs>
-
-        <!-- Сетка -->
         <line x1="20" y1="160" x2="260" y2="160" class="svg-grid"/>
         <line x1="20" y1="160" x2="20"  y2="20"  class="svg-grid"/>
-
-        <!-- Плавная дуга от старта к цели -->
         <path d="M 50 140 Q 110 80 220 60" class="svg-line" marker-end="url(#arrSC)"/>
-
-        <!-- Робот в старте -->
         <circle cx="50" cy="140" r="6" class="svg-bot"/>
         <line x1="50" y1="140" x2="50" y2="115" stroke="#2ea043" stroke-width="2"/>
         <polygon points="46,118 54,118 50,108" fill="#2ea043"/>
-        <text x="20" y="158" class="svg-text-sm">старт, курс 0°</text>
-
-        <!-- Робот в цели -->
+        <text x="20" y="158" class="svg-text-sm">старт</text>
         <circle cx="220" cy="60" r="6" class="svg-bot" opacity="0.5"/>
         <line x1="220" y1="60" x2="245" y2="55" stroke="#888" stroke-width="2"/>
         <polygon points="241,52 248,55 240,59" fill="#888"/>
-        <text x="200" y="80" class="svg-text-sm">цель, курс 80°</text>
-
-        <!-- Угол руля (помельче на старте, к нулю к финишу) -->
-        <text x="80" y="105" class="svg-text-sm" fill="#58a6ff">руль ∝ Δкурса</text>
+        <text x="195" y="80" class="svg-text-sm">нужный курс</text>
+        <text x="78" y="108" class="svg-text-sm" fill="#58a6ff">руль на максимум</text>
       </svg>
-      <figcaption>P-регулятор по углу руля: пропорция 1:1, насыщение ±DEFAULT_TURN_ANGLE</figcaption>
+      <figcaption>Курс набирается дугами, без разворота на месте</figcaption>
     </figure>
     <div>
       <h4>Идея</h4>
-      <p>Применяется, когда впереди есть запас места и можно
-      «домотать» курс одной плавной дугой без K-turn.
-      Угол руля пропорционален невязке курса с ограничением:</p>
-      <div class="formula">
-        steer = clip(diff, ±DEFAULT_TURN_ANGLE)
-        <br>duration = |diff| / 30°/с
-      </div>
-      <p>Это простой пропорциональный регулятор: чем больше отклонение
-      от цели, тем сильнее повёрнут руль (до максимума).</p>
+      <p>В отличие от <code>face</code>, <code>set_course</code>
+      <strong>не возвращается в исходную точку</strong> — робот выходит
+      на нужный курс <em>дугой на ходу</em> и остаётся там, где
+      докатился. Применяется, когда впереди есть запас места.</p>
+      <p>Алгоритм итеративный: пока невязка курса велика, робот кладёт
+      руль на максимум в нужную сторону и проезжает дугу на угол,
+      пропорциональный остатку (не больше 90° за итерацию). Цикл до
+      20 итераций или пока |diff| &lt; 5°.</p>
     </div>
   </div>
 
-  <h4>Параметры</h4>
-  <ul class="params-list">
-    <li><code>target_deg</code> — целевой курс в градусах.</li>
-    <li><code>power_pct</code> — мощность мотора (по умолчанию <code>DEFAULT_SPEED</code>).</li>
-  </ul>
-
-<pre class="alg-code"><span class="k">def</span> course_cmd(target_deg, power_pct=DEFAULT_SPEED):
-    cur  = robot.get_angle()[<span class="s">'Z'</span>]                          <span class="c"># текущий курс с гироскопа</span>
-    diff = ((target_deg - cur + 180) % 360) - 180              <span class="c"># знаковая невязка [-180..+180]</span>
-    <span class="c"># P-регулятор по углу руля с насыщением: пропорция 1:1, ограничение ±DEFAULT_TURN_ANGLE.</span>
-    steer = max(-DEFAULT_TURN_ANGLE, min(DEFAULT_TURN_ANGLE, diff))  <span class="c"># clip угла руля до пределов серво</span>
-    robot.set_angle(int(steer))                                <span class="c"># подать руль на расчётный угол</span>
-    robot.move(power_pct, abs(diff) / 30.0)                    <span class="c"># длительность ~ |diff|/30°/с</span>
-    robot.stop()                                               <span class="c"># стоп после прохождения дуги</span></pre>
+  <h4>Что под капотом</h4>
+<pre class="alg-code"><span class="k">def</span> run_set_course(target_deg):                <span class="c"># выйти на курс target_deg дугой на ходу</span>
+    <span class="k">for</span> _ <span class="k">in</span> range(20):                          <span class="c"># не больше 20 дуг</span>
+        diff = (target_deg - heading + 180) % 360 - 180   <span class="c"># знаковая невязка курса</span>
+        <span class="k">if</span> abs(diff) &lt; 5:                       <span class="c"># вышли на курс</span>
+            <span class="k">break</span>                                  <span class="c"># дуги больше не нужны — выходим</span>
+        direction = +1 <span class="k">if</span> diff &gt; 0 <span class="k">else</span> -1     <span class="c"># сторона дуги</span>
+        frac = min(abs(diff), 90) / 90              <span class="c"># доля от дуги 90° за шаг</span>
+        set_angle(direction * STEER)                <span class="c"># руль на максимум</span>
+        drive_arc(arc90 * frac)                     <span class="c"># проехать дугу на нужный угол</span>
+    heading = target_deg                            <span class="c"># финальный снэп курса</span></pre>
 
   <h4 class="example-title">Пример вызова</h4>
-<pre class="alg-code">course_cmd(90)        <span class="c"># выйти на курс 90° (восток) дугой</span>
-course_cmd(180, 60)   <span class="c"># на юг, помедленнее (60% мощности)</span></pre>
+<pre class="alg-code">robot.set_course(90)   <span class="c"># выйти на курс 90° (восток) дугой</span>
+robot.set_course(180)  <span class="c"># на юг</span></pre>
 
 
-  <!-- ── 3.5. kturn_cmd ──────────────────────────────────── -->
-  <h3 id="a-turnplace">3.5. kturn_cmd — разворот на месте N парами</h3>
-
-  <p class="note">
-    Кнопка <strong>«↺ На месте»</strong> в панели управления и голосовая
-    команда <em>«Вега разворот на месте»</em> вызывают именно эту функцию.
-    Отличие от <a href="#a-turn180">turn_around_cmd</a>: вместо одной
-    большой петли — много маленьких (по ≈ 30° курса каждая), поэтому
-    разворот помещается в тесном пространстве.
-  </p>
+  <!-- ── 3.6. kturn ───────────────────────────────────────────────────── -->
+  <h3 id="a-turnplace">3.6. robot.kturn(steps, direction) — разворот на 180° на месте</h3>
 
   <div class="alg-grid">
     <figure class="alg-svg">
@@ -865,15 +715,8 @@ course_cmd(180, 60)   <span class="c"># на юг, помедленнее (60% �
             <polygon points="0,0 5,2.5 0,5" fill="#f85149"/>
           </marker>
         </defs>
-
-        <!-- Координатная сетка -->
         <line x1="140" y1="20"  x2="140" y2="220" class="svg-grid" stroke-dasharray="2 4"/>
         <line x1="40"  y1="120" x2="240" y2="120" class="svg-grid" stroke-dasharray="2 4"/>
-
-        <!-- ── 6 коротких «петалов»-траекторий (как на симуляторе) ──
-             Робот стоит почти на месте; каждая пара движений оставляет
-             короткий след-петлю длиной ≈ 25 px. Углы — 15°, 45°, 75°,
-             105°, 135°, 165° (середины между последовательными курсами). -->
         <path d="M 140 120 Q 152 113 146 100  Q 135 109 140 120 Z"
               fill="#0e2818" stroke="#2ea043" stroke-width="1.4" stroke-dasharray="2 2"/>
         <path d="M 140 120 Q 154 119 156 105  Q 142 107 140 120 Z"
@@ -886,79 +729,67 @@ course_cmd(180, 60)   <span class="c"># на юг, помедленнее (60% �
               fill="#0e2818" stroke="#2ea043" stroke-width="1.4" stroke-dasharray="2 2"/>
         <path d="M 140 120 Q 135 131 146 140  Q 152 130 140 120 Z"
               fill="#0e2818" stroke="#2ea043" stroke-width="1.4" stroke-dasharray="2 2"/>
-
-        <!-- Робот в центре (он стоит на месте) — рамка как в симуляторе -->
         <rect x="129" y="105" width="22" height="30" rx="2"
               fill="#11203a" stroke="#58a6ff" stroke-width="1.5"/>
         <circle cx="140" cy="120" r="6" fill="#2ea043"/>
-
-        <!-- Стрелка курса в старте (зелёная вверх — 0°) -->
         <line x1="140" y1="120" x2="140" y2="60" stroke="#2ea043" stroke-width="2.5" marker-end="url(#arrTP_g)"/>
         <text x="55" y="55" class="svg-text-sm" fill="#2ea043">старт</text>
         <text x="55" y="68" class="svg-text-sm" fill="#2ea043">курс 0°</text>
-
-        <!-- Стрелка курса в финише (красная вниз — 180°), сдвинута чуть вправо -->
         <line x1="155" y1="120" x2="155" y2="180" stroke="#f85149" stroke-width="2.5"
               stroke-dasharray="3 2" marker-end="url(#arrTP_r)"/>
         <text x="170" y="180" class="svg-text-sm" fill="#f85149">финиш</text>
         <text x="170" y="192" class="svg-text-sm" fill="#f85149">курс 180°</text>
-
-        <!-- Подписи -->
         <text x="20" y="220" class="svg-text-sm">робот почти не двигается —</text>
         <text x="20" y="232" class="svg-text-sm">меняется только курс ↻ 180°</text>
       </svg>
-      <figcaption>Каждая короткая зелёная «петаль» = одна пара «вперёд+право → назад+лево» (≈ 30° курса). 6 пар → курс развёрнут на 180°. Робот остаётся в одной точке.</figcaption>
+      <figcaption>Каждая короткая «петаль» — одна видимая пара «вперёд → назад». N пар → курс развёрнут на 180°.</figcaption>
     </figure>
     <div>
       <h4>Идея</h4>
-      <p>Альтернатива 3-дуговому K-turn: для тесных мест и неточной
-      калибровки лучше делать много мелких пар «вперёд+право → назад+лево»
-      по 0.5 секунды каждая. Каждая пара поворачивает робот примерно
-      на <code>2 × HEADING_DEG_PER_ROT × (0.5с × DEFAULT_SPEED/100 × SPEED_CM_PER_S_AT_100) / WHEEL_CIRC_CM</code>
-      ≈ <strong>30° на пару</strong> при стандартной калибровке.</p>
-      <p>Для разворота на 180° нужно ~6 пар (steps=6). Не требует
-      сложной геометрии — отлично работает и без точного гироскопа.</p>
+      <p><code>robot.kturn(steps)</code> разворачивает курс ровно на
+      180° за <code>steps</code> видимых пар дуг. Каждая пара — короткая
+      дуга вперёд с рулём в одну сторону и зеркальная дуга назад.
+      Чем больше шагов, тем мельче пары и тем компактнее манёвр —
+      разворот помещается в тесноте.</p>
+      <p>После N пар сервер выполняет тот же финальный возврат, что и
+      обычный K-turn (две фазы — довоз в исходную точку и коррекция
+      курса мелкими дугами), потому что счисление за время разворота
+      набирает дрейф.</p>
     </div>
   </div>
 
-  <h4>Параметры</h4>
-  <ul class="params-list">
-    <li><code>steps</code> — количество пар «вперёд-назад». 6 пар ≈ 180°, 3 ≈ 90°.</li>
-    <li><code>power_pct</code> — мощность мотора (по умолчанию <code>DEFAULT_SPEED</code>).</li>
-  </ul>
-
-<pre class="alg-code"><span class="k">def</span> kturn_cmd(steps, power_pct=DEFAULT_SPEED):
-    <span class="k">for</span> i <span class="k">in</span> range(steps):                          <span class="c"># N пар маленьких подёргиваний</span>
-        robot.set_angle(DEFAULT_TURN_ANGLE)             <span class="c"># руль вправо</span>
-        robot.move(power_pct, 0.5)                      <span class="c"># вперёд 0.5 с — поворачиваемся ~15°</span>
-        robot.set_angle(-DEFAULT_TURN_ANGLE)            <span class="c"># руль влево</span>
-        robot.move(-power_pct, 0.5)                     <span class="c"># назад 0.5 с — ещё ~15° в ту же сторону</span>
-    robot.stop()                                        <span class="c"># окончательный стоп</span>
-    robot.set_servo_center()                            <span class="c"># вернуть руль в нейтраль</span></pre>
+  <h4>Что под капотом</h4>
+<pre class="alg-code"><span class="k">def</span> k_turn_n(direction, steps):                  <span class="c"># разворот на 180° за steps видимых пар</span>
+    arc90    = 90° дуги в см / калибровку             <span class="c"># длина дуги на 90° курса</span>
+    step_arc = arc90 / steps                          <span class="c"># длина одной видимой дуги</span>
+    turning_in_place = True                           <span class="c"># защитный стоп зон не обрывает разворот</span>
+    <span class="c"># Фаза 1: N видимых пар «вперёд+руль → назад+зеркальный руль».</span>
+    <span class="k">for</span> i <span class="k">in</span> range(steps):                          <span class="c"># steps коротких пар дуг</span>
+        set_angle(direction * STEER);  drive(step_arc, forward=True)   <span class="c"># дуга вперёд</span>
+        set_angle(-direction * STEER); drive(step_arc, forward=False)  <span class="c"># дуга назад, руль зеркально</span>
+    <span class="c"># Фаза 2+3: вернуться в исходную точку и подправить курс.</span>
+    <span class="k">for</span> _ <span class="k">in</span> range(5):                              <span class="c"># до 5 итераций коррекции</span>
+        <span class="k">if</span> close_to_start() <span class="k">and</span> heading_ok(): <span class="k">break</span>  <span class="c"># точка и курс в норме — выходим</span>
+        drive_to_point(start_x, start_y)              <span class="c"># P-регулятор довозит обратно</span>
+        k_turn_arcs(heading_error)                    <span class="c"># мелкие дуги довыставляют курс</span>
+    turning_in_place = False                          <span class="c"># разворот окончен — снимаем флаг</span>
+    heading = (start_heading + 180) % 360             <span class="c"># финальный снэп курса (180°)</span></pre>
 
   <h4 class="example-title">Пример вызова</h4>
-<pre class="alg-code">kturn_cmd(6)     <span class="c"># разворот на 180° за 6 пар</span>
-kturn_cmd(3)     <span class="c"># поворот на 90° за 3 пары</span>
-kturn_cmd(12)    <span class="c"># полный круг 360° (если место позволяет)</span></pre>
-
-  <h4>Что делает симулятор сверху алгоритма</h4>
-  <ul>
-    <li>Перед стартом — <strong>проверка clearance</strong> (для разворота на 180°
-        нужно ~92 см вперёд, для 90° — ~50 см). При нехватке отъезд назад.</li>
-    <li>После последней пары — <strong>возврат в исходную точку + коррекция курса</strong>
-        (та же фаза 2+3, что и у обычного K-turn).</li>
-  </ul>
+<pre class="alg-code">robot.kturn()           <span class="c"># разворот на 180° за 3 шага (по умолчанию)</span>
+robot.kturn(6)          <span class="c"># за 6 шагов — мельче пары, компактнее</span>
+robot.kturn(4, -1)      <span class="c"># за 4 шага, разворот влево</span></pre>
 </section>
 
 
 <!-- ════════════════════════════════════════════════════════════════════
-     4. МАНЕВРЫ
+     4. ДУГИ И ФИГУРЫ
      ════════════════════════════════════════════════════════════════════ -->
 <section class="card alg-card">
-  <h2 class="card__title">4. Маневры</h2>
+  <h2 class="card__title">4. Дуги и фигуры</h2>
 
-  <!-- ── круг ─────────────────────────────────────────────────────────── -->
-  <h3 id="a-circle">4.1. circle_cmd — один полный круг</h3>
+  <!-- ── arc ──────────────────────────────────────────────────────────── -->
+  <h3 id="a-arc">4.1. robot.arc(angle, direction) — дуга и полный круг</h3>
 
   <div class="alg-grid">
     <figure class="alg-svg">
@@ -972,109 +803,67 @@ kturn_cmd(12)    <span class="c"># полный круг 360° (если мес�
         <path d="M 195 80 A 55 55 0 0 0 140 25" class="svg-line" marker-end="url(#arrC)"/>
         <circle cx="195" cy="80" r="6" class="svg-bot"/>
         <text x="200" y="78" class="svg-text-sm">старт</text>
-        <text x="115" y="20" class="svg-text">2π за full_turn_sec</text>
+        <text x="100" y="20" class="svg-text">arc(360) = полный круг</text>
       </svg>
-      <figcaption>Руль на максимум, едем фиксированное время</figcaption>
+      <figcaption>Руль на максимум, дуга на заданный угол курса</figcaption>
     </figure>
     <div>
       <h4>Идея</h4>
-      <p>Кладем руль на максимум, едем <code>full_turn_sec</code> ≈ 4 секунды
-      — как раз 360°. По умолчанию направление CCW (против часовой,
-      математическое 0→2π). Если в команде явно «направо/по часовой» —
-      CW (direction=+1).</p>
+      <p><code>robot.arc(angle)</code> кладёт руль на максимальный угол
+      (<code>TURN_ANGLE</code> из настроек) и едет дугой, пока курс не
+      изменится на <code>angle</code> градусов. Прогресс отслеживается
+      по реально набранному курсу, не по времени.</p>
+      <p><code>angle</code> берётся по модулю; сторону задаёт
+      <code>direction</code>: <code>-1</code> — против часовой (по
+      умолчанию), <code>+1</code> — по часовой.
+      <code>robot.arc(360)</code> — полный круг.</p>
     </div>
   </div>
 
-  <h4>Параметры</h4>
-  <ul class="params-list">
-    <li><code>direction</code> — <code>-1</code> CCW (против часовой, по умолчанию), <code>+1</code> CW (по часовой).</li>
-    <li><code>power_pct</code> — мощность мотора.</li>
-    <li><code>full_turn_sec</code> — время полного оборота в секундах (зависит от калибровки, по умолчанию 4.0).</li>
-  </ul>
-
-<pre class="alg-code"><span class="k">def</span> circle_cmd(direction=-1, power_pct=DEFAULT_SPEED, full_turn_sec=4.0):
-    robot.set_angle(direction * DEFAULT_TURN_ANGLE)   <span class="c"># руль на полный угол в нужную сторону</span>
-    robot.move(power_pct, full_turn_sec)              <span class="c"># одна непрерывная дуга 360°</span>
-    robot.stop()                                      <span class="c"># стоп после полного оборота</span>
-    robot.set_servo_center()                          <span class="c"># вернуть руль в нейтраль</span></pre>
-
   <h4 class="example-title">Пример вызова</h4>
-<pre class="alg-code">circle_cmd()              <span class="c"># круг против часовой на DEFAULT_SPEED</span>
-circle_cmd(+1)            <span class="c"># круг по часовой</span>
-circle_cmd(-1, 60, 5.0)   <span class="c"># медленнее (60%) и подольше (5 с) — круг побольше</span></pre>
+<pre class="alg-code">robot.arc(90)        <span class="c"># четверть круга против часовой</span>
+robot.arc(360)       <span class="c"># полный круг</span>
+robot.arc(180, +1)   <span class="c"># полукруг по часовой</span></pre>
 
 
-  <!-- ── восьмерка ────────────────────────────────────────────────────── -->
-  <h3 id="a-eight">4.2. figure_eight_cmd — восьмерка</h3>
+  <!-- ── figure_eight ─────────────────────────────────────────────────── -->
+  <h3 id="a-eight">4.2. robot.figure_eight(direction) — восьмёрка</h3>
 
   <div class="alg-grid">
     <figure class="alg-svg">
       <svg viewBox="0 0 280 160">
-        <defs>
-          <marker id="arrE1" markerWidth="6" markerHeight="6" refX="5" refY="2.5" orient="auto">
-            <polygon points="0,0 5,2.5 0,5" class="svg-arrow"/>
-          </marker>
-          <marker id="arrE2" markerWidth="6" markerHeight="6" refX="5" refY="2.5" orient="auto">
-            <polygon points="0,0 5,2.5 0,5" class="svg-arrow2"/>
-          </marker>
-        </defs>
-        <!-- Левый круг (первый), CCW -->
         <circle cx="100" cy="80" r="40" class="svg-line"/>
-        <!-- Правый круг (второй), CW — тангенциален в (140, 80) -->
         <circle cx="180" cy="80" r="40" class="svg-line2"/>
-        <!-- Стрелки направлений на каждом круге -->
-        <path d="M 100 40 A 40 40 0 0 0 60 80" class="svg-line" marker-end="url(#arrE1)" opacity="0"/>
-        <path d="M 60 80 L 60 80" stroke="#58a6ff"/>
         <polygon points="58,40 64,40 61,46" class="svg-arrow"/>
         <polygon points="216,120 222,120 219,114" class="svg-arrow2"/>
-        <!-- Точка касания / робот -->
         <circle cx="140" cy="80" r="6" class="svg-bot"/>
-        <text x="105" y="75" class="svg-text-sm">старт = переход</text>
-        <text x="65" y="20"  class="svg-text" fill="#58a6ff">круг 1: CCW</text>
-        <text x="155" y="155" class="svg-text" fill="#f0883e">круг 2: CW</text>
+        <text x="100" y="75" class="svg-text-sm">старт</text>
+        <text x="62" y="20"  class="svg-text" fill="#58a6ff">круг 1</text>
+        <text x="150" y="155" class="svg-text" fill="#f0883e">круг 2</text>
       </svg>
-      <figcaption>Два круга, касающиеся в одной точке (∞)</figcaption>
+      <figcaption>Две дуги по 360° в противоположные стороны</figcaption>
     </figure>
     <div>
       <h4>Идея</h4>
-      <p>Робот стартует с касательной точки между двумя кругами.
-      Первый полный круг при руле <code>direction × max</code> возвращает
-      его в исходную точку. Затем руль перекладывается в зеркало
-      <code>−direction × max</code>, и второй полный круг идет в обратную
-      сторону. Получается классическая восьмерка: ∞.</p>
-      <p>Радиус каждого круга ≈ 65 см при максимальном угле руля,
-      общая ширина траектории ≈ 2.6 м.</p>
+      <p>Восьмёрка — это <a href="#a-arc">arc(360)</a>, повторённый
+      дважды с перекладкой руля. Первый круг идёт в сторону
+      <code>direction</code>, затем руль перекладывается в зеркало и
+      второй круг идёт в обратную сторону. Точка касания двух кругов —
+      исходная позиция робота.</p>
     </div>
   </div>
 
-  <h4>Параметры</h4>
-  <ul class="params-list">
-    <li><code>direction</code> — направление первого круга. <code>-1</code> = CCW (по умолчанию), <code>+1</code> = CW. Второй круг — в противоположную сторону.</li>
-    <li><code>power_pct</code> — мощность мотора.</li>
-    <li><code>full_turn_sec</code> — время одного полного круга (≈ 4 с).</li>
-  </ul>
-
-<pre class="alg-code"><span class="k">def</span> figure_eight_cmd(direction=-1, power_pct=DEFAULT_SPEED, full_turn_sec=4.0):
-    robot.set_angle( direction * DEFAULT_TURN_ANGLE)    <span class="c"># руль в сторону первого круга</span>
-    robot.move(power_pct, full_turn_sec)                <span class="c"># первый полный круг (360°)</span>
-    robot.set_angle(-direction * DEFAULT_TURN_ANGLE)    <span class="c"># перекладка руля → второй круг в зеркало</span>
-    robot.move(power_pct, full_turn_sec)                <span class="c"># второй полный круг в обратную сторону</span>
-    robot.stop()                                        <span class="c"># стоп после двух кругов</span>
-    robot.set_servo_center()                            <span class="c"># вернуть руль в нейтраль</span></pre>
-
   <h4 class="example-title">Пример вызова</h4>
-<pre class="alg-code">figure_eight_cmd()             <span class="c"># первый круг CCW, второй CW</span>
-figure_eight_cmd(+1)           <span class="c"># первый CW, второй CCW</span>
-figure_eight_cmd(-1, 70, 3.5)  <span class="c"># побыстрее (70%), круги покрупнее</span></pre>
+<pre class="alg-code">robot.figure_eight()      <span class="c"># первый круг против часовой, второй по часовой</span>
+robot.figure_eight(+1)    <span class="c"># первый круг по часовой</span></pre>
 
 
-  <!-- ── спираль ──────────────────────────────────────────────────────── -->
-  <h3 id="a-spiral">4.3. spiral_cmd — спираль (наружу / внутрь)</h3>
+  <!-- ── spiral ───────────────────────────────────────────────────────── -->
+  <h3 id="a-spiral">4.3. robot.spiral(direction, outward) — спираль</h3>
 
   <div class="alg-grid">
     <figure class="alg-svg">
       <svg viewBox="0 0 280 180">
-        <!-- Архимедова спираль (полилиния, точки рассчитаны по r = 5 + 3θ) -->
         <polyline class="svg-line" points="
           145.0,90.0 145.7,92.4 145.2,95.2 143.3,97.9 140.0,99.7 135.8,100.1
           131.5,98.5 127.8,95.1 125.6,90.0 125.6,84.0 128.1,78.1 133.1,73.4
@@ -1085,55 +874,35 @@ figure_eight_cmd(-1, 70, 3.5)  <span class="c"># побыстрее (70%), кр�
         "/>
         <circle cx="145" cy="90" r="5" class="svg-bot"/>
         <text x="150" y="92" class="svg-text-sm">старт</text>
-        <text x="180" y="175" class="svg-text-sm" fill="#58a6ff">радиус растет → угол руля уменьшается</text>
+        <text x="150" y="175" class="svg-text-sm" fill="#58a6ff">руль уменьшается → радиус растёт</text>
       </svg>
-      <figcaption>Архимедова спираль: r = a + b·θ</figcaption>
+      <figcaption>Спираль наружу: руль 36° → 24° за 2 оборота</figcaption>
     </figure>
     <div>
       <h4>Идея</h4>
-      <p>За один шаг едем чуть-чуть (<code>micro_sec</code> = 0.3 c),
-      и каждый раз меняем угол руля по линейной интерполяции
-      от <code>steer_from</code> до <code>steer_to</code>.
-      Чем меньше угол → больше радиус → спираль раскручивается.</p>
-      <div class="formula">
-        steer(i) = steer_from + (steer_to − steer_from) × i / (N−1),
-        &nbsp; где N = turns × 360 / 5
-      </div>
-      <p>Для спирали внутрь — поменять <code>from</code> и <code>to</code>
-      местами (24°→36°): радиус будет уменьшаться.</p>
+      <p>Робот едет непрерывно, а угол руля плавно интерполируется между
+      двумя крайними значениями за 2 полных оборота. Радиус дуги обратно
+      зависит от угла руля — меняя руль, меняем радиус:</p>
+      <ul>
+        <li><code>outward=True</code> — руль 36° → 24°: радиус растёт,
+            спираль раскручивается наружу;</li>
+        <li><code>outward=False</code> — руль 24° → 36°: радиус сужается,
+            спираль скручивается внутрь.</li>
+      </ul>
+      <p>Прогресс считается по реально набранной развёртке курса
+      (10 обновлений руля в секунду), а не по таймеру — поэтому радиус
+      меняется ровно.</p>
     </div>
   </div>
 
-  <h4>Параметры</h4>
-  <ul class="params-list">
-    <li><code>direction</code> — <code>-1</code> CCW (по умолчанию), <code>+1</code> CW.</li>
-    <li><code>power_pct</code> — мощность мотора.</li>
-    <li><code>steer_from</code> — стартовый угол руля в градусах (36° для «наружу»).</li>
-    <li><code>steer_to</code> — конечный угол руля (24° для «наружу»).</li>
-    <li><code>turns</code> — сколько витков сделать (по умолчанию 2).</li>
-    <li><code>micro_sec</code> — длительность одного микро-шага в секундах (0.3 с).</li>
-  </ul>
-
-<pre class="alg-code"><span class="k">def</span> spiral_cmd(direction=-1, power_pct=DEFAULT_SPEED,
-               steer_from=36, steer_to=24, turns=2, micro_sec=0.3):
-    total_steps = int(turns * 360 / 5)                              <span class="c"># шаг ~5° курса на микро-шаг</span>
-    <span class="k">for</span> i <span class="k">in</span> range(total_steps):                          <span class="c"># итерируемся по микро-шагам</span>
-        t = i / max(1, total_steps - 1)                             <span class="c"># нормированное время 0..1</span>
-        steer_deg = steer_from + (steer_to - steer_from) * t        <span class="c"># линейная интерполяция угла руля</span>
-        robot.set_angle(int(direction * steer_deg))                 <span class="c"># корректируем угол перед каждым шагом</span>
-        robot.move(power_pct, micro_sec)                            <span class="c"># едем micro_sec и меняем угол снова</span>
-    robot.stop()                                                    <span class="c"># стоп после N шагов</span>
-    robot.set_servo_center()                                        <span class="c"># вернуть руль в нейтраль</span></pre>
-
   <h4 class="example-title">Пример вызова</h4>
-<pre class="alg-code">spiral_cmd()                                          <span class="c"># спираль наружу, CCW, 2 витка</span>
-spiral_cmd(+1)                                        <span class="c"># спираль наружу, CW</span>
-spiral_cmd(-1, steer_from=24, steer_to=36)            <span class="c"># спираль внутрь (радиус уменьшается)</span>
-spiral_cmd(-1, steer_from=36, steer_to=10, turns=3)   <span class="c"># 3 витка с очень широким финалом</span></pre>
+<pre class="alg-code">robot.spiral()                       <span class="c"># спираль наружу, против часовой</span>
+robot.spiral(+1)                     <span class="c"># спираль наружу, по часовой</span>
+robot.spiral(-1, outward=False)      <span class="c"># спираль внутрь</span></pre>
 
 
-  <!-- ── объезд ───────────────────────────────────────────────────────── -->
-  <h3 id="a-bypass">4.4. bypass_cmd — объезд препятствия (S-волна)</h3>
+  <!-- ── bypass ───────────────────────────────────────────────────────── -->
+  <h3 id="a-bypass">4.4. robot.bypass(start_dir) — объезд препятствия (S-волна)</h3>
 
   <div class="alg-grid">
     <figure class="alg-svg">
@@ -1142,41 +911,33 @@ spiral_cmd(-1, steer_from=36, steer_to=10, turns=3)   <span class="c"># 3 вит
         <rect x="135" y="60" width="20" height="20" class="svg-obs"/>
         <circle cx="30"  cy="110" r="5" class="svg-bot"/>
         <circle cx="270" cy="110" r="5" class="svg-bot" opacity="0.5"/>
-        <text x="80"  y="150" class="svg-text-sm">фазы 1, 4: в сторону</text>
-        <text x="180" y="150" class="svg-text-sm">фазы 2, 3: возврат</text>
+        <text x="78"  y="150" class="svg-text-sm">четверти 1, 4: в сторону</text>
+        <text x="180" y="150" class="svg-text-sm">четверти 2, 3: возврат</text>
       </svg>
-      <figcaption>4 четверти-дуги: ┌╮ ╭┘</figcaption>
+      <figcaption>4 четверти-дуги: ┌╮ ╭┘ — после объезда курс прежний</figcaption>
     </figure>
     <div>
       <h4>Идея</h4>
-      <p>4 равные четверти-дуги, каждая по <code>quarter_sec</code> ≈ 0.5 c.
-      Знак угла руля чередуется: фазы 0 и 3 — в сторону объезда, фазы 1 и
-      2 — возврат на исходную линию. После четырех фаз робот снова на
-      старой линии движения.</p>
+      <p>Объезд — это S-волна из 4 равных четвертей-дуг по 30° курса
+      каждая. Знак руля чередуется: четверти 1 и 4 уводят робота в
+      сторону объезда, четверти 2 и 3 возвращают на исходную линию.
+      После четырёх дуг робот снова на прежнем курсе и на той же линии
+      движения — просто сместился вбок и обратно, обогнув препятствие.</p>
+      <p><code>start_dir=+1</code> — объезд справа (сначала вправо),
+      <code>-1</code> — слева.</p>
     </div>
   </div>
 
-  <h4>Параметры</h4>
-  <ul class="params-list">
-    <li><code>start_dir</code> — <code>+1</code> объезд справа (сначала вправо), <code>-1</code> объезд слева.</li>
-    <li><code>max_steer</code> — максимальный угол руля в градусах (по умолчанию 36°).</li>
-    <li><code>power_pct</code> — мощность мотора.</li>
-    <li><code>quarter_sec</code> — длительность одной четверти-дуги в секундах (0.5 с).</li>
-  </ul>
-
-<pre class="alg-code"><span class="k">def</span> bypass_cmd(start_dir=1, max_steer=36, power_pct=DEFAULT_SPEED, quarter_sec=0.5):
-    <span class="k">for</span> phase <span class="k">in</span> range(4):                            <span class="c"># 4 четверти-дуги: ┌╮ ╭┘</span>
-        <span class="c"># Фазы 0,3 — в сторону объезда; фазы 1,2 — возврат на исходную линию.</span>
-        sign = start_dir <span class="k">if</span> phase <span class="k">in</span> (0, 3) <span class="k">else</span> -start_dir   <span class="c"># знак руля для текущей фазы</span>
-        robot.set_angle(sign * max_steer)               <span class="c"># подать руль на нужный знак</span>
-        robot.move(power_pct, quarter_sec)              <span class="c"># проехать одну четверть-дугу</span>
-    robot.stop()                                        <span class="c"># стоп после 4 фаз</span>
-    robot.set_servo_center()                            <span class="c"># вернуть руль в нейтраль</span></pre>
-
   <h4 class="example-title">Пример вызова</h4>
-<pre class="alg-code">bypass_cmd(+1)               <span class="c"># объезд справа</span>
-bypass_cmd(-1)               <span class="c"># объезд слева</span>
-bypass_cmd(+1, 30, 60, 0.7)  <span class="c"># помягче (30°), помедленнее, побольше радиус</span></pre>
+<pre class="alg-code">robot.bypass()      <span class="c"># объезд справа (по умолчанию)</span>
+robot.bypass(-1)    <span class="c"># объезд слева</span></pre>
+
+  <p class="note">
+    <code>bypass</code> — «слепой» манёвр фиксированной формы: он не
+    смотрит, где именно препятствие, и не строит маршрут. Для обхода
+    <em>известных опасных зон</em> нужен <a href="#a-autopilot">автопилот</a>
+    — он планирует путь A* и реально огибает зоны.
+  </p>
 </section>
 
 
@@ -1186,8 +947,8 @@ bypass_cmd(+1, 30, 60, 0.7)  <span class="c"># помягче (30°), помед
 <section class="card alg-card">
   <h2 class="card__title">5. Навигация по координатам</h2>
 
-  <!-- ── goto_cmd ─────────────────────────────────────────────────────── -->
-  <h3 id="a-goto">5.1. goto_cmd(x, y) — перейти в точку</h3>
+  <!-- ── goto ─────────────────────────────────────────────────────────── -->
+  <h3 id="a-goto">5.1. robot.goto(x, y) — перейти в точку</h3>
 
   <div class="alg-grid">
     <figure class="alg-svg">
@@ -1200,479 +961,295 @@ bypass_cmd(+1, 30, 60, 0.7)  <span class="c"># помягче (30°), помед
         <circle cx="220" cy="40" r="6" class="svg-bot" opacity="0.5"/>
         <text x="222" y="58" class="svg-text-sm">(x, y)</text>
         <line x1="60" y1="140" x2="220" y2="40" stroke="#d2a8ff" stroke-width="1" stroke-dasharray="3 3"/>
-        <text x="120" y="80"  class="svg-text-sm">bearing = atan2(Δx, Δy)</text>
+        <text x="110" y="80"  class="svg-text-sm">bearing = atan2(Δx, Δy)</text>
       </svg>
-      <figcaption>Bearing относительно курса → K-turn → прямая</figcaption>
+      <figcaption>Курс на цель → поворот → прямая</figcaption>
     </figure>
     <div>
       <h4>Алгоритм</h4>
-      <ol>
-        <li>Считаем целевой курс: <code>bearing = atan2(x−x₀, y−y₀)</code>
-            (атан2 от Δx и Δy, потому что 0° = север = +y).</li>
-        <li>Невязку <code>diff = bearing − heading</code> приводим к
-            интервалу [−180; +180].</li>
-        <li>Shortcut: если |diff| ≤ 30° — едем сразу вперёд через
-            <code>drive_loop</code>.</li>
-        <li>Если |diff| ≥ 150° — едем задом (мощность отрицательная,
-            та же closed-loop с зеркальным bearing).</li>
-        <li>Иначе — выполняем <code>face_cmd(bearing)</code>
-            и потом прямой проезд через
-            <code>drive_loop</code>.</li>
-      </ol>
-      <p><strong>Closed-loop коррекция курса.</strong> Вместо одного
-      «слепого» проезда (open-loop) робот едет короткими шагами
-      (≈ 100 мс). На каждом шаге читает гироскоп, считает <em>текущую</em>
-      невязку курса до цели и подруливает. Если робота сбило (зацепился
-      при развороте, гироскоп дрейфанул, кто-то толкнул) — на следующем
-      такте курс будет автоматически скорректирован, и робот всё равно
-      доедет до цели.</p>
-      <p><strong>Оптимизация на этапе генерации кода.</strong> В момент
-      добавления команды кодогенератор смотрит на ТЕКУЩИЕ позицию и курс
-      робота (важно: до фактического выполнения команды) и выбирает один
-      из четырёх режимов:</p>
+      <p><code>robot.goto(x, y)</code> ведёт робота прямо в точку.
+      Сначала считается направление на цель и знаковая невязка с
+      текущим курсом:</p>
+      <div class="formula">
+        bearing = atan2(x − robot.x, y − robot.y)
+        <br>diff = ((bearing − heading + 540) mod 360) − 180
+      </div>
+      <p>Дальше — три случая:</p>
       <ul>
-        <li><strong>skip</strong> — distance &lt; 5 см. Робот уже в цели.
-            В код пишется <code># уже в точке (x, y)</code>.</li>
-        <li><strong>forward</strong> — bearing к цели в пределах ±5° от текущего курса.
-            В код пишется простой <code>robot.move(+speed, ...)</code> без вызова
-            <code>goto_cmd</code> и его зависимостей. Helper из преамбулы — только
-            <code>duration</code>.</li>
-        <li><strong>backward</strong> — bearing противоположен курсу (180°±5°).
-            То же самое, но с минусовой мощностью — едем задом без разворота.</li>
-        <li><strong>goto</strong> — произвольное направление. В код пишется
-            полный <code>goto_cmd(x, y)</code>, преамбула тянет всю инфраструктуру:
-            <code>Odometry</code>, <code>face_cmd</code>,
-            <code>drive_loop</code>, <code>goto_cmd</code>.</li>
+        <li><strong>|diff| &lt; 30°</strong> — цель почти перед носом:
+            едем сразу вперёд, без разворота.</li>
+        <li><strong>|diff| &gt; 150°</strong> — цель почти за спиной:
+            едем задом, без разворота.</li>
+        <li><strong>иначе</strong> — разворот через
+            <a href="#a-router">авто-роутер</a>, потом прямая.</li>
       </ul>
-      <p>Это и читать проще, и выполняется быстрее, и преамбула получается
-      минимальная: для типового сценария «вперёд 100 → юг → ещё вперёд» в коде
-      будет пара <code>robot.move(...)</code> вместо нескольких сотен строк
-      def-блоков.</p>
-      <div class="formula">
-        bearing = atan2(target_x − x, target_y − y)
-        <br>diff = (bearing − heading + 540) mod 360 − 180
-        <br>steer = clip(<em>kp</em> × diff, ±DEFAULT_TURN_ANGLE), &nbsp; <em>kp</em> = 0.7
-      </div>
+      <p><strong>Заход прямой, не обходной.</strong> Если на пути
+      опасная зона — <code>goto</code> не строит обход (это задача
+      <a href="#a-autopilot">автопилота</a>); робот едет прямо и
+      затормозит перед зоной, а команда укоротится.</p>
     </div>
   </div>
 
-  <h4>Параметры</h4>
-  <ul class="params-list">
-    <li><code>target_x</code>, <code>target_y</code> — координаты цели (числа в системе мира).</li>
-    <li><code>power_pct</code> — мощность мотора (по умолчанию <code>DEFAULT_SPEED</code>).</li>
-    <li><code>tolerance_cm</code> — допустимая ошибка по расстоянию, см (по умолчанию 5 см).</li>
-  </ul>
+  <h4>Что под капотом — повторные попытки</h4>
+  <p>После многошагового разворота робот мог сместиться (роутер отъезжал
+  назад), и курс на цель «уплыл». <code>goto</code> с этим борется:
+  пересчитывает курс от <em>фактической</em> позиции и доворачивает
+  остаток. Если робот всё же не дошёл (упёрся в стену/зону) — отъезжает
+  на 30 см и пробует снова, до 3 попыток.</p>
+<pre class="alg-code"><span class="k">def</span> run_goto_direct(target_x, target_y):        <span class="c"># прямой заход в точку (target_x, target_y)</span>
+    <span class="k">for</span> attempt <span class="k">in</span> range(1, 4):                  <span class="c"># до 3 попыток</span>
+        dx, dy = target_x - robot.x, target_y - robot.y   <span class="c"># вектор от робота к цели</span>
+        distance = hypot(dx, dy)                   <span class="c"># расстояние до цели</span>
+        <span class="k">if</span> distance &lt; 5: <span class="k">return</span>                    <span class="c"># дошли (допуск 5 см)</span>
+        target_heading = degrees(atan2(dx, dy)) % 360     <span class="c"># нужный курс на цель</span>
+        bearing = (target_heading - heading + 540) % 360 - 180  <span class="c"># невязка курса [-180..180]</span>
 
-<pre class="alg-code"><span class="c"># Closed-loop проезд: едем короткими шагами и подруливаем по гироскопу.</span>
-<span class="c"># Если робота сбило (зацепился, толкнули, дрейф) — на следующем такте</span>
-<span class="c"># курс будет скорректирован, и робот всё равно доедет до цели.</span>
-<span class="k">def</span> drive_loop(target_x, target_y, power_pct, tolerance_cm,
-                               step_sec=0.1, kp=0.7):
-    sign = 1 <span class="k">if</span> power_pct >= 0 <span class="k">else</span> -1                     <span class="c"># знак: вперёд / назад</span>
-    robot.move(power_pct)                                         <span class="c"># мотор без duration — крутим до явного stop</span>
-    <span class="k">while</span> True:                                               <span class="c"># шагаем по step_sec секунд (по умолчанию 100 мс)</span>
-        odo.sync_heading()                                        <span class="c"># каждый такт — реальный курс с гироскопа</span>
-        dx = target_x - odo.x; dy = target_y - odo.y              <span class="c"># вектор от робота к цели</span>
-        dist = math.hypot(dx, dy)                                 <span class="c"># текущая дистанция до цели</span>
-        <span class="k">if</span> dist < tolerance_cm:                               <span class="c"># дошли — выходим из цикла</span>
-            <span class="k">break</span>
-        bearing = math.degrees(math.atan2(dx, dy)) % 360.0        <span class="c"># куда сейчас «смотрит» цель</span>
-        <span class="k">if</span> sign < 0:                                          <span class="c"># задним ходом — целимся «зеркально»</span>
-            bearing = (bearing + 180.0) % 360.0
-        diff = (bearing - odo.heading + 540.0) % 360.0 - 180.0    <span class="c"># знаковая невязка курса</span>
-        steer = max(-DEFAULT_TURN_ANGLE, min(DEFAULT_TURN_ANGLE, diff * kp))  <span class="c"># P-регулятор</span>
-        robot.set_angle(int(steer))                               <span class="c"># подать руль на расчётный угол</span>
-        odo.move_step(power_pct, step_sec, steer)                 <span class="c"># учесть прошедшие 100 мс в одометрии</span>
-        time.sleep(step_sec)                                      <span class="c"># подождать следующего такта</span>
-    robot.stop()                                                  <span class="c"># финальная остановка</span>
-    robot.set_servo_center()                                      <span class="c"># вернуть руль в нейтраль</span>
+        <span class="k">if</span> abs(bearing) &lt; 30:                      <span class="c"># цель прямо — едем вперёд</span>
+            run_forward(distance)                  <span class="c"># прямой проезд без разворота</span>
+        <span class="k">elif</span> abs(bearing) &gt; 150:                    <span class="c"># цель за спиной — едем задом</span>
+            run_back(distance)                     <span class="c"># задний ход без разворота</span>
+        <span class="k">else</span>:                                      <span class="c"># общий случай — нужен разворот</span>
+            run_face_cardinal(target_heading)          <span class="c"># разворот через авто-роутер</span>
+            re_aim_if_drifted(target_x, target_y)      <span class="c"># доворот от фактической позиции</span>
+            run_forward(hypot(target_x-robot.x, target_y-robot.y))  <span class="c"># прямая до цели</span>
 
-
-<span class="k">def</span> goto_cmd(target_x, target_y, power_pct=DEFAULT_SPEED, tolerance_cm=5):
-    odo.sync_heading()                                            <span class="c"># обновить курс из гироскопа</span>
-    dx = target_x - odo.x                                         <span class="c"># смещение по X (см)</span>
-    dy = target_y - odo.y                                         <span class="c"># смещение по Y (см)</span>
-    distance = math.hypot(dx, dy)                                 <span class="c"># √(Δx² + Δy²) — длина прямой</span>
-    <span class="k">if</span> distance < tolerance_cm:                               <span class="c"># уже на месте — выходим</span>
-        <span class="k">return</span>
-    target_heading = math.degrees(math.atan2(dx, dy)) % 360.0     <span class="c"># целевой курс</span>
-    bearing = ((target_heading - odo.heading + 540) % 360) - 180  <span class="c"># знаковая невязка курса</span>
-
-    <span class="k">if</span> abs(bearing) < 30:                                     <span class="c"># Цель почти прямо</span>
-        <span class="c"># Едем сразу с коррекцией курса по гироскопу.</span>
-        drive_loop(target_x, target_y, power_pct, tolerance_cm)
-    <span class="k">elif</span> abs(bearing) > 150:                                  <span class="c"># Цель почти позади</span>
-        <span class="c"># Едем задом с коррекцией курса (closed-loop сам зеркалит bearing).</span>
-        drive_loop(target_x, target_y, -power_pct, tolerance_cm)
-    <span class="k">else</span>:                                                     <span class="c"># Общий случай</span>
-        <span class="c"># Сначала разворот на месте, потом проезд с коррекцией.</span>
-        face_cmd(target_heading)                         <span class="c"># встать лицом к цели через K-turn</span>
-        odo.sync_heading()                                        <span class="c"># перечитать курс после поворота</span>
-        drive_loop(target_x, target_y, power_pct, tolerance_cm)
-
-
-<span class="k">def</span> home_cmd():
-    goto_cmd(START_X, START_Y)                                    <span class="c"># возврат в стартовую точку (домой)</span></pre>
+        <span class="k">if</span> reached(target_x, target_y): <span class="k">return</span>     <span class="c"># цель достигнута — выходим</span>
+        <span class="k">if</span> attempt &lt; 3: run_back(30)               <span class="c"># не дошли — отъезд и новая попытка</span></pre>
 
   <h4 class="example-title">Пример вызова</h4>
-<pre class="alg-code">goto_cmd(100, 0)         <span class="c"># перейти в точку (100, 0)</span>
-goto_cmd(150, 200, 60)   <span class="c"># перейти в (150, 200) на скорости 60%</span>
-home_cmd()               <span class="c"># вернуться в стартовую точку</span></pre>
+<pre class="alg-code">robot.goto(100, 0)      <span class="c"># перейти в точку (100, 0)</span>
+robot.goto(150, 200)    <span class="c"># перейти в точку (150, 200)</span></pre>
 
 
-  <!-- ── follow_path_cmd ─────────────────────────────────────────────── -->
-  <h3 id="a-pp">5.2. follow_path_cmd(points) — Pure-pursuit за waypoint'ами</h3>
+  <!-- ── home ─────────────────────────────────────────────────────────── -->
+  <h3 id="a-home">5.2. robot.home() — вернуться в стартовую точку</h3>
 
-  <div class="alg-grid">
-    <figure class="alg-svg">
-      <svg viewBox="0 0 280 180">
-        <path d="M 30 150 C 60 100 150 60 250 60" class="svg-line3"/>
-        <circle cx="30"  cy="150" r="3" class="svg-bot" opacity="0.7"/>
-        <circle cx="80"  cy="120" r="3" class="svg-bot" opacity="0.7"/>
-        <circle cx="130" cy="100" r="3" class="svg-bot" opacity="0.7"/>
-        <circle cx="180" cy="80"  r="3" class="svg-bot" opacity="0.7"/>
-        <circle cx="230" cy="65"  r="3" class="svg-bot" opacity="0.7"/>
-        <circle cx="80"  cy="120" r="6" class="svg-bot"/>
-        <text x="50"  y="138" class="svg-text-sm">я</text>
-        <circle cx="180" cy="80"  r="8" stroke="#f0883e" fill="none" stroke-dasharray="2 2"/>
-        <text x="190" y="76"   class="svg-text-sm">target ≈ lookahead</text>
-      </svg>
-      <figcaption>Каждые 100 мс цель обновляется впереди по пути</figcaption>
-    </figure>
-    <div>
-      <h4>Алгоритм Pure-pursuit</h4>
-      <ol>
-        <li>На каждом такте найти ближайшую точку пути.</li>
-        <li>От нее пройти вперед по пути, пока накопленная длина не
-            превысит <code>lookahead_cm</code> (горизонт планирования).</li>
-        <li>Считать bearing на эту «целевую» точку и подать в руль:
-            <code>steer = clip(0.7 × diff)</code>.</li>
-        <li>Повторять с шагом 100 мс, пока не дошли до конца пути.</li>
-      </ol>
-      <div class="formula">
-        bearing = atan2(tx − x, ty − y) ; &nbsp;&nbsp; steer = clip(0.7 × (bearing − heading))
-      </div>
-      <p>Используется в режиме осторожности после построения пути A*
-      с обходом опасных зон.</p>
-    </div>
-  </div>
-
-  <h4>Параметры</h4>
-  <ul class="params-list">
-    <li><code>points</code> — список <code>[(x1,y1), (x2,y2), ...]</code> точек пути в см.</li>
-    <li><code>power_pct</code> — мощность мотора.</li>
-    <li><code>lookahead_cm</code> — горизонт планирования в см. <code>None</code> = автовычисление (≈ 1.5 длины робота).</li>
-    <li><code>tolerance_cm</code> — допустимая ошибка достижения конца (5 см).</li>
-  </ul>
-
-<pre class="alg-code"><span class="k">def</span> follow_path_cmd(points, power_pct=DEFAULT_SPEED, lookahead_cm=None, tolerance_cm=5):
-    <span class="k">if</span> <span class="k">not</span> points <span class="k">or</span> len(points) < 2:                                <span class="c"># нужен хотя бы 1 сегмент пути</span>
-        <span class="k">return</span>                                                         <span class="c"># пустой путь — сразу выходим</span>
-    <span class="k">if</span> lookahead_cm <span class="k">is</span> None:                                       <span class="c"># параметр не передан — авторасчёт</span>
-        lookahead_cm = max(30.0, ROBOT_LENGTH_CM * 1.5)                  <span class="c"># дефолт ≈ 1.5 длины робота</span>
-    gx, gy = points[-1]                                                  <span class="c"># финальная точка пути (для условия выхода)</span>
-    last_idx = 0                                                         <span class="c"># индекс последней «ближайшей» точки</span>
-    robot.set_angle(0)                                                   <span class="c"># руль прямо — стартовое положение</span>
-    robot.move(power_pct)                                                <span class="c"># едем без duration — крутим до конца</span>
-    <span class="k">while</span> True:                                                       <span class="c"># основной цикл pure-pursuit (100 мс/такт)</span>
-        odo.sync_heading()                                               <span class="c"># держим курс актуальным с гироскопа</span>
-        <span class="k">if</span> math.hypot(gx - odo.x, gy - odo.y) < tolerance_cm:           <span class="c"># дошли до финала?</span>
-            <span class="k">break</span>                                                       <span class="c"># да — выходим из цикла</span>
-        <span class="c"># 1) Ближайшая точка пути от last_idx (никогда не «откатываемся»).</span>
-        best_i, best_d2 = last_idx, float(<span class="s">'inf'</span>)                     <span class="c"># лучший индекс и квадрат расстояния</span>
-        <span class="k">for</span> i <span class="k">in</span> range(last_idx, len(points)):                       <span class="c"># перебираем точки начиная с прошлой ближайшей</span>
-            d2 = (points[i][0] - odo.x)**2 + (points[i][1] - odo.y)**2   <span class="c"># квадрат дистанции (без sqrt — быстрее)</span>
-            <span class="k">if</span> d2 < best_d2:                                            <span class="c"># нашли точку ближе</span>
-                best_d2, best_i = d2, i                                  <span class="c"># обновляем «лучшую»</span>
-            <span class="k">elif</span> d2 > best_d2 + 100:                                    <span class="c"># точки начали отдаляться</span>
-                <span class="k">break</span>                                                   <span class="c"># дальше нет смысла искать — выходим</span>
-        last_idx = best_i                                                <span class="c"># запомнить — со следующего такта стартуем отсюда</span>
-        <span class="c"># 2) Цель = точка впереди на lookahead_cm по длине пути.</span>
-        target_i, accum = best_i, 0.0                                    <span class="c"># индекс цели и накопленная длина</span>
-        <span class="k">for</span> i <span class="k">in</span> range(best_i, len(points) - 1):                     <span class="c"># шагаем вперёд по сегментам</span>
-            accum += math.hypot(points[i+1][0] - points[i][0],           <span class="c"># длина сегмента (Pythagoras)</span>
-                                points[i+1][1] - points[i][1])
-            <span class="k">if</span> accum >= lookahead_cm:                                   <span class="c"># перешли горизонт планирования</span>
-                target_i = i + 1                                         <span class="c"># берём следующую точку как цель</span>
-                <span class="k">break</span>
-        <span class="k">else</span>:
-            target_i = len(points) - 1                                   <span class="c"># дошли до конца — целимся в финал</span>
-        tx, ty = points[target_i]                                        <span class="c"># координаты цели на этом такте</span>
-        <span class="c"># 3) Bearing на цель и руль с насыщением (P-регулятор × 0.7).</span>
-        bearing = math.degrees(math.atan2(tx - odo.x, ty - odo.y))       <span class="c"># направление на цель в градусах</span>
-        diff    = ((bearing - odo.heading + 540) % 360) - 180            <span class="c"># знаковая невязка [-180..+180]</span>
-        steer   = max(-DEFAULT_TURN_ANGLE, min(DEFAULT_TURN_ANGLE, diff * 0.7))  <span class="c"># P-регулятор с насыщением</span>
-        robot.set_angle(int(steer))                                      <span class="c"># подать руль на расчётный угол</span>
-        odo.move_step(power_pct, 0.1, steer)                             <span class="c"># обновить (x, y) за прошедшие 100 мс</span>
-        time.sleep(0.1)                                                  <span class="c"># 100 мс шаг управления</span>
-    robot.stop()                                                         <span class="c"># финальная остановка мотора</span>
-    robot.set_servo_center()                                             <span class="c"># вернуть руль в нейтраль</span></pre>
+  <p><code>robot.home()</code> — это <a href="#a-goto">goto</a> с
+  координатами старта из настроек (<code>START_X</code>,
+  <code>START_Y</code>). Перед стартом руль центрируется, чтобы
+  оставшийся с прошлой команды угол не увёл прямую фазу в дугу.</p>
 
   <h4 class="example-title">Пример вызова</h4>
-<pre class="alg-code">path = [(0, 0), (50, 50), (100, 50), (150, 100), (200, 200)]
-follow_path_cmd(path)                  <span class="c"># следовать за waypoint'ами на DEFAULT_SPEED</span>
-follow_path_cmd(path, 60, 25)          <span class="c"># помедленнее (60%), горизонт 25 см (точнее реакция)</span></pre>
+<pre class="alg-code">robot.home()    <span class="c"># вернуться в стартовую точку (START_X, START_Y)</span></pre>
 </section>
 
 
 <!-- ════════════════════════════════════════════════════════════════════
-     6. ЗОНЫ И ОБСТАНОВКА
+     6. АВТОПИЛОТ
      ════════════════════════════════════════════════════════════════════ -->
 <section class="card alg-card">
-  <h2 class="card__title">6. Зоны обстановки</h2>
+  <h2 class="card__title">6. Автопилот — маршрут в обход препятствий</h2>
 
-  <h3 id="a-zones">6.1. Опасные зоны и зоны внимания</h3>
+  <p>
+    <code>robot.autopilot(x, y)</code> — команда-помощник: в отличие от
+    <a href="#a-goto">goto</a>, она <strong>строит маршрут в обход</strong>
+    опасных зон и стен. Автопилот — <em>не режим</em>: достигнув цели, он
+    выключается. Объезжаются те типы зон, что отмечены в
+    <a href="#a-obstacles">«Препятствиях»</a>.
+  </p>
 
   <div class="alg-grid">
     <figure class="alg-svg">
       <svg viewBox="0 0 280 180">
-        <!-- Оси -->
+        <circle cx="120" cy="70" r="26" class="svg-zone-danger"/>
+        <text x="120" y="76" text-anchor="middle" class="svg-zone-num-danger">1</text>
+        <circle cx="195" cy="120" r="22" class="svg-zone-danger"/>
+        <text x="195" y="126" text-anchor="middle" class="svg-zone-num-danger">2</text>
+        <!-- ломаная A*: коридор между зонами, дуги их не касаются -->
+        <path d="M 40 150 L 95 135 L 160 95 L 240 50" class="svg-line"
+              stroke-dasharray="5 3"/>
+        <circle cx="95" cy="135" r="3.5" fill="#58a6ff"/>
+        <circle cx="160" cy="95" r="3.5" fill="#58a6ff"/>
+        <!-- сглаженная кривая: тот же коридор, скруглённый Чайкином -->
+        <path d="M 40 150 Q 95 140 160 100 Q 210 75 240 50" class="svg-line3"/>
+        <circle cx="40" cy="150" r="6" class="svg-bot"/>
+        <text x="46" y="166" class="svg-text-sm">старт</text>
+        <circle cx="240" cy="50" r="5" fill="#3fb950"/>
+        <text x="208" y="44" class="svg-text-sm">цель</text>
+        <text x="150" y="150" class="svg-text-sm" fill="#58a6ff">— ломаная A*</text>
+        <text x="150" y="163" class="svg-text-sm" fill="#d2a8ff">— сглаженная</text>
+      </svg>
+      <figcaption>A* строит ломаную; «сглаженный» режим скругляет её кривой Чайкина</figcaption>
+    </figure>
+    <div>
+      <h4>Шаг 1 — планировщик A*</h4>
+      <p>Модуль <code>path_planner</code> ищет путь по сетке между
+      <em>раздутыми</em> препятствиями: каждая зона и стена расширяется
+      на половину габарита робота плюс запас «толщина стены», чтобы
+      корпус гарантированно не задел край. Результат — ломаная из
+      опорных точек, visibility-сглаженная (лишние коллинеарные точки
+      убраны).</p>
+      <p>Если прохода нет (цель окружена зонами) — автопилот честно
+      сообщает «маршрут не найден» и не двигается.</p>
+      <h4>Шаг 2 — как ехать по маршруту</h4>
+      <p>Выбирается настройкой <strong>«Алгоритм автопилота»</strong> —
+      ломаная или сглаженная.</p>
+    </div>
+  </div>
+
+  <h3>6.1. Ломаная траектория (polyline)</h3>
+  <p>Робот идёт от вершины к вершине ломаной A* <strong>замкнутым
+  контуром</strong>: курс и остаток до каждой точки пересчитываются от
+  <em>фактической</em> позиции, ошибка не накапливается. В каждой
+  вершине — поворот через <a href="#a-router">авто-роутер</a>
+  (<code>face</code>), затем прямой <code>forward</code>. Каждый
+  пройденный участок дописывается в код программы — обучающийся видит,
+  как маршрут превращается в команды.</p>
+<pre class="alg-code"><span class="k">def</span> autopilot_drive(waypoints):                  <span class="c"># вести робота по вершинам ломаной A*</span>
+    <span class="k">for</span> (wx, wy) <span class="k">in</span> waypoints[1:]:               <span class="c"># каждая вершина ломаной</span>
+        dx, dy = wx - robot.x, wy - robot.y           <span class="c"># вектор от ТЕКУЩЕЙ позиции</span>
+        heading = degrees(atan2(dx, dy)) % 360        <span class="c"># курс на вершину</span>
+        emit(<span class="s">f"robot.face({heading:.0f})"</span>)            <span class="c"># дописать строку поворота в код</span>
+        run_face_cardinal(heading)                    <span class="c"># повернуться к точке</span>
+        dx, dy = wx - robot.x, wy - robot.y           <span class="c"># остаток ПЕРЕСЧИТЫВАЕМ после поворота</span>
+        dist = round(hypot(dx, dy))                   <span class="c"># расстояние до вершины</span>
+        emit(<span class="s">f"robot.forward({dist})"</span>)               <span class="c"># дописать строку прямой в код</span>
+        run_forward(dist)                             <span class="c"># проехать прямой до вершины</span></pre>
+
+  <h3>6.2. Сглаженная траектория (smooth)</h3>
+  <p>Ломаная A* сглаживается кривой <strong>Чайкина</strong> (2 итерации)
+  и очищается от заезда в раздутые зоны — точки, которые скругление
+  завело внутрь зоны, выталкиваются радиально на безопасную границу.
+  По кривой робот едет одной <strong>непрерывной дугой</strong> без
+  остановок и поворотов на месте — методом <em>чистого преследования</em>
+  (pure pursuit): каждый тик он подруливает к точке на <code>LOOKAHEAD</code>
+  см впереди по кривой.</p>
+<pre class="alg-code"><span class="k">def</span> follow_curve_smooth(route):                   <span class="c"># непрерывный плавный проезд по кривой</span>
+    pts = chaikin_smooth(route)                       <span class="c"># сгладить + вытолкнуть из зон</span>
+    move(speed)                                       <span class="c"># включить мотор — едем непрерывно</span>
+    <span class="k">while</span> not_at_end(pts):                          <span class="c"># пока не доехали до конца кривой</span>
+        i  = nearest_point(pts, robot)                <span class="c"># ближайшая точка кривой</span>
+        lx, ly = point_ahead(pts, i, LOOKAHEAD)       <span class="c"># точка на LOOKAHEAD см впереди</span>
+        err   = bearing(lx, ly) - heading             <span class="c"># невязка курса на неё</span>
+        steer = clip(err * GAIN, ±MAX_STEER)          <span class="c"># П-регулятор по углу руля</span>
+        set_angle(steer)                              <span class="c"># подруливаем — и едем дальше</span></pre>
+  <p>В сглаженном режиме в код пишется одна строка
+  <code>robot.curve([(x, y), …])</code> — повторный ▶ воспроизводит ту
+  же плавную дугу. Ломаный режим пишет серию строк
+  <code>robot.face(...)</code> / <code>robot.forward(...)</code>.</p>
+
+  <h4 class="example-title">Пример вызова</h4>
+<pre class="alg-code">robot.autopilot(200, 150)        <span class="c"># доехать до (200, 150) в обход зон</span>
+<span class="c"># Алгоритм (ломаная / сглаженная) — в настройках «Алгоритм автопилота».</span>
+
+robot.curve([(0,0), (50,40), (120,60), (200,150)])  <span class="c"># проехать по готовой кривой</span></pre>
+</section>
+
+
+<!-- ════════════════════════════════════════════════════════════════════
+     7. ПРЕПЯТСТВИЯ И ЗАЩИТА
+     ════════════════════════════════════════════════════════════════════ -->
+<section class="card alg-card">
+  <h2 class="card__title">7. Препятствия и защита</h2>
+
+  <h3 id="a-zones">7.1. Опасные зоны и зоны внимания</h3>
+
+  <div class="alg-grid">
+    <figure class="alg-svg">
+      <svg viewBox="0 0 280 180">
         <line x1="20" y1="160" x2="260" y2="160" class="svg-grid"/>
         <line x1="20" y1="160" x2="20"  y2="20"  class="svg-grid"/>
-
-        <!-- Опасная зона (kind=danger). В canvas рисуется так же:
-             тонкий пунктир (4 3) + 10% красная заливка + цифра-номер в центре. -->
         <circle cx="120" cy="85" r="35" class="svg-zone-danger"/>
         <text x="120" y="92" text-anchor="middle" class="svg-zone-num-danger">1</text>
         <text x="120" y="135" text-anchor="middle" class="svg-text-sm" fill="#f85149">
           Опасная зона
         </text>
-
-        <!-- Зона внимания (kind=algorithm). Те же стили, отличается только цвет. -->
         <circle cx="225" cy="95" r="22" class="svg-zone-attention"/>
         <text x="225" y="100" text-anchor="middle" class="svg-zone-num-attention">1</text>
         <text x="225" y="130" text-anchor="middle" class="svg-text-sm" fill="#ffd700">
           Зона внимания
         </text>
-
-        <!-- Робот -->
         <circle cx="45" cy="140" r="7" class="svg-bot"/>
       </svg>
-      <figcaption>Обе зоны имеют одинаковый стиль — тонкий пунктир (4 3) + 10% заливка + номер. Отличаются ТОЛЬКО цветом: красный = опасная зона (обстановка), жёлтый = зона внимания (алгоритм).</figcaption>
+      <figcaption>Обе зоны рисуются одинаково — отличаются только цветом</figcaption>
     </figure>
     <div>
-      <h4>Различие</h4>
+      <h4>Два вида зон</h4>
       <ul>
-        <li><strong>Опасная зона — «обстановка»</strong> (kind=danger).
-            Известное заранее препятствие. Расставляется ДО запуска
-            программы (мышью в режиме «⛯ Режим зон» или генератором задания).
-            Попадает в код программы как первые команды
-            <code>mark_danger_cmd(...)</code>, до основного алгоритма.
-            Влияет на планировщик A* и режим «осторожно».</li>
-        <li><strong>Зона внимания — «алгоритм»</strong> (kind=algorithm).
-            Создаётся ВО ВРЕМЯ движения по условию (планируется: повышенная
-            радиация, температура и т.п.) — алгоритм помечает зоны для
-            дальнейшего исследования. Ставится ТОЛЬКО когда робот находится
-            в этой координате (через <code>attention_zone_cmd</code> —
-            робот доезжает в точку). Мышью НЕ ставятся.</li>
+        <li><strong>⛔ Опасная зона</strong> (красная) — известное заранее
+            препятствие. Расставляется ДО запуска программы: мышью в
+            режиме <strong>«Обстановка»</strong> или генератором задания.
+            В коде программы — первыми строками, до основного алгоритма.</li>
+        <li><strong>⚠ Зона внимания</strong> (жёлтая) — помечается
+            <em>во время</em> движения, по условию из алгоритма (например,
+            «здесь повышенная радиация»). Ставится только там, где робот
+            сейчас находится; мышью не рисуется.</li>
       </ul>
-
       <h4 style="margin-top:0.7rem">Удаление зон</h4>
-      <p>Есть <strong>два разных пути</strong> с разной семантикой:</p>
       <ul>
-        <li><strong>UI: «⛯ Режим зон» + ПКМ</strong> — удаляет ТОЛЬКО опасные
-            зоны под курсором. Зоны внимания мышью не задеваются
-            (они не пользовательские). Положение робота не проверяется —
-            это pre-flight чистка карты. <strong>Не записывается в Python-код</strong>
-            программы.</li>
-        <li><strong>Программно</strong>: <code>remove_zone_cmd(x, y)</code> или
-            <code>clear_here_cmd()</code> — может убрать любой тип
-            (опасную или зону внимания), но <strong>ТРЕБУЕТ чтобы робот
-            находился внутри зоны</strong>. Это runtime-сценарий из алгоритма (например,
-            «зона внимания больше не актуальна, робот в ней — снимаем»). Если
-            робота в зоне нет — отказ с предупреждением.</li>
-        <li><strong>Взаимное гашение опасных зон.</strong> Если в одной
-            сессии пользователь поставил опасную зону мышью и тут же её
-            удалил (ПКМ внутри её круга) — обе команды
-            (<code>mark_danger_cmd</code> на постановку и mouse-action
-            на удаление) исчезают из программы, как будто их не было.
-            Упрощает чистку при подготовке карты мышью.
-            <strong>Зоны внимания так не гасятся</strong> — их история ставится
-            алгоритмом и важна для понимания работы программы.</li>
+        <li><strong>Мышью</strong> (ПКМ в режиме «Обстановка») — убирает
+            опасную зону под курсором. Это pre-flight чистка карты,
+            в Python-код не пишется.</li>
+        <li><strong>Программно</strong> — <code>robot.remove_zone(x, y)</code>
+            или <code>robot.remove_zone_here()</code> — снимает зону
+            любого типа, но требует, чтобы робот был внутри неё.</li>
       </ul>
     </div>
   </div>
-
-  <h4>Параметры</h4>
-  <ul class="params-list">
-    <li><code>x</code>, <code>y</code> — координаты центра зоны.</li>
-    <li><code>radius</code> — радиус зоны в см.</li>
-  </ul>
-
-<pre class="alg-code"><span class="c"># 1. Отметить опасную зону по координатам — без движения робота.</span>
-<span class="k">def</span> mark_danger_cmd(x, y, radius):
-    pass                                  <span class="c"># на физическом роботе: отправить в карту обстановки</span>
-
-<span class="c"># 2. Отметить «здесь» — у 1T REX нет GPS, берём координаты из нашей одометрии.</span>
-<span class="k">def</span> danger_here_cmd():
-    odo.sync_heading()                    <span class="c"># обновить курс с гироскопа</span>
-    <span class="c"># карта.add_danger_zone(odo.x, odo.y, DANGER_RADIUS)</span>
-
-<span class="c"># 3. Алгоритмическая зона: доехать в точку и пометить.</span>
-<span class="k">def</span> attention_zone_cmd(target_x, target_y, radius):
-    goto_cmd(target_x, target_y)          <span class="c"># сначала добираемся до точки</span>
-    <span class="c"># после goto_cmd одометрия знает где робот</span>
-    <span class="c"># карта.add_algo_zone(odo.x, odo.y, radius)</span>
-
-<span class="c"># 4. Снять зону любого типа, в которую попадает точка.</span>
-<span class="k">def</span> remove_zone_cmd(x, y):
-    pass                                  <span class="c"># карта.remove_zone_at(x, y)</span></pre>
 
   <h4 class="example-title">Пример вызова</h4>
-<pre class="alg-code">mark_danger_cmd(100, 50, 30)         <span class="c"># опасная зона радиусом 30 см в точке (100, 50)</span>
-danger_here_cmd()               <span class="c"># отметить опасную зону под текущей позицией робота</span>
-attention_zone_cmd(200, 200, 40) <span class="c"># доехать в (200, 200) и пометить зону внимания 40 см</span>
-remove_zone_cmd(100, 50)             <span class="c"># снять зону, накрывающую (100, 50)</span></pre>
-</section>
+<pre class="alg-code">robot.attention_here(40)        <span class="c"># пометить зону внимания радиусом 40 под роботом</span>
+robot.attention_zone(200, 150)  <span class="c"># доехать в (200,150) и пометить зону внимания</span>
+robot.remove_zone_here()        <span class="c"># снять зону, в которой стоит робот</span></pre>
 
 
-<!-- ════════════════════════════════════════════════════════════════════
-     7. РЕЖИМ ОСТОРОЖНОСТИ
-     ════════════════════════════════════════════════════════════════════ -->
-<section class="card alg-card">
-  <h2 class="card__title">7. Режим «Осторожно» — поведение перед препятствием</h2>
+  <h3 id="a-obstacles">7.2. Галочки «Препятствия» — на что робот реагирует</h3>
 
   <p>
-    В Осторожно команда <code>robot.goto(x, y)</code> (и
-    <code>robot.home()</code>) задействует <strong>планировщик A*</strong>,
-    если прямая от текущей позиции к цели пересекает опасную зону.
-    Алгоритм поведения выбирается в <a href="/settings">настройках</a> →
-    «Алгоритм обхода». Сейчас доступны два:
-  </p>
-
-  <h3 id="a-cautious-linear">7.1. Линейный обход (Linear)</h3>
-
-  <div class="alg-grid">
-    <figure class="alg-svg">
-      <svg viewBox="0 0 280 180">
-        <!-- зоны -->
-        <circle cx="120" cy="60" r="22" class="svg-obs"/>
-        <circle cx="200" cy="110" r="22" class="svg-obs"/>
-        <!-- ломаная A* -->
-        <path d="M 40 150 L 80 100 L 160 70 L 240 140" class="svg-line" stroke-dasharray="4 3"/>
-        <!-- угловые точки -->
-        <circle cx="80" cy="100" r="4" fill="#a371f7"/>
-        <circle cx="160" cy="70" r="4" fill="#a371f7"/>
-        <!-- старт/цель -->
-        <circle cx="40" cy="150" r="6" class="svg-bot"/>
-        <text x="46" y="166" class="svg-text-sm">старт</text>
-        <circle cx="240" cy="140" r="5" fill="#3fb950"/>
-        <text x="220" y="160" class="svg-text-sm">цель</text>
-        <text x="78" y="92" class="svg-text-sm" fill="#a371f7">K-turn</text>
-      </svg>
-      <figcaption>A* строит ломаную, в каждом узле — поворот на месте.</figcaption>
-    </figure>
-    <div>
-      <h4>Идея</h4>
-      <ul>
-        <li>A* по сетке ищет проход между раздутыми (на корпус +
-            <code>safety_margin</code>) зонами и стенами.</li>
-        <li>Полученная ломаная visibility-сглажена: оставлены только
-            «существенные» угловые точки.</li>
-        <li>Робот едет вершина за вершиной: на каждой вершине —
-            <strong>поворот на месте (K-turn)</strong> к следующей точке,
-            затем <strong>прямой forward</strong> на расстояние до неё.</li>
-        <li>Без срезания углов и без Чайкин-сглаживания. Точно по
-            полилинии.</li>
-      </ul>
-      <p><strong>Плюс:</strong> предсказуемо, попадает в каждую вершину.
-      Удобно для обучения — обучающийся видит дискретные шаги.<br>
-      <strong>Минус:</strong> ×N дольше из-за разворотов на месте.</p>
-    </div>
-  </div>
-
-  <h4>Что под капотом</h4>
-<pre class="alg-code"><span class="c"># Упрощённый псевдокод того, что делает _follow_linear в session.py.</span>
-<span class="c"># Реальный код использует _k_turn_to_heading() и _run_forward() —</span>
-<span class="c"># это методы Python-фасада VEGAREX.</span>
-<span class="k">def</span> follow_linear(waypoints):
-    <span class="k">for</span> i <span class="k">in</span> range(1, len(waypoints)):                              <span class="c"># каждая вершина ломаной, кроме старта</span>
-        nx, ny = waypoints[i]                                             <span class="c"># следующая точка</span>
-        dx, dy = nx - robot.x, ny - robot.y                              <span class="c"># вектор от текущей позиции</span>
-        dist   = math.hypot(dx, dy)                                       <span class="c"># расстояние до неё</span>
-        <span class="k">if</span> dist < 2.0:                                                <span class="c"># уже на месте — пропускаем</span>
-            <span class="k">continue</span>
-        target_heading = math.degrees(math.atan2(dx, dy)) % 360            <span class="c"># нужный курс к точке</span>
-        diff = ((target_heading - robot.heading + 540) % 360) - 180        <span class="c"># разница курса со знаком</span>
-        <span class="k">if</span> abs(diff) > 3.0:                                           <span class="c"># нужен поворот?</span>
-            robot.face(target_heading)                                    <span class="c"># K-turn на месте к следующей вершине</span>
-        robot.forward(dist)                                               <span class="c"># прямой проезд до вершины</span></pre>
-
-
-  <h3 id="a-cautious-manual">7.2. Ручной режим (Manual)</h3>
-
-  <div class="alg-grid">
-    <figure class="alg-svg">
-      <svg viewBox="0 0 280 180">
-        <circle cx="140" cy="80" r="28" class="svg-obs"/>
-        <path d="M 40 140 L 240 140" class="svg-line" stroke-dasharray="3 3" opacity="0.4"/>
-        <line x1="40" y1="80" x2="100" y2="80" stroke="#f85149" stroke-width="2"/>
-        <line x1="40" y1="80" x2="100" y2="80" stroke-dasharray="2 2"/>
-        <text x="70" y="20" class="svg-text-sm" fill="#f85149">отказ</text>
-        <circle cx="40" cy="140" r="6" class="svg-bot"/>
-        <text x="20" y="160" class="svg-text-sm">старт</text>
-        <text x="220" y="160" class="svg-text-sm">цель</text>
-      </svg>
-      <figcaption>Путь пересекает зону → команда отклонена.</figcaption>
-    </figure>
-    <div>
-      <h4>Идея</h4>
-      <ul>
-        <li>Робот <strong>НЕ пытается</strong> обойти автоматически.</li>
-        <li>Если прямая команды (<code>robot.goto</code>) пересекает
-            опасную зону — команда <strong>не добавляется</strong> в код
-            и в журнал летит сообщение, что прямой путь блокирован.</li>
-        <li>Обучающийся сам решает: написать <code>robot.face(...)</code>,
-            проехать сбоку и потом снова <code>robot.goto(target)</code>.</li>
-      </ul>
-      <p><strong>Плюс:</strong> учит думать о пути и зонах.<br>
-      <strong>Минус:</strong> требует ручной декомпозиции — пишешь сам,
-      обходишь сам.</p>
-    </div>
-  </div>
-
-
-  <h3>7.3. Защитный стоп (для всех манёвров)</h3>
-
-  <p>
-    Независимо от выбранного алгоритма, в Осторожном режиме работает
-    <strong>защитный стоп физики</strong>: на каждом физическом тике
-    проверяется — не вошёл ли любой угол корпуса робота в зону
-    радиуса <code>z.radius + 5 см</code>. Если да — мотор глушится мгновенно,
-    в журнал — «⚠ Стоп — близко к опасной зоне #N».
-  </p>
-
-  <p class="note">
-    Это страховка от ошибок планирования и для манёвров без
-    встроенной проверки траектории (<code>robot.arc</code>,
-    <code>robot.bypass</code>, <code>robot.spiral</code>,
-    <code>robot.figure_eight</code>, K-turn внутри
-    <code>robot.face/turn_*</code>). Защитный стоп срабатывает ПОСЛЕ
-    касания буфера, не ДО — поэтому для предсказуемого обхода зон
-    нужен <code>robot.goto</code> с Linear-алгоритмом.
-  </p>
-
-
-  <h3>7.4. <code>forward</code> / <code>back</code> в Осторожно</h3>
-
-  <p>
-    Команды <code>robot.forward(N)</code> и <code>robot.back(N)</code> в
-    Осторожно проверяют, помещается ли запрошенная дистанция между
-    текущей позицией и ближайшей зоной (margin 20 см от края зоны):
+    Раньше было два режима — «Инспектор» и «Опасно». Теперь это набор
+    <strong>галочек «Препятствия»</strong>: на какие объекты робот
+    реагирует как на преграду.
   </p>
   <ul>
-    <li>Если <strong>помещается полностью</strong> — едем N см.</li>
-    <li>Если <strong>помещается частично</strong> — команда автоматически
-        <em>сокращается</em> до безопасной дистанции (в журнал:
-        «<em>forward(100) сокращена до forward(45)</em>»), едет на новую
-        длину. В коде программы сразу появляется уже исправленная версия.</li>
-    <li>Если <strong>не помещается вовсе</strong> (робот уже на margin) —
-        команда <strong>отменяется</strong>, в коде не появляется.</li>
+    <li><strong>Стены</strong> — всегда препятствие, это не галочка.</li>
+    <li><strong>⛔ Опасные зоны</strong> — галочка.</li>
+    <li><strong>⚠ Зоны внимания</strong> — галочка.</li>
   </ul>
+  <p>
+    Набор фиксируется в коде строкой-константой
+    <code>OBSTACLES = [...]</code> — <strong>код является источником
+    истины</strong>. Галочка в интерфейсе мгновенно переписывает эту
+    строку, и наоборот: правка строки в коде меняет галочки. Краткий
+    код режима в шапке — <code>W</code> (только стены),
+    <code>WD</code> (+ опасные зоны), <code>WDA</code> (+ и зоны внимания).
+  </p>
+
+  <h4>Что зоны-препятствия дают манёврам</h4>
+  <ul>
+    <li><strong>Тормозят как стены.</strong> Зона из набора
+        <code>OBSTACLES</code> для физики — такое же препятствие, как
+        стена: робот останавливается перед ней на отступе «толщина стены».</li>
+    <li><strong>Авто-сокращение forward / back.</strong> Если впереди
+        зона, команда <code>forward(N)</code> <em>заранее</em>
+        укорачивается до безопасной дистанции — в коде сразу появляется
+        исправленная длина (<code>forward(45)</code> вместо
+        <code>forward(100)</code>). Не приблизиться совсем — команда
+        отменяется и в код не попадает. <code>back(N)</code> — то же
+        в направлении кормы.</li>
+    <li><strong>Учёт в авто-роутере.</strong> Свободное место для
+        разворота (<a href="#a-router">§3.3</a>) считается с учётом
+        зон-препятствий, а не только стен.</li>
+    <li><strong>Обход автопилотом.</strong> A* в
+        <a href="#a-autopilot">автопилоте</a> огибает именно те типы
+        зон, что включены в «Препятствиях».</li>
+  </ul>
+
+  <h3>7.3. Защитный стоп физики</h3>
+  <p>
+    Поверх всех манёвров работает <strong>защитный стоп</strong>: на
+    каждом физическом тике проверяется, не вошёл ли корпус робота в
+    зону-препятствие. Если да — мотор глушится мгновенно, в журнал
+    идёт предупреждение. Это страховка для манёвров без встроенной
+    проверки траектории (<code>arc</code>, <code>bypass</code>,
+    <code>spiral</code>, <code>figure_eight</code>).
+  </p>
   <p class="note">
-    То есть <code>forward</code>/<code>back</code> в Осторожно сами
-    «доедают до зоны» — без вызова A*, без пауз и без manual handoff'а.
-    Чтобы реально обойти зону — нужен <code>robot.goto(x, y)</code>.
+    <strong>Исключение — разворот на месте.</strong> Пока поднят флаг
+    <code>turning_in_place</code> (K-turn, kturn), защитный стоп зон
+    <em>отключён</em>: иначе дуга разворота оборвалась бы на середине и
+    курс ушёл бы неверный. Поэтому развороты выполняются не вслепую, а
+    через <a href="#a-router">авто-роутер</a>, который заранее
+    проверяет, что развернуться есть где.
   </p>
 </section>
 

@@ -4,387 +4,149 @@
 
 {% block content %}
 <div class="page-header">
-  <h1>API 1T REX — система команд робота</h1>
+  <h1>API 1T REX — команды робота</h1>
   <p class="subtitle">
     <strong>Это настоящий Python.</strong> Программа в редакторе исполняется
-    как обычный Python-код через <code>exec()</code>. Доступны два уровня API:
-    <strong>высокоуровневый фасад VEGAREX</strong>
-    (<code>robot.forward</code>, <code>robot.goto</code>, <code>robot.arc</code> —
-    то, что пишет автоматически каждая кнопка) и <strong>низкоуровневые
-    примитивы реальной платы 1T REX</strong> (<code>robot.move</code>,
-    <code>robot.set_angle</code>, <code>robot.get_laser</code>) — для ручного
-    контроля. Один и тот же код работает в симуляторе и на реальном роботе.
+    кнопкой ▶ как обычный код через <code>exec()</code>. Управление роботом —
+    через объект <code>robot</code>: каждый его метод знает геометрию робота,
+    считает дистанции и углы. Все методы <strong>синхронные</strong> — вызов
+    блокирует программу до конца манёвра, потом отдаёт управление следующей
+    строке. То, что пишет в код каждая кнопка панели — это вызовы того же
+    <code>robot.X(...)</code>.
   </p>
 </div>
 
 <div class="training-layout">
 
-  <!-- ── Жизненный цикл ──────────────────────────────────────────────── -->
+  <!-- ── Среда ───────────────────────────────────────────────────────── -->
   <section class="card">
-    <h2 class="card__title">Инициализация и системные команды</h2>
-    <table class="cmd-table">
-      <thead><tr><th>Команда</th><th>Описание</th></tr></thead>
-      <tbody>
-        <tr>
-          <td><code>robot.start(interval: int = 10)</code></td>
-          <td>
-            Запуск Rex-Board и инициализация модулей с автоматическим
-            обновлением данных. <code>interval</code> — период опроса в
-            <strong>миллисекундах</strong> (по умолчанию 10 мс). Вызывается
-            один раз в начале программы.
-          </td>
-        </tr>
-        <tr>
-          <td><code>robot.enable_mpu(timeout: int | None = None)</code></td>
-          <td>
-            Включает MPU (гироскоп/акселерометр). После инициализации модуль
-            сам подключается к эфиру. <code>timeout</code> — таймаут
-            инициализации в секундах (default 5). Без этой команды
-            <code>robot.get_angle()</code> может вернуть нули.
-          </td>
-        </tr>
-        <tr>
-          <td><code>robot.set_timeout(timeout: int)</code></td>
-          <td>
-            Глобальный таймаут для команды <code>robot.move</code> в секундах.
-            Если задан — мотор сам остановится по истечении.
-          </td>
-        </tr>
-        <tr>
-          <td><code>robot.set_multiplexer_channel(value: int)</code></td>
-          <td>Выбрать канал I²C-мультиплексора (для подключения нескольких
-              датчиков одного типа).</td>
-        </tr>
-        <tr>
-          <td><code>robot.send_command(value: str)</code></td>
-          <td>
-            Отправка любой raw-команды на плату напрямую. Использовать,
-            если в стандартном API нет нужной обёртки.
-          </td>
-        </tr>
-      </tbody>
-    </table>
+    <h2 class="card__title">Что доступно в программе</h2>
+    <ul class="steps-list">
+      <li><strong><code>robot</code></strong> — объект управления роботом
+          (методы — в таблицах ниже).</li>
+      <li><strong><code>import math, time, random</code></strong> — только эти
+          модули; <code>os</code>, <code>open</code>, <code>eval</code> и
+          прочее запрещены (sandbox).</li>
+      <li><strong><code>print(...)</code></strong> — выводит в журнал
+          (не в консоль). Удобно для отладки.</li>
+      <li><strong>Конструкции Python</strong>: <code>if</code>,
+          <code>for</code>, <code>while</code>, функции, списки — всё
+          работает.</li>
+      <li><strong>Константы преамбулы</strong>: <code>START_X</code>,
+          <code>START_Y</code>, <code>START_HEADING_DEG</code> — стартовая
+          точка; <code>OBSTACLES</code> — препятствия; <code>DANGER_ZONES</code>
+          — список опасных зон; <code>LIGHT_*</code> — параметры RGB.</li>
+    </ul>
     <p class="note">
-      <strong>Подключение к плате.</strong> 1T REX поднимает Wi-Fi и слушает
-      TCP/WebSocket на порту <code>8765</code>. Первоначальная настройка
-      Wi-Fi — через USB Type-C + утилита <code>server.py</code> из комплекта.
-      Адрес и порт реального робота задаются в
-      <a href="/settings">настройках</a>.
+      Единицы — «человеческие»: расстояния в сантиметрах, углы и курс в
+      градусах, мощность мотора в процентах. Курс: 0° = север (вверх),
+      90° = восток, 180° = юг, 270° = запад.
     </p>
   </section>
 
-  <!-- ── Мотор ───────────────────────────────────────────────────────── -->
+  <!-- ── Состояние ───────────────────────────────────────────────────── -->
   <section class="card">
-    <h2 class="card__title">Мотор и движение</h2>
-    <table class="cmd-table">
-      <thead><tr><th>Команда</th><th>Описание</th></tr></thead>
-      <tbody>
-        <tr>
-          <td><code>robot.move(value: int, timeout: int | None = None)</code></td>
-          <td>
-            Включает мотор на <code>value</code> процентов мощности
-            (диапазон <strong>−100…+100</strong>).
-            Положительное — вперёд, отрицательное — назад.
-            <code>timeout</code> — таймаут движения в <strong>секундах</strong>
-            (опционально). Если задан, мотор сам остановится; иначе крутится
-            до явного <code>robot.stop()</code> или новой <code>move()</code>.
-            <br><em>Пример:</em> <code>robot.move(100)</code>,
-            <code>robot.move(40, 2.5)</code>.
-          </td>
-        </tr>
-        <tr>
-          <td><code>robot.invert_move()</code></td>
-          <td>
-            Переключить инверсию направления. После вызова знак мощности в
-            <code>robot.move</code> меняется на противоположный (полезно,
-            если шасси перевернули или иначе сориентировали).
-          </td>
-        </tr>
-        <tr>
-          <td><code>robot.stop()</code></td>
-          <td>Немедленная остановка двигателя. Сбрасывает текущую скорость в 0.</td>
-        </tr>
-      </tbody>
-    </table>
-    <p class="note">
-      <strong>Калибровка скорости.</strong> При 100% мощности робот едет
-      примерно <code>SPEED_CM_PER_S_AT_100</code> см/с (по умолчанию ≈ 80).
-      Реальное значение зависит от батареи, поверхности, нагрузки —
-      проверьте на своём экземпляре и поправьте константу в настройках.
-    </p>
-  </section>
-
-  <!-- ── Руль ────────────────────────────────────────────────────────── -->
-  <section class="card">
-    <h2 class="card__title">Руль (Ackermann-сервопривод)</h2>
-    <table class="cmd-table">
-      <thead><tr><th>Команда</th><th>Описание</th></tr></thead>
-      <tbody>
-        <tr>
-          <td><code>robot.set_angle(value: int)</code></td>
-          <td>
-            Поставить сервопривод передних колёс на угол <code>value</code>
-            (диапазон <strong>−45…+45°</strong>).
-            Положительный — направо, отрицательный — налево, <strong>0</strong> — прямо.
-            Сама ось колёс не движется пока мотор стоит — поворот видно
-            только при последующей <code>move()</code>.
-            <br><em>Пример:</em> <code>robot.set_angle(15)</code>.
-          </td>
-        </tr>
-        <tr>
-          <td><code>robot.set_servo_center()</code></td>
-          <td>
-            Эквивалент <code>robot.set_angle(0)</code>. Полезно вызывать
-            в конце маневра, чтобы оставить руль в нейтральном положении.
-          </td>
-        </tr>
-      </tbody>
-    </table>
-    <p class="note">
-      <strong>Геометрия поворота.</strong> При полном угле руля и пройденном
-      расстоянии в одну окружность колеса (<code>WHEEL_CIRC_CM</code>)
-      курс робота меняется на <code>HEADING_DEG_PER_ROT</code> градусов
-      (по умолчанию ≈ 25°). Это даёт радиус разворота
-      <code>360 × WHEEL_CIRC_CM / (2π × HEADING_DEG_PER_ROT)</code> ≈ 65 см
-      при стандартных настройках.
-    </p>
-  </section>
-
-  <!-- ── Сенсоры ─────────────────────────────────────────────────────── -->
-  <section class="card">
-    <h2 class="card__title">Сенсоры</h2>
-    <table class="cmd-table">
-      <thead><tr><th>Команда</th><th>Описание</th></tr></thead>
-      <tbody>
-        <tr>
-          <td><code>robot.get_angle()</code></td>
-          <td>
-            Запросить актуальные данные IMU.
-            Формат: <code>{ X: float, Y: float, Z: float }</code>.
-            <br>В редакторе достаточно вызвать без <code>await</code> — он
-            подставляется автоматически для асинхронных методов.
-            <br><em>Пример:</em>
-            <code>yaw = robot.get_angle()["Z"]</code> — текущий курс.
-          </td>
-        </tr>
-        <tr>
-          <td><code>robot.get_angles()</code></td>
-          <td>
-            Получить текущие углы из <code>angles_data</code> (формат тот же:
-            <code>{X, Y, Z}</code>). Углы обновляются автоматически по эфиру
-            после <code>enable_mpu()</code> — быстрее чем
-            <code>get_angle()</code> (последний делает явный запрос).
-          </td>
-        </tr>
-        <tr>
-          <td><code>robot.get_laser()</code></td>
-          <td>
-            Запросить актуальные данные лазерного дальномера.
-            Формат: <code>int</code>. <code>None</code> или 0 — нет данных
-            (вне зоны действия). Используется в командах <em>«до упора»</em>
-            и для аварийной остановки в режиме «осторожно».
-          </td>
-        </tr>
-        <tr>
-          <td><code>robot.get_color()</code></td>
-          <td>
-            Запросить актуальные данные датчика цвета (через TCA-мультиплексор).
-            Формат: <code>[{ TCA: int, R: int, G: int, B: int, C: int }]</code>
-            (массив словарей, по одному на каждый канал TCA).
-            <br><em>Пример обращения:</em>
-            <code>robot.get_color()["0"]["R"]</code>.
-          </td>
-        </tr>
-      </tbody>
-    </table>
-    <p class="note">
-      <strong>Одометрия.</strong> У 1T REX <em>нет встроенного GPS</em>,
-      позицию <code>(x, y)</code> приходится считать самим: курс берём с
-      <code>get_angle()['Z']</code>, пройденное расстояние —
-      из <code>power × time</code>. В сгенерированном Python-коде есть класс
-      <code>Odometry</code>, который делает это автоматически —
-      копируется на железо как есть.
-    </p>
-  </section>
-
-  <!-- ── RGB-индикатор ───────────────────────────────────────────────── -->
-  <section class="card">
-    <h2 class="card__title">RGB-индикатор</h2>
-    <table class="cmd-table">
-      <thead><tr><th>Команда</th><th>Описание</th></tr></thead>
-      <tbody>
-        <tr>
-          <td><code>robot.init_led(address: int, timeout: int | None = None)</code></td>
-          <td>
-            Инициализировать LED-модуль по адресу.
-            <code>timeout</code> — таймаут инициализации в секундах (default 3).
-            <br><em>Пример:</em> <code>robot.init_led(0x10)</code>.
-          </td>
-        </tr>
-        <tr>
-          <td><code>robot.leds</code></td>
-          <td>
-            Список адресов светодиодов (<code>list[int]</code>).
-            Используется для последующего обращения по индексу.
-          </td>
-        </tr>
-        <tr>
-          <td><code>robot.leds[index]</code></td>
-          <td>Получить адрес конкретного светодиода по индексу.
-              <br><em>Пример:</em> <code>robot.leds[0]</code>.</td>
-        </tr>
-        <tr>
-          <td><code>robot.leds.bind(value: list[int])</code></td>
-          <td>Привязать список адресов светодиодов. Используется при
-              ручном подключении нескольких LED-модулей.</td>
-        </tr>
-        <tr>
-          <td><code>robot.set_rgb(index: int, color: tuple, delay: float = 1.2)</code></td>
-          <td>
-            Установить цвет RGB-светодиода по индексу. <code>color</code> —
-            <code>(R, G, B)</code> от 0 до 255 с прямой яркостью каналов
-            (255 — горит, 0 — не горит). <strong>delay</strong> — задержка
-            между установкой каналов в <strong>секундах</strong>
-            (по умолчанию 1.2; <code>0.0</code> = мгновенно).
-            <br><strong>Внимание:</strong> 3-й параметр — <strong>не «количество»</strong>,
-            а именно <strong>delay в секундах</strong>. Передача
-            <code>1</code> вместо <code>0.0</code> вызовет fade ≈ 1 секунду.
-            <br><em>Пример:</em>
-            <code>robot.set_rgb(0, (255, 0, 0), 1.0)</code>.
-          </td>
-        </tr>
-      </tbody>
-    </table>
-  </section>
-
-  <!-- ── Звук ────────────────────────────────────────────────────────── -->
-  <section class="card">
-    <h2 class="card__title">Звук (пьезо-модуль)</h2>
-    <table class="cmd-table">
-      <thead><tr><th>Команда</th><th>Описание</th></tr></thead>
-      <tbody>
-        <tr>
-          <td><code>robot.init_sound(address: int, timeout: int | None = None)</code></td>
-          <td>
-            Инициализировать звуковой модуль по адресу.
-            <code>timeout</code> — таймаут инициализации в секундах (default 2).
-            <br><em>Пример:</em> <code>robot.init_sound(0x20)</code>.
-          </td>
-        </tr>
-        <tr>
-          <td><code>robot.set_sound(value: int)</code></td>
-          <td>
-            Управление звуком. <code>value</code> — логическая мощность
-            от 0 до 100, которая масштабируется во внутренний диапазон
-            (1–254) и отправляется на плату.
-            <br><em>Пример:</em> <code>robot.set_sound(60)</code>.
-          </td>
-        </tr>
-      </tbody>
-    </table>
-  </section>
-
-  <!-- ── Высокоуровневый фасад VEGAREX ────────────────────────────────── -->
-  <section class="card">
-    <h2 class="card__title">Высокоуровневый фасад VEGAREX</h2>
-    <p>
-      В дополнение к низкоуровневым примитивам выше, в редакторе доступен
-      объект <code>robot</code> с высокоуровневыми методами — это
-      <strong>тот же интерфейс</strong>, который пишет автоматически каждая
-      кнопка панели управления. Каждый метод знает геометрию робота,
-      считает дистанции и углы, при необходимости задействует A*-планировщик.
-      В осторожном режиме методы автоматически учитывают опасные зоны.
-    </p>
-    <p class="note">
-      Все методы — <strong>синхронные</strong>. Под капотом каждый вызов
-      блокирует исполнение программы до окончания манёвра, потом отдаёт
-      управление следующей строке. Можно использовать в <code>if</code> /
-      <code>for</code> / <code>while</code>, читать <code>robot.x</code>,
-      <code>robot.y</code>, <code>robot.heading</code> как обычные переменные.
-    </p>
-
-    <h3 class="card__title" style="font-size:1rem; margin-top:1rem;">Состояние робота (свойства)</h3>
+    <h2 class="card__title">Состояние робота (свойства для чтения)</h2>
     <table class="cmd-table">
       <thead><tr><th>Свойство</th><th>Описание</th></tr></thead>
       <tbody>
-        <tr><td><code>robot.x</code></td><td>Текущая X-координата (см)</td></tr>
-        <tr><td><code>robot.y</code></td><td>Текущая Y-координата (см)</td></tr>
-        <tr><td><code>robot.heading</code></td><td>Текущий курс в градусах
-            (0=север, 90=восток, 180=юг, 270=запад)</td></tr>
+        <tr><td><code>robot.x</code></td><td>Текущая X-координата носа робота, см</td></tr>
+        <tr><td><code>robot.y</code></td><td>Текущая Y-координата носа робота, см</td></tr>
+        <tr><td><code>robot.heading</code></td><td>Текущий курс, градусы
+            (0 = север, 90 = восток, 180 = юг, 270 = запад)</td></tr>
       </tbody>
     </table>
+    <p class="note">
+      Свойства читаются как обычные переменные — годятся для <code>if</code> и
+      циклов: <code>if robot.y &gt; 100: ...</code>,
+      <code>print(f'X={robot.x:.0f}, курс={robot.heading:.0f}')</code>.
+    </p>
+  </section>
 
-    <h3 class="card__title" style="font-size:1rem; margin-top:1rem;">Базовые движения</h3>
+  <!-- ── Движение ────────────────────────────────────────────────────── -->
+  <section class="card">
+    <h2 class="card__title">Движение</h2>
     <table class="cmd-table">
       <thead><tr><th>Метод</th><th>Что делает</th></tr></thead>
       <tbody>
         <tr>
           <td><code>robot.forward(distance_cm, speed=None)</code></td>
-          <td>Едет вперёд на N см. Скорость — % мощности 0..100; <code>None</code>
-              = «по умолчанию из настроек». В Осторожно — клип по
-              препятствию (20 см margin от зоны), длина может быть сокращена.</td>
+          <td>Едет вперёд на N см. <code>speed</code> — % мощности 5..100;
+              <code>None</code> = скорость по умолчанию из настроек. Если
+              впереди препятствие — остановится раньше, а команда в коде
+              сократится до фактической дистанции.</td>
         </tr>
         <tr>
           <td><code>robot.back(distance_cm, speed=None)</code></td>
-          <td>Едет назад на N см.</td>
+          <td>Едет назад на N см. Препятствия сзади учитываются так же.</td>
         </tr>
         <tr>
           <td><code>robot.forward_to_wall(speed=None)</code></td>
-          <td>Едет вперёд до стены или препятствия (по дальномеру).</td>
+          <td>Едет вперёд до ближайшей стены или препятствия (по дальномеру).</td>
         </tr>
         <tr>
           <td><code>robot.backward_to_wall(speed=None)</code></td>
-          <td>Едет назад до стены или препятствия.</td>
+          <td>Едет задом до ближайшего препятствия за роботом.</td>
         </tr>
         <tr>
           <td><code>robot.wait(seconds)</code></td>
-          <td>Стоит N секунд (0.1..60), затем продолжает программу.</td>
+          <td>Стоит на месте N секунд (0.1..60), затем продолжает программу.</td>
         </tr>
         <tr>
           <td><code>robot.stop()</code></td>
           <td><strong>Аварийная остановка</strong>: мотор → 0 мгновенно,
-              программа прерывается на этой строке (RobotInterrupted).
-              Дальнейшие строки кода не выполняются.</td>
+              программа прерывается на этой строке — дальнейшие строки кода
+              не выполняются (как кнопка ■ СТОП).</td>
         </tr>
       </tbody>
     </table>
+  </section>
 
-    <h3 class="card__title" style="font-size:1rem; margin-top:1rem;">Повороты и ориентация</h3>
+  <!-- ── Повороты ────────────────────────────────────────────────────── -->
+  <section class="card">
+    <h2 class="card__title">Повороты и ориентация</h2>
     <table class="cmd-table">
       <thead><tr><th>Метод</th><th>Что делает</th></tr></thead>
       <tbody>
         <tr>
           <td><code>robot.turn_right(angle_deg)</code></td>
-          <td>Поворот на месте направо на угол в градусах (через K-turn).</td>
+          <td>Поворот на месте направо на N° (3-дуговой K-turn, без смещения).</td>
         </tr>
         <tr>
           <td><code>robot.turn_left(angle_deg)</code></td>
-          <td>Поворот на месте налево на угол в градусах.</td>
-        </tr>
-        <tr>
-          <td><code>robot.turn_around(direction=1)</code></td>
-          <td>Разворот на 180° по дуге. <code>direction</code>: +1 вправо,
-              −1 влево.</td>
-        </tr>
-        <tr>
-          <td><code>robot.kturn(steps=3, direction=1)</code></td>
-          <td>Разворот на месте за N шагов K-turn. 3 = плавный (≈ 90°),
-              6 = полный 180°, до 10. Подходит в тесном месте.</td>
+          <td>Поворот на месте налево на N°.</td>
         </tr>
         <tr>
           <td><code>robot.face(target_deg)</code></td>
-          <td>Развернуться лицом к абсолютному курсу N° (3-дуговой K-turn
-              без смещения позиции).</td>
+          <td>Развернуться лицом к абсолютному курсу N° на месте.</td>
+        </tr>
+        <tr>
+          <td><code>robot.turn_around(direction=1)</code></td>
+          <td>Разворот на 180°. <code>direction</code>: +1 вправо, −1 влево.</td>
+        </tr>
+        <tr>
+          <td><code>robot.kturn(steps=3, direction=1)</code></td>
+          <td>Разворот на 180° на месте за N приёмов K-turn (1..10). Больше
+              шагов — компактнее манёвр, для тесного пространства.</td>
         </tr>
         <tr>
           <td><code>robot.set_course(target_deg)</code></td>
-          <td>Выйти на курс N° плавной дугой <em>с движением вперёд</em>
-              (позиция меняется).</td>
+          <td>Выйти на курс N° плавной дугой <strong>с движением вперёд</strong>
+              (в отличие от <code>face</code> — позиция меняется).</td>
         </tr>
       </tbody>
     </table>
+    <p class="note">
+      Развороты <code>turn_*</code> / <code>face</code> / <code>turn_around</code>
+      / <code>kturn</code> сами выбирают способ по доступному месту: хватает
+      места — обычный K-turn; тесно — мелкий многошаговый разворот с отъездом;
+      совсем негде — стоп с сообщением. Учитываются стены и зоны-препятствия.
+    </p>
+  </section>
 
-    <h3 class="card__title" style="font-size:1rem; margin-top:1rem;">Дуги и траектории</h3>
+  <!-- ── Дуги и траектории ───────────────────────────────────────────── -->
+  <section class="card">
+    <h2 class="card__title">Дуги и траектории</h2>
     <table class="cmd-table">
       <thead><tr><th>Метод</th><th>Что делает</th></tr></thead>
       <tbody>
@@ -400,63 +162,81 @@
         </tr>
         <tr>
           <td><code>robot.spiral(direction=1, outward=True)</code></td>
-          <td>Спираль 2 оборота. <code>outward=True</code> — раскручивается
-              (угол руля уменьшается), <code>False</code> — скручивается.</td>
+          <td>Спираль ≈ 2 оборота. <code>outward=True</code> — раскручивается
+              (радиус растёт), <code>False</code> — скручивается.</td>
         </tr>
         <tr>
           <td><code>robot.bypass(start_dir=1)</code></td>
-          <td>S-волна для объезда препятствия. +1 = первый отворот вправо,
-              −1 = влево.</td>
+          <td>S-волна для объезда препятствия: +1 = первый отворот вправо,
+              −1 = влево. Возвращается на исходный курс.</td>
         </tr>
       </tbody>
     </table>
+  </section>
 
-    <h3 class="card__title" style="font-size:1rem; margin-top:1rem;">Навигация</h3>
+  <!-- ── Навигация ───────────────────────────────────────────────────── -->
+  <section class="card">
+    <h2 class="card__title">Навигация по координатам</h2>
     <table class="cmd-table">
       <thead><tr><th>Метод</th><th>Что делает</th></tr></thead>
       <tbody>
         <tr>
           <td><code>robot.goto(x, y)</code></td>
-          <td>Перейти в точку (X, Y). В Осторожно с зонами на пути
-              запускает алгоритм обхода из настроек (Линейный или Ручной).</td>
+          <td>Перейти в точку (X, Y): поворот к цели + прямая. Едет
+              <strong>по прямой</strong> — если на пути зона-препятствие,
+              остановится у неё. Объезд зон — задача <code>autopilot</code>.</td>
         </tr>
         <tr>
           <td><code>robot.home()</code></td>
           <td>Вернуться в стартовую точку (<code>START_X</code>,
-              <code>START_Y</code>) с центрированием руля перед стартом.</td>
+              <code>START_Y</code>).</td>
+        </tr>
+        <tr>
+          <td><code>robot.autopilot(x, y)</code></td>
+          <td>Построить маршрут к (X, Y) <strong>в обход препятствий</strong>
+              (A*-планировщик) и проехать его. Объезжаются стены и зоны,
+              отмеченные в «Препятствиях». Алгоритм (ломаная / сглаженная) —
+              из настроек. Пройденные участки дописываются в код.</td>
+        </tr>
+        <tr>
+          <td><code>robot.curve(route)</code></td>
+          <td>Плавно проехать по кривой через опорные точки
+              <code>[(x, y), ...]</code> — одна непрерывная дуга с
+              подруливанием на ходу. Этим автопилот в сглаженном режиме
+              записывает маршрут; повторный ▶ воспроизводит дугу.</td>
         </tr>
       </tbody>
     </table>
+  </section>
 
-    <h3 class="card__title" style="font-size:1rem; margin-top:1rem;">Зоны на карте</h3>
+  <!-- ── Зоны ────────────────────────────────────────────────────────── -->
+  <section class="card">
+    <h2 class="card__title">Зоны на карте</h2>
     <table class="cmd-table">
       <thead><tr><th>Метод</th><th>Что делает</th></tr></thead>
       <tbody>
         <tr>
           <td><code>robot.load_danger_zones(zones)</code></td>
           <td>Установить опасные зоны обстановки из списка
-              <code>[(x, y, radius), ...]</code>. Идемпотентно: повторный
-              вызов с теми же данными даст тот же результат. Используется
-              в авто-генерируемом блоке <code>DANGER_ZONES</code>.</td>
+              <code>[(x, y, radius), ...]</code>. Идемпотентно. Используется
+              в авто-блоке <code>DANGER_ZONES</code> преамбулы.</td>
         </tr>
         <tr>
           <td><code>robot.show_danger_zones()</code></td>
-          <td>Вывести в журнал список активных опасных зон с номерами и
-              координатами, вернуть <code>list[(x, y, r)]</code> для
-              итерации в своей логике.</td>
+          <td>Вывести в журнал активные опасные зоны и вернуть
+              <code>list[(x, y, r)]</code> для итерации в своей логике.</td>
         </tr>
         <tr>
           <td><code>robot.attention_zone(x, y, radius=None)</code></td>
-          <td>Доехать до точки (X, Y) и поставить жёлтую зону внимания.</td>
+          <td>Поставить жёлтую зону внимания в точке (X, Y).</td>
         </tr>
         <tr>
           <td><code>robot.attention_here(radius=None)</code></td>
-          <td>Поставить жёлтую зону внимания в текущей позиции (без движения).</td>
+          <td>Поставить жёлтую зону внимания в текущей позиции робота.</td>
         </tr>
         <tr>
           <td><code>robot.remove_zone(x, y)</code></td>
-          <td>Удалить зону (любого типа) в указанной точке. Робот должен
-              находиться внутри удаляемой зоны.</td>
+          <td>Удалить зону в точке (X, Y). Робот должен быть внутри неё.</td>
         </tr>
         <tr>
           <td><code>robot.remove_zone_here()</code></td>
@@ -464,67 +244,97 @@
         </tr>
         <tr>
           <td><code>robot.clear()</code></td>
-          <td>Очистить превью: убрать все зоны, стереть путь, телепортировать
-              робота в стартовую точку. То же что кнопка ↺ Поле.</td>
+          <td>Очистить поле: убрать зоны и путь, вернуть робота в стартовую
+              точку (как кнопка ↺ Поле).</td>
         </tr>
       </tbody>
     </table>
     <p class="note">
-      <strong>Красные опасные зоны программно НЕ создаются.</strong> Они —
-      «обстановка», ставятся либо мышью в ⛯ Режиме зон, либо генератором
-      миссий. Программа может только читать <code>DANGER_ZONES</code> и
-      удалять зоны через <code>robot.remove_zone*</code>.
+      <strong>Красные опасные зоны программно не создаются.</strong> Это
+      «обстановка» — ставятся мышью в режиме «⛯ Обстановка» либо генератором
+      миссий. Программа может читать <code>DANGER_ZONES</code> и удалять зоны
+      через <code>remove_zone*</code>. Жёлтые зоны внимания —
+      создаются программой (<code>attention_*</code>).
     </p>
+  </section>
 
-    <h3 class="card__title" style="font-size:1rem; margin-top:1rem;">Настройки и индикация</h3>
+  <!-- ── Настройки и индикация ───────────────────────────────────────── -->
+  <section class="card">
+    <h2 class="card__title">Настройки и индикация</h2>
     <table class="cmd-table">
       <thead><tr><th>Метод</th><th>Что делает</th></tr></thead>
       <tbody>
         <tr>
           <td><code>robot.set_default_speed(speed_pct)</code></td>
-          <td>Изменить скорость по умолчанию для последующих forward/back
-              (только в этой сессии).</td>
+          <td>Скорость по умолчанию для последующих <code>forward</code> /
+              <code>back</code> без явного <code>speed=</code> (на эту сессию).</td>
         </tr>
         <tr>
           <td><code>robot.set_default_turn_angle(angle_deg)</code></td>
-          <td>Изменить «максимальный угол руля» (1..45°).</td>
+          <td>«Максимальный угол руля» (1..45°) — влияет на радиус дуг.</td>
         </tr>
         <tr>
           <td><code>robot.set_rgb(index, color, delay=0.0)</code></td>
-          <td>Установить цвет LED. <code>color</code> = <code>(R, G, B)</code>,
-              значения 0..255.</td>
+          <td>Зажечь RGB-светодиод. <code>color</code> = <code>(R, G, B)</code>,
+              0..255. <code>delay</code> — задержка между каналами в секундах
+              (0.0 = мгновенно).</td>
         </tr>
         <tr>
           <td><code>robot.recharge()</code></td>
-          <td>Полная зарядка батареи (в симуляторе — мгновенно до 100%).</td>
+          <td>Зарядить батарею (в симуляторе — мгновенно до 100%).</td>
         </tr>
       </tbody>
     </table>
+  </section>
 
-    <h3 class="card__title" style="font-size:1rem; margin-top:1rem;">Низкоуровневый доступ (для опытных)</h3>
+  <!-- ── Низкоуровневое ──────────────────────────────────────────────── -->
+  <section class="card">
+    <h2 class="card__title">Ручное управление мотором и рулём (для опытных)</h2>
+    <p class="hint">
+      Когда высокоуровневых команд не хватает (например, своя реализация
+      движения по дуге с ручным таймингом) — мотор и руль можно крутить
+      напрямую. Эти методы повторяют примитивы реальной платы 1T REX.
+    </p>
+    <table class="cmd-table">
+      <thead><tr><th>Метод</th><th>Что делает</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>robot.move(speed_pct, timeout_sec=None)</code></td>
+          <td>Подать на мотор мощность −100..+100 (− = назад). Без
+              <code>timeout_sec</code> — крутит до <code>move(0)</code> /
+              <code>stop()</code>; с таймаутом — едет это время и встаёт.</td>
+        </tr>
+        <tr>
+          <td><code>robot.set_angle(angle_deg)</code></td>
+          <td>Угол руля −45..+45° (0 = прямо, + = вправо). Поворот виден
+              только при движении.</td>
+        </tr>
+        <tr>
+          <td><code>robot.set_servo_center()</code></td>
+          <td>Поставить руль в 0° (то же, что <code>set_angle(0)</code>).</td>
+        </tr>
+      </tbody>
+    </table>
     <p class="note">
-      Тот же фасад предоставляет «сырые» команды платы — те же что в
-      разделах «Мотор», «Руль», «Сенсоры» выше: <code>robot.move(speed_pct,
-      timeout_sec=None)</code>, <code>robot.set_angle(angle_deg)</code>,
-      <code>robot.set_servo_center()</code>, <code>robot.get_laser()</code>,
-      <code>robot.set_rgb(...)</code>. Используются когда нужен ручной
-      контроль мотора и руля по тактам — например в своей реализации
-      алгоритма следования.
+      <strong>Калибровка.</strong> При 100% мощности робот едет ≈
+      <code>SPEED_CM_PER_S_AT_100</code> см/с (по умолчанию 80). При полном
+      угле руля за один оборот колеса курс меняется на
+      <code>HEADING_DEG_PER_ROT</code>° (≈ 25). Значения — в
+      <a href="/settings">настройках</a>.
     </p>
   </section>
 
-  <!-- ── Минимальный пример (фасад VEGAREX) ────────────────────────────── -->
+  <!-- ── Пример 1 ────────────────────────────────────────────────────── -->
   <section class="card">
-    <h2 class="card__title">Минимальный пример программы (фасад VEGAREX)</h2>
+    <h2 class="card__title">Пример 1 — базовые команды</h2>
     <p>
-      Самый частый сценарий: фасад <code>robot.X(...)</code> делает всю
-      геометрию за тебя. Это <strong>обычный Python</strong> — можно сразу
-      нажимать ▶, исполнится через <code>exec()</code>.
+      Самый частый сценарий: <code>robot.X(...)</code> делает всю геометрию
+      за тебя. Это обычный Python — жми ▶, исполнится через <code>exec()</code>.
     </p>
     <pre class="library-code"><code># Едем 100 см вперёд на 40% мощности
 robot.forward(100, speed=40)
 
-# Развернуться лицом к востоку (на месте, 90°)
+# Развернуться лицом к востоку (на месте)
 robot.face(90)
 
 # Дуга 180° по часовой стрелке (полукруг)
@@ -532,151 +342,62 @@ robot.arc(180, +1)
 
 # Зажечь зелёный светодиод
 robot.set_rgb(0, (0, 255, 0), 0.0)</code></pre>
-    <p class="note">
-      Все параметры фасада — в «человеческих» единицах: сантиметры,
-      градусы, проценты мощности. Никаких миллисекунд и долей оборота.
-    </p>
   </section>
 
-  <!-- ── Пример с логикой и обходом зон ────────────────────────────────── -->
+  <!-- ── Пример 2 ────────────────────────────────────────────────────── -->
   <section class="card">
-    <h2 class="card__title">Пример с зонами и условиями</h2>
+    <h2 class="card__title">Пример 2 — зоны, условия, автопилот</h2>
     <p>
-      Программа читает <code>DANGER_ZONES</code> (автоблок преамбулы),
-      выводит их в журнал, делает goto к точке через A* (если в Осторожно),
-      и при достижении проверяет позицию через <code>robot.x</code> /
-      <code>robot.y</code>.
+      Программа читает <code>DANGER_ZONES</code> из преамбулы, объезжает
+      зоны автопилотом и проверяет результат через <code>robot.x/y</code>.
     </p>
-    <pre class="library-code"><code># Показать в журнале все опасные зоны и пересчитать их.
+    <pre class="library-code"><code># Показать в журнале все опасные зоны
 zones = robot.show_danger_zones()
 print(f'Активно зон: {len(zones)}')
 
-# Идём в точку (100, 50) — в Осторожно с зоной на пути сработает
-# выбранный в настройках алгоритм обхода (Линейный / Ручной).
-robot.goto(100, 50)
+# Доехать до (100, 150) в обход препятствий
+robot.autopilot(100, 150)
 
-# Проверяем — реально ли доехали (вдруг manual handoff не дал пройти).
-err = ((robot.x - 100) ** 2 + (robot.y - 50) ** 2) ** 0.5
-if err &lt; 10:
+# Проверяем — реально ли доехали
+err = ((robot.x - 100) ** 2 + (robot.y - 150) ** 2) ** 0.5
+if err &lt; 12:
     print('✓ В точке')
     robot.set_rgb(0, (0, 255, 0), 0.0)
 else:
     print(f'⚠ Промах на {err:.0f} см')
     robot.set_rgb(0, (255, 0, 0), 0.0)
 
-# Возврат домой
 robot.home()</code></pre>
   </section>
 
-  <!-- ── Расширенный пример (демо ассортимента примитивов) ─────────────── -->
+  <!-- ── Пример 3 ────────────────────────────────────────────────────── -->
   <section class="card">
-    <h2 class="card__title">Расширенный пример (низкоуровневые примитивы 1T REX)</h2>
+    <h2 class="card__title">Пример 3 — цикл и ручное управление</h2>
     <p>
-      Для опытных: полная мини-миссия «прибыл — осмотрелся — поработал —
-      вернулся», на <strong>низкоуровневых примитивах реальной платы</strong>
-      — инициализация, мотор/руль, дальномер, гироскоп, цветовой датчик,
-      RGB-индикатор, звук, пауза. Без высокоуровневых обёрток фасада
-      VEGAREX. Этот код можно копировать в среду 1T REX как есть.
+      Цикл <code>for</code> + ручной мотор/руль. Квадрат стороной 60 см,
+      затем своя дуга на низкоуровневых <code>move</code> / <code>set_angle</code>.
     </p>
-<pre class="library-code"><code>import math, time
+    <pre class="library-code"><code>import time
 
-# ── 1. Инициализация платы ──────────────────────────────────────────────
-robot.start(interval=10)                     # запуск с опросом 10 мс
-robot.enable_mpu()                           # включаем гироскоп / акселерометр
-robot.init_led(0x10)                         # инициализируем LED-модуль
-robot.init_sound(0x20)                       # звуковой модуль
-robot.set_servo_center()                     # руль в нейтраль
-robot.set_rgb(0, (255, 200, 0), 0.0)         # жёлтый = «готов к работе»
-time.sleep(0.5)
+# Квадрат: 4 стороны по 60 см с поворотом на 90°
+for i in range(4):
+    robot.forward(60)
+    robot.turn_right(90)
 
-# ── 2. Запоминаем стартовый курс (потом вернёмся на него) ───────────────
-start_yaw = robot.get_angle()["Z"]           # курс с гироскопа в градусах
-print("Стартовый курс:", start_yaw)
-
-# ── 3. Едем вперёд до препятствия с проверкой дальномера ────────────────
-robot.set_rgb(0, (0, 255, 0), 0.0)           # зелёный = «движение»
-robot.set_angle(0)                           # руль прямо
-robot.move(50)                               # вперёд 50% без timeout
-while True:
-    dist = robot.get_laser()                 # дальность до препятствия
-    if dist is not None and dist &lt;= 20:      # ближе 20 см — стоп!
-        break
-    time.sleep(0.05)
-robot.stop()
-robot.set_rgb(0, (255, 0, 0), 0.0)           # красный = «препятствие!»
-robot.set_sound(40)                          # короткий гудок
-time.sleep(0.3)
-robot.set_sound(0)
-
-# ── 4. Считываем цвет под роботом ───────────────────────────────────────
-color_data = robot.get_color()               # массив словарей TCA/R/G/B/C
-print("Цвет канала 0:", color_data["0"]["R"], color_data["0"]["G"], color_data["0"]["B"])
-
-# ── 5. Объезд препятствия — S-волна 4 четверть-дугами ───────────────────
-robot.set_rgb(0, (0, 100, 255), 0.0)         # синий = «маневр объезда»
-QUARTER_SEC = 0.5
-for phase in range(4):
-    sign = +1 if phase in (0, 3) else -1
-    robot.set_angle(sign * 36)
-    robot.move(40, QUARTER_SEC)
-robot.stop()
+# Своя дуга вручную: руль вправо, мотор 2 секунды
+robot.set_angle(36)
+robot.move(40, timeout_sec=2.0)
 robot.set_servo_center()
 
-# ── 6. Едем 1 метр прямо ────────────────────────────────────────────────
-SPEED_CM_S_100 = 80.0
-power = 40
-distance = 100
-secs = distance / (SPEED_CM_S_100 * power / 100)   # ≈ 3.13 с
-robot.set_angle(0)
-robot.move(power, secs)
-robot.stop()
-
-# ── 7. Полный круг (одна непрерывная дуга 360°) ────────────────────────
-robot.set_angle(-36)
-robot.move(40, 4.0)
-robot.stop()
-robot.set_servo_center()
-
-# ── 8. Возвращаемся на исходный курс мелкими дугами ────────────────────
-target_yaw = start_yaw
-while True:
-    cur = robot.get_angle()["Z"]
-    diff = ((target_yaw - cur + 540) % 360) - 180
-    if abs(diff) &lt; 3.0:
-        break
-    direction = +1 if diff &gt; 0 else -1
-    robot.set_angle(direction * 36)
-    robot.move(direction * 30, 0.3)
-    time.sleep(0.1)
-robot.stop()
-robot.set_servo_center()
-
-# ── 9. Задом 30 см ──────────────────────────────────────────────────────
-secs = 30 / (SPEED_CM_S_100 * power / 100)
-robot.move(-power, secs)
-robot.stop()
-
-# ── 10. Финиш: мигаем зелёным 3 раза, гасим ─────────────────────────────
+# Помигать синим 3 раза
 for _ in range(3):
-    robot.set_rgb(0, (0, 255, 0), 0.0)
+    robot.set_rgb(0, (0, 100, 255), 0.0)
     time.sleep(0.3)
     robot.set_rgb(0, (0, 0, 0), 0.0)
-    time.sleep(0.3)
-robot.set_rgb(0, (0, 0, 0), 0.0)</code></pre>
+    time.sleep(0.3)</code></pre>
     <p class="note">
-      <strong>Что использовано:</strong>
-      <code>robot.start</code> (с interval),
-      <code>robot.enable_mpu</code>,
-      <code>robot.init_led</code>, <code>robot.init_sound</code>,
-      <code>robot.set_angle</code>, <code>robot.set_servo_center</code>,
-      <code>robot.move</code> (с timeout и без; вперёд и назад),
-      <code>robot.stop</code>,
-      <code>robot.get_angle</code> (yaw),
-      <code>robot.get_laser</code>,
-      <code>robot.get_color</code> (с разбором канала),
-      <code>robot.set_rgb</code> (мгновенный delay=0.0),
-      <code>robot.set_sound</code>,
-      <code>time.sleep</code>.
+      Подсказка: набери <code>robot.</code> в редакторе — выпадет список
+      методов с описанием и сигнатурой.
     </p>
   </section>
 

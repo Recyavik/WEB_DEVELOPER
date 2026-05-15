@@ -39,6 +39,13 @@
 *::-webkit-scrollbar-thumb:hover { background: var(--sb-thumb-hover); }
 *::-webkit-scrollbar-corner  { background: var(--sb-track); }
 
+/* ── Справка: крупнее базовый шрифт для читабельности ─────────────────────── */
+/* Размеры в справке заданы в rem и масштабируются от корневого font-size.
+   Поднимаем корень только на страницах документации (help / training /
+   system / maneuvers / about) — весь текст справки становится крупнее,
+   рабочие экраны (Управление и пр.) не затронуты. */
+html:has(body.page-docs) { font-size: 18px; }
+
 body {
   font-family: var(--font);
   background:  var(--bg);
@@ -364,40 +371,35 @@ body {
   margin: 0;
 }
 
-/* Автор */
-.about-author-section { background:
-  linear-gradient(135deg,
-    color-mix(in srgb, var(--sec-accent, var(--accent)) 10%, var(--bg-card)) 0%,
-    var(--bg-card) 60%);
+/* Автор проекта — компактная строка с маленьким кружком «1Т» */
+.about-author-section {
+  background:
+    linear-gradient(135deg,
+      color-mix(in srgb, var(--sec-accent, var(--accent)) 10%, var(--bg-card)) 0%,
+      var(--bg-card) 60%);
+  padding: 0.7rem 1.2rem;
 }
 .about-author {
-  display: flex; align-items: center; gap: 1.3rem;
-  padding: 0.4rem 0.2rem;
+  display: flex; align-items: center; gap: 0.85rem;
 }
 .about-author__avatar {
   flex-shrink: 0;
-  width: 72px; height: 72px;
+  width: 38px; height: 38px;
   display: flex; align-items: center; justify-content: center;
   border-radius: 50%;
   font-weight: 800;
-  font-size: 1.4rem;
-  letter-spacing: 1px;
+  font-size: 0.8rem;
+  letter-spacing: 0.5px;
   color: #fff;
   background:
-    linear-gradient(135deg, var(--sec-accent, var(--accent)) 0%, #b07a00 100%);
-  box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+    linear-gradient(135deg, var(--sec-accent, var(--accent)) 0%, #6b46c1 100%);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
 }
-.about-author__name {
-  font-size: 1.2rem;
-  font-weight: 700;
-  margin: 0 0 0.25rem;
-  color: var(--text);
-  letter-spacing: -0.2px;
-}
-.about-author__role {
+.about-author-line {
   margin: 0;
-  font-size: 0.92rem;
-  color: var(--text-dim);
+  font-size: 0.95rem;
+  font-weight: 400;
+  color: var(--text);
 }
 
 /* Подвал страницы (отдельно от глобального .appbar) */
