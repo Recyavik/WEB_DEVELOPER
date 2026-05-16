@@ -1321,21 +1321,128 @@ class UserSession:
         finally:
             s.laser_stop = False
 
+    def _zone_blocking_now(self):
+        """Зона-препятствие, в защитный буфер которой УЖЕ зашёл какой-то
+        угол корпуса робота. None — путь свободен. Буфер тот же, что у
+        защитного стопа физики (radius + «Толщина стены»)."""
+        s = self.robot_state
+        if not s.cautious or not self.world.danger_zones:
+            return None
+        buf = self.cfg.wall_thickness_cm
+        for cx, cy in self._robot_corners():
+            for z in self.world.danger_zones:
+                if not self._zone_is_obstacle(z):
+                    continue
+                r = z.radius + buf
+                if (cx - z.x) ** 2 + (cy - z.y) ** 2 < r * r:
+                    return z
+        return None
+
+    def _jam_escape_vector(self):
+        """Робот «вжат» в препятствие? Возвращает (ax, ay) — примерное
+        направление ОТ препятствия, куда надо отъехать. None — робот на
+        чистом месте. Проверяются зоны-препятствия И стены поля."""
+        s = self.robot_state
+        # 1) Зона-препятствие — отъезд от её центра.
+        z = self._zone_blocking_now()
+        if z is not None:
+            return (s.x - z.x, s.y - z.y)
+        # 2) Стена — какой-либо угол корпуса почти у кромки поля.
+        c  = self.cfg
+        wt = c.wall_thickness_cm
+        hw = self.world.width  / 2.0 - wt / 2.0
+        hh = self.world.height / 2.0 - wt / 2.0
+        margin = wt * 1.5
+        ax = ay = 0.0
+        for cx, cy in self._robot_corners():
+            if cx >  hw - margin: ax -= 1.0   # у правой стены  → отъезд влево
+            if cx < -hw + margin: ax += 1.0   # у левой         → вправо
+            if cy >  hh - margin: ay -= 1.0   # у верхней       → вниз
+            if cy < -hh + margin: ay += 1.0   # у нижней        → вверх
+        if ax != 0.0 or ay != 0.0:
+            return (ax, ay)
+        return None
+
+    async def _escape_obstacle(self) -> bool:
+        """Робот вжат в зону или стену. До 3 попыток короткого отъезда от
+        препятствия, каждая с другим углом руля (0 / +макс / -макс).
+        Вперёд или назад выбирается так, чтобы удаляться от препятствия;
+        умный защитный стоп физики пропускает движение ОТ зоны.
+        True — выехал (путь свободен), False — не удалось за 3 попытки."""
+        s = self.robot_state
+        ESCAPE_CM = 35.0
+        STEER = int(self.cfg.turn_angle)
+        for attempt, steer in enumerate((0, STEER, -STEER), start=1):
+            away = self._jam_escape_vector()
+            if away is None:
+                return True
+            ax, ay = away
+            h = math.radians(s.heading)
+            # Едем вперёд, если нос смотрит ОТ препятствия; иначе — задом.
+            go_forward = (math.sin(h) * ax + math.cos(h) * ay) >= 0.0
+            await self.push_message(
+                f"↩ Попытка {attempt}/3: отъезжаю от препятствия "
+                f"({'вперёд' if go_forward else 'назад'}, руль {steer:+d}°)…",
+                "info")
+            s.steer = float(steer)
+            if go_forward:
+                await self._run_forward(ESCAPE_CM, self.cfg.move_speed)
+            else:
+                await self._run_back(ESCAPE_CM, self.cfg.move_speed)
+            s.steer = 0.0
+            await self.robot.set_servo_center()
+        return self._jam_escape_vector() is None
+
+    async def _clear_to_maneuver(self, what: str) -> bool:
+        """Пре-чек перед манёвром. Если робот вжат в зону/стену —
+        пытается выехать (_escape_obstacle). True — манёвр можно
+        выполнять; False — выехать не удалось, манёвр выполнять нельзя."""
+        if self._jam_escape_vector() is None:
+            return True
+        await self.push_message(
+            f"⚠ {what}: робот у препятствия — сначала отъезжаю.", "warning")
+        if await self._escape_obstacle():
+            await self.push_message(
+                "✓ Выехал — выполняю манёвр.", "success")
+            return True
+        await self.push_message(
+            f"⛔ {what} не выполнен: выехать из-за препятствия не удалось "
+            f"за 3 попытки. Отъедь вручную и повтори.", "warning")
+        return False
+
+    async def _graceful_finish(self, what: str) -> None:
+        """После манёвра: если робот упёрся в стену или зону — чуть
+        отъезжает, чтобы не остаться вжатым. На чистом месте — молча
+        ничего не делает. После ■ СТОП (взведён флаг отмены) не запускается:
+        робот должен остаться там, где остановлен."""
+        flag = getattr(self, "_python_cancel_flag", None)
+        if flag is not None and flag.is_set():
+            return
+        if self._jam_escape_vector() is None:
+            return
+        await self.push_message(
+            f"↩ {what}: закончил у препятствия — отъезжаю, "
+            f"чтобы не остаться вжатым.", "info")
+        await self._escape_obstacle()
+
     async def _run_arc(self, angle_deg: float, direction: int = -1):
         """Дуга на `angle_deg` градусов курса при максимальном угле руля
         (cfg.turn_angle). По умолчанию ПРОТИВ часовой (CCW, мат. +).
         direction=+1 — по часовой. `angle_deg` — модуль, направление
         управляется отдельным параметром. `_run_arc(360, dir)` = полный круг."""
+        if not await self._clear_to_maneuver("Дуга"):
+            return
         s = self.robot_state
         spd = self.cfg.move_speed
         steer = direction * self.cfg.turn_angle
         sweep = abs(float(angle_deg))
         if sweep <= 0:
             return
+        cancelled = False
         try:
             await self._arc_at_steer(steer, sweep, spd)
         except asyncio.CancelledError:
-            pass
+            cancelled = True
         finally:
             s.steer = 0.0
             s.speed = 0
@@ -1343,13 +1450,18 @@ class UserSession:
             await self.robot.stop()
             await self.robot.set_servo_center()
         await self.push_state()
+        if not cancelled:
+            await self._graceful_finish("Дуга")
 
     async def _run_figure_eight(self, direction: int = -1):
         """Восьмёрка через ДВЕ дуги по 360°: первый круг в `direction`,
         второй — в противоположную. По умолчанию первый CCW, второй CW."""
+        if not await self._clear_to_maneuver("Восьмёрка"):
+            return
         s = self.robot_state
         spd = self.cfg.move_speed
         steer = self.cfg.turn_angle
+        cancelled = False
         try:
             await self.push_message("Восьмерка: дуга 1/2 (360°)…", "info")
             await self._arc_at_steer(direction * steer, 360.0, spd)
@@ -1357,7 +1469,7 @@ class UserSession:
             await self.push_message("Восьмерка: дуга 2/2 (360°)…", "info")
             await self._arc_at_steer(-direction * steer, 360.0, spd)
         except asyncio.CancelledError:
-            pass
+            cancelled = True
         finally:
             s.steer = 0.0
             s.speed = 0
@@ -1365,6 +1477,8 @@ class UserSession:
             await self.robot.stop()
             await self.robot.set_servo_center()
         await self.push_state()
+        if not cancelled:
+            await self._graceful_finish("Восьмёрка")
 
     async def _run_spiral(self, direction: int = 1, outward: bool = True):
         """Плавная спираль: робот непрерывно едет, угол руля линейно
@@ -1373,6 +1487,8 @@ class UserSession:
         outward=True  — руль 36° → 24° (от самого тугого до среднего)
         outward=False — руль 24° → 36° (от среднего до самого тугого)
         Прогресс отслеживаем по реально набранной развертке курса (не по времени)."""
+        if not await self._clear_to_maneuver("Спираль"):
+            return
         s = self.robot_state
         spd = self.cfg.move_speed
         if outward:
@@ -1396,6 +1512,7 @@ class UserSession:
         prev_heading   = s.heading
         sweep_abs      = 0.0
         last_msg_pct   = 0
+        cancelled      = False
         try:
             while sweep_abs < target_sweep_abs:
                 await asyncio.sleep(0.1)  # 10 Гц обновления руля
@@ -1424,7 +1541,7 @@ class UserSession:
                     await self.push_message("Спираль прервана: робот остановился.", "warning")
                     break
         except asyncio.CancelledError:
-            pass
+            cancelled = True
         finally:
             s.steer     = 0.0
             s.speed     = 0
@@ -1432,17 +1549,22 @@ class UserSession:
             await self.robot.stop()
             await self.robot.set_servo_center()
         await self.push_state()
+        if not cancelled:
+            await self._graceful_finish("Спираль")
 
     async def _run_bypass(self, start_dir: int = +1, max_steer: float = 36.0):
         """Объезд препятствия — одна S-волна на 2π:
           start_dir=+1 — сначала вправо (объезд СПРАВА от препятствия),
           start_dir=-1 — сначала влево  (объезд СЛЕВА).
         Робот заканчивает движение в исходном курсе и на исходной линии."""
+        if not await self._clear_to_maneuver("Объезд"):
+            return
         s = self.robot_state
         spd = self.cfg.move_speed
         swing = 30.0  # размах курса в каждую сторону
         side = "справа" if start_dir > 0 else "слева"
         # Фазы 0,3 → знак start_dir; фазы 1,2 → противоположный
+        cancelled = False
         try:
             for phase in range(4):
                 sign = start_dir if phase in (0, 3) else -start_dir
@@ -1452,7 +1574,7 @@ class UserSession:
                 await self._arc_at_steer(sign * max_steer, swing, spd)
                 await asyncio.sleep(0.05)
         except asyncio.CancelledError:
-            pass
+            cancelled = True
         finally:
             s.steer = 0.0
             s.speed = 0
@@ -1460,6 +1582,8 @@ class UserSession:
             await self.robot.stop()
             await self.robot.set_servo_center()
         await self.push_state()
+        if not cancelled:
+            await self._graceful_finish("Объезд")
 
     # ── Перейти в координату / домой ────────────────────────────────────────
 
@@ -1708,6 +1832,11 @@ class UserSession:
         начала кривой: иначе pure-pursuit с произвольного курса заложил
         бы широкую дугу-коррекцию и мог зацепить зону на старте.
 
+        В конце — финальный заход ПО ПРЯМОЙ: pure-pursuit с lookahead'ом
+        тормозит по допуску и не дотягивает до точной конечной точки,
+        поэтому последний участок проходится точным доворотом на цель
+        и прямой — робот приходит ровно в точку маршрута.
+
         `route` — опорные точки (ломаная); внутри сглаживается Чайкином
         и очищается от заезда в зоны (_smooth_route). Команда `robot.curve`
         в коде вызывает этот же метод — повторный ▶ воспроизводит дугу."""
@@ -1777,6 +1906,26 @@ class UserSession:
             s.dist_left = 0.0
             await self.robot.stop()
             await self.robot.set_servo_center()
+        # Финальный заход ПО ПРЯМОЙ в точную конечную точку маршрута.
+        # Pure-pursuit (с lookahead) тормозит по допуску ~8 см и оставляет
+        # робота рядом с целью, но не в ней. Если робот уже в зоне финиша —
+        # точно доворачиваемся носом на цель и проходим остаток прямой.
+        # На ■ СТОП этот код не выполняется: CancelledError проходит сквозь
+        # finally и прерывает метод до сюда.
+        fx, fy = float(route[-1][0]), float(route[-1][1])
+        dx, dy = fx - s.x, fy - s.y
+        dist = math.hypot(dx, dy)
+        if 2.0 < dist < LOOKAHEAD + 12.0:
+            target_h = math.degrees(math.atan2(dx, dy)) % 360.0
+            if abs((target_h - s.heading + 540.0) % 360.0 - 180.0) > 6.0:
+                await self._run_face_cardinal(target_h, "конечной точке")
+                dx, dy = fx - s.x, fy - s.y
+                dist = math.hypot(dx, dy)
+            if dist > 2.0:
+                await self.push_message(
+                    f"➡ Финальный участок по прямой — {dist:.0f} см "
+                    f"в ({fx:.0f}, {fy:.0f}).", "info")
+                await self._run_forward(dist, int(c.move_speed))
         await self.push_state()
 
     async def _run_autopilot(self, target_x: float, target_y: float) -> None:
@@ -4339,6 +4488,9 @@ class UserSession:
             h_rad_pre = math.radians(s.heading)
             rx_pre = s.x - c.robot_length_cm * math.sin(h_rad_pre)
             ry_pre = s.y - c.robot_length_cm * math.cos(h_rad_pre)
+            # Позиция носа ДО интегрирования — защитный стоп ниже по ней
+            # отличает «въезд в зону» от «выезд из зоны».
+            nose_px, nose_py = s.x, s.y
 
             update_position_dead_reckoning(s, actual_dt, sign * cm_per_s)
 
@@ -4390,6 +4542,10 @@ class UserSession:
             SAFETY_BUFFER_CM = c.wall_thickness_cm
             if (s.cautious and not hit_wall and not s.turning_in_place
                     and self.world.danger_zones):
+                # Вектор перемещения корпуса за тик: «въезжаем в зону»
+                # (стоп) vs «выезжаем из неё» (пропускаем — иначе робот,
+                # оказавшийся в буфере, заперт навсегда и не может выехать).
+                mvx, mvy = s.x - nose_px, s.y - nose_py
                 hit_zone = None
                 for cx, cy in self._robot_corners():
                     for z in self.world.danger_zones:
@@ -4397,6 +4553,11 @@ class UserSession:
                             continue
                         r_buf = z.radius + SAFETY_BUFFER_CM
                         if (cx - z.x) ** 2 + (cy - z.y) ** 2 < r_buf * r_buf:
+                            # Угол в буфере. Стоп — только если он движется
+                            # К центру зоны или вдоль неё; движение строго
+                            # ОТ зоны разрешаем (робот может выехать).
+                            if mvx * (z.x - cx) + mvy * (z.y - cy) < -1e-6:
+                                continue
                             hit_zone = z
                             break
                     if hit_zone:
