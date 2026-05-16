@@ -215,13 +215,6 @@ class UserSession:
         # настройки (код — источник истины, настройки — только дефолты).
         self._last_python_code: Optional[str] = None
 
-        # Событие для «pause/resume» в режиме обхода «manual» и fallback.
-        # При manual-handoff exec-цепочка делает `await event.wait()`, а
-        # дальше управление переходит к пользователю (голос/кнопки/руль).
-        # ▶ Продолжить (intent="resume") дёргает `event.set()` → exec
-        # просыпается и продолжает со следующей инструкции.
-        self._resume_event: asyncio.Event = asyncio.Event()
-
         # Активный future от RobotProxy._run — нужен для ■ СТОП, чтобы
         # отменить текущую корутину команды (forward/goto/arc/...) и
         # прервать её мгновенно, не дожидаясь s.speed=0.
@@ -969,19 +962,17 @@ class UserSession:
           2) Asyncio-задача исполнителя очереди (_exec_task) → отменить;
           3) Python-программа пользователя (другой поток) → флаг отмены,
              следующий robot.X() кинет RobotInterrupted;
-          4) Программа в pause (manual handoff, await _resume_event) →
-             будим event'ом, плюс взводим cancel_flag — в _pause_for_manual_handoff
-             ветка проверки флага сразу же бросит RobotInterrupted без
-             «программа возобновлена»;
+          4) Программа на ⏸ Паузе (exec ждёт ▶ Продолжить) → будим
+             pause-event'ом, плюс взводим cancel_flag — следующий
+             robot.X() сразу бросит RobotInterrupted;
           5) Драйвер → move(0), центрировать руль;
-          6) robot_state → speed/dist_left/thinking/awaiting_user = idle.
-        Должен работать для любого режима обхода (pp / stanley / linear / manual).
+          6) robot_state → speed/dist_left/thinking = idle.
         """
         self._pending.clear()
         if self._exec_task and not self._exec_task.done():
             self._exec_task.cancel()
-        # Поднимаем флаг отмены ДО event.set() — _pause_for_manual_handoff
-        # проверит флаг после пробуждения и не пойдёт «возобновлять».
+        # Поднимаем флаг отмены ДО пробуждения pause-event'а — проснувшийся
+        # exec-поток увидит флаг и не пойдёт «возобновлять».
         flag = getattr(self, "_python_cancel_flag", None)
         if flag is not None:
             flag.set()
@@ -996,9 +987,6 @@ class UserSession:
                 fut.cancel()
             except Exception:
                 pass
-        # Разбудить exec-поток, заблокированный в _pause_for_manual_handoff.
-        if self._resume_event is not None:
-            self._resume_event.set()
         # Разбудить exec-поток, который ждёт ▶ Продолжить из ⏸ Паузы.
         # Без этого паузнутая программа НЕ умирает по ■ СТОП — exec вечно
         # висит на `await self._program_pause_event.wait()`.
@@ -1009,7 +997,6 @@ class UserSession:
         s.dist_left = 0
         s.laser_stop = False
         s.thinking  = "idle"
-        s.awaiting_user = False
         s.program_paused = False
         self._paused_state = None
         await self.robot.move(0)
@@ -1486,622 +1473,6 @@ class UserSession:
         отдельного режима «Автопилот»."""
         await self._run_goto_direct(target_x, target_y)
 
-    async def _run_goto_cautious(self, target_x: float, target_y: float) -> bool:
-        """Goto в режиме «осторожно»: проверяет прямой путь на коллизии с
-        зонами, и если надо — запускает A*-планировщик обхода.
-
-        Возвращает True, если маршрут выполнен (или прямая свободна).
-        False — если решение не найдено: робот не двигается, требуется
-        ручное вмешательство."""
-        s   = self.robot_state
-        cfg = self.cfg
-        # Сбрасываем «failed» от предыдущих попыток, если был.
-        if s.thinking == "failed":
-            s.thinking = "idle"
-        # Импорт локально — модуль может отсутствовать в редких сборках.
-        import path_planner as pp
-
-        zones = [pp.Obstacle(z.x, z.y, z.radius)
-                 for z in self.world.danger_zones]
-        if not zones:
-            await self._run_goto_direct(target_x, target_y)
-            return True
-
-        # Раздутие = корпус + небольшой запас на K-turn-свинг.
-        # Между waypoint'ами _run_goto_direct может выписывать дуги, которые
-        # отклоняются от прямой линии. Полная компенсация (≈ robot_length)
-        # делает проходы между близкими зонами вообще непроходимыми, поэтому
-        # берем половину — баланс между свободой и безопасностью.
-        robot_inflation = (max(cfg.robot_length_cm, cfg.robot_width_cm) / 2.0
-                           + cfg.robot_length_cm / 2.0)
-        safety = cfg.wall_thickness_cm   # «Запас безопасности» = wall_thickness
-
-        # Прямая свободна? Тогда планировщик не нужен.
-        if not pp.line_hits_zones((s.x, s.y), (target_x, target_y),
-                                   zones, robot_inflation, safety):
-            await self._run_goto_direct(target_x, target_y)
-            return True
-
-        # Режим manual — НЕ ищем обход вообще. Передаём управление
-        # пользователю сразу при первом goto, путь которого пересекает зону.
-        algo_choice = (cfg.cautious_follow_algo or "pure_pursuit").lower()
-        if algo_choice == "manual":
-            await self._pause_for_manual_handoff(
-                target_x, target_y,
-                "Путь к цели пересекает зону, авто-обход отключён.")
-            return True
-
-        # Нужен обход — запускаем A*.
-        await self.push_message(
-            "⚠ Прямой путь к цели пересекает опасную зону. Ищу обход…",
-            "warning")
-        s.thinking = "planning"
-        await self.push_state()
-        try:
-            # Прерываем выполнение управления — пока думаем, ничего не двигаем.
-            await asyncio.sleep(0)   # give scheduler a tick — UI получит spinner
-            waypoints = pp.plan_path(
-                (s.x, s.y), (float(target_x), float(target_y)),
-                zones,
-                world_w=self.world.width,
-                world_h=self.world.height,
-                wall_thickness=cfg.wall_thickness_cm,
-                robot_inflation=robot_inflation,
-                cell_size=float(cfg.path_cell_size_cm),
-                safety_margin=safety,
-            )
-        finally:
-            # thinking сбросим ниже — после успеха/провала
-            pass
-
-        if not waypoints:
-            # A* не нашёл прохода — fallback в manual: пользователь сам
-            # объедет/удалит зону, потом ▶ Продолжить.
-            await self._pause_for_manual_handoff(
-                target_x, target_y,
-                "Авто-обход не нашёл прохода между зонами.")
-            return True
-
-        # Выбор алгоритма обхода. Linear — идём прямыми по углам A*,
-        # повороты на месте (K-turn) в каждой вершине. Остальные — гладкая
-        # дуга через Чайкин + pure-pursuit/stanley follower.
-        algo = (cfg.cautious_follow_algo or "pure_pursuit").lower()
-        if algo == "linear":
-            # Подсветка пути на canvas — сами A*-углы (полилиния).
-            self.world.add_auto_segment(waypoints)
-            s.thinking = "idle"
-            await self.push_world()
-            await self.push_state()
-            ok = await self._follow_linear(waypoints)
-        else:
-            # Сглаживаем ломаную в дугообразную кривую (Чайкин 3 итерации)
-            # и пересэмплируем равномерно — pure-pursuit нужен плотный путь.
-            smooth = pp.chaikin_smooth(waypoints, iterations=3)
-            dense  = pp.resample_curve(smooth, step_cm=5.0)
-            # Фиксируем сегмент для фиолетовой подсветки на canvas.
-            self.world.add_auto_segment(smooth)
-            s.thinking = "idle"
-            await self.push_world()  # сегмент должен появиться сразу
-            await self.push_state()
-            # Pure-pursuit / Stanley follow: робот непрерывно крутит рулем
-            # к точке впереди, без K-turn'ов и резких разворотов.
-            ok = await self._follow_curve(dense)
-
-        # Финальная доводка: следящий алгоритм почти всегда заканчивает
-        # с небольшим отклонением (5–30 см) — pure-pursuit срезает углы,
-        # Stanley может оставить боковую ошибку. Если прямая от текущей
-        # позиции до цели УЖЕ свободна от зон — добиваем через
-        # _run_goto_direct (умеет K-turn + прямую) и считаем успехом.
-        remaining = math.hypot(target_x - s.x, target_y - s.y)
-        if remaining > 5.0:
-            line_clear = not pp.line_hits_zones(
-                (s.x, s.y), (target_x, target_y),
-                zones, robot_inflation, safety)
-            if line_clear:
-                await self._run_goto_direct(float(target_x), float(target_y))
-                remaining = math.hypot(target_x - s.x, target_y - s.y)
-
-        if remaining < 10.0:
-            return True
-        if not ok:
-            # Follower обрвалcя (касание зоны/стены/обрыв пути). Fallback
-            # в manual: пользователь дорулит, потом ▶ Продолжить.
-            await self._pause_for_manual_handoff(
-                target_x, target_y,
-                f"Автоматическое следование сорвалось ({algo}). "
-                f"Осталось {remaining:.0f} см.")
-            return True
-        return True
-
-    @staticmethod
-    def _curvature_speed_factor(points: list[tuple[float, float]],
-                                 idx: int,
-                                 lookahead_pts: int = 10) -> float:
-        """Доля от номинальной скорости в зависимости от кривизны пути впереди.
-        Чем круче поворот в окне `lookahead_pts` — тем больше замедление.
-        Возвращает 0.4..1.0."""
-        n = len(points)
-        if idx >= n - 2:
-            return 1.0
-        end = min(idx + lookahead_pts, n - 1)
-        if end - idx < 2:
-            return 1.0
-        total_turn = 0.0
-        prev_a = None
-        for i in range(idx, end):
-            dx = points[i + 1][0] - points[i][0]
-            dy = points[i + 1][1] - points[i][1]
-            if dx * dx + dy * dy < 1e-6:
-                continue
-            a = math.atan2(dx, dy)
-            if prev_a is not None:
-                diff = (a - prev_a + 3 * math.pi) % (2 * math.pi) - math.pi
-                total_turn += abs(diff)
-            prev_a = a
-        # 0 рад → 1.0; π/2 рад (90°) → ~0.4
-        factor = max(0.4, 1.0 - total_turn * 0.6)
-        return factor
-
-    @staticmethod
-    def _approach_speed_factor(points: list[tuple[float, float]],
-                                idx: int,
-                                robot_x: float,
-                                robot_y: float,
-                                slow_zone_cm: float = 60.0,
-                                min_factor:   float = 0.20) -> float:
-        """Замедление на финише: чем ближе конец пути, тем медленнее.
-        Учитывает И оставшуюся длину пути от ближайшей точки, И прямое
-        расстояние от робота до цели (если робот срезал угол и оказался
-        близко к цели «по воздуху», тоже надо тормозить).
-
-        Линейно: за `slow_zone_cm` до конца — full, у самого конца —
-        `min_factor`. Берется минимум из двух метрик."""
-        n = len(points)
-        if n == 0:
-            return 1.0
-        # 1) Длина оставшегося пути от idx до конца
-        remaining_path = 0.0
-        if idx < n - 1:
-            for i in range(idx, n - 1):
-                dx = points[i + 1][0] - points[i][0]
-                dy = points[i + 1][1] - points[i][1]
-                remaining_path += math.hypot(dx, dy)
-                if remaining_path >= slow_zone_cm:
-                    remaining_path = slow_zone_cm
-                    break
-        # 2) Прямое расстояние до цели от текущей позиции робота
-        gx, gy = points[-1]
-        direct = math.hypot(gx - robot_x, gy - robot_y)
-        # Берем более жесткое (меньшее) из двух
-        eff = min(remaining_path, direct)
-        if eff >= slow_zone_cm:
-            return 1.0
-        t = eff / max(1.0, slow_zone_cm)
-        return min_factor + (1.0 - min_factor) * t
-
-    async def _pause_for_manual_handoff(self,
-                                          target_x: float, target_y: float,
-                                          reason: str) -> None:
-        """Останавливает робота и блокирует exec-цепочку программы до
-        ▶ Продолжить от пользователя. Используется когда:
-          • cautious + algo="manual" — на любой пересекающий зону goto
-          • cautious + algo=(pp|stanley|linear) FAIL — fallback из «не нашёл/
-            не доехал» в ручной режим (раз автоматика не справилась).
-        Поднимает `s.awaiting_user` и `thinking=awaiting_user` — UI показывает
-        кнопку ▶ Продолжить. Голос/кнопки/руль работают как обычно: они
-        идут через handle_command, а не через exec, поэтому не блокированы.
-        После возобновления exec продолжает СЛЕДУЮЩУЮ инструкцию (не goto)."""
-        s = self.robot_state
-        # Гарантированно тормозим и центрируем руль.
-        await self.robot.stop()
-        await self.robot.set_servo_center()
-        s.speed = 0
-        s.dist_left = 0
-        s.steer = 0.0
-        s.thinking = "awaiting_user"
-        s.awaiting_user = True
-        self._resume_event.clear()
-        await self.push_message(
-            f"⏸ {reason} Цель ({target_x:.0f}, {target_y:.0f}). "
-            f"Рули вручную и жми ▶ Продолжить.",
-            "warning")
-        await self.push_state()
-        # Ждём от пользователя ▶ Продолжить. Это блокирующая точка для
-        # exec-программы — handle_command (voice/buttons) работает в
-        # параллельной задаче и НЕ затронут.
-        await self._resume_event.wait()
-        s.thinking = "idle"
-        s.awaiting_user = False
-        await self.push_state()
-        # Глобальный СТОП тоже дёргает _resume_event.set(), но при этом
-        # взводит _python_cancel_flag. Здесь молча выходим — следующий
-        # вызов robot.X() в коде пользователя сразу кинет RobotInterrupted,
-        # сообщение «программа возобновлена» в этом случае было бы ложью.
-        flag = getattr(self, "_python_cancel_flag", None)
-        if flag is not None and flag.is_set():
-            return
-        await self.push_message("▶ Программа возобновлена.", "info")
-
-    async def _follow_curve(self, points: list[tuple[float, float]]) -> bool:
-        """Диспетчер следования за кривой. Алгоритм выбирается из настроек."""
-        algo = self.cfg.cautious_follow_algo or "pure_pursuit"
-        if algo == "stanley":
-            return await self._follow_stanley(points)
-        return await self._follow_pure_pursuit(points)
-
-    async def _follow_linear(self,
-                              waypoints: list[tuple[float, float]]) -> bool:
-        """Линейный обход: едем по A*-углам прямыми отрезками, в каждой
-        вершине ломаной выполняем K-turn (поворот на месте) к следующей
-        точке. Без сглаживания — точно по полилинии.
-
-        Плюсы: предсказуемо, попадает в каждую вершину; полезно для
-        учебного режима и отладки (обучающийся видит как робот
-        дискретно следует за планом).
-        Минусы: ×N дольше из-за разворотов на месте.
-
-        Возвращает True если дошли до последнего сегмента без обрыва."""
-        s = self.robot_state
-        spd = self.cfg.move_speed
-        if len(waypoints) < 2:
-            return True
-        for i in range(1, len(waypoints)):
-            nx, ny = waypoints[i]
-            dx = nx - s.x
-            dy = ny - s.y
-            dist = math.hypot(dx, dy)
-            # Очень короткий сегмент (< 2 см) — пропускаем, мы и так в точке.
-            if dist < 2.0:
-                continue
-            # Курс к следующей вершине. atan2(dx, dy) т.к. heading=0 на север (Y+).
-            target_heading = math.degrees(math.atan2(dx, dy)) % 360.0
-            diff = (target_heading - s.heading + 540.0) % 360.0 - 180.0
-            # K-turn только если курс реально не совпадает — экономим время.
-            if abs(diff) > 3.0:
-                try:
-                    await self._k_turn_to_heading(target_heading)
-                except asyncio.CancelledError:
-                    return False
-            try:
-                await self._run_forward(dist, spd)
-            except asyncio.CancelledError:
-                return False
-            # Если дальномер обрезал движение перед стеной / физика остановила
-            # раньше — не пытаемся продолжать ломаную, путь блокирован.
-            actual_to_target = math.hypot(s.x - nx, s.y - ny)
-            if actual_to_target > max(15.0, 0.3 * dist):
-                return False
-        return True
-
-    async def _align_to_path_start(self,
-                                    points: list[tuple[float, float]]) -> None:
-        """Если робот смотрит сильно мимо начала пути — сначала развернемся
-        K-turn'ом, чтобы pure-pursuit не уводило в круг минимального радиуса."""
-        s = self.robot_state
-        if len(points) < 2:
-            return
-        dx = points[1][0] - points[0][0]
-        dy = points[1][1] - points[0][1]
-        if dx * dx + dy * dy < 1.0:
-            return
-        path_heading = math.degrees(math.atan2(dx, dy))
-        diff = (path_heading - s.heading + 540.0) % 360.0 - 180.0
-        # Порог 50° — если больше, мы заведомо не «поймаем» цель рулем
-        if abs(diff) > 50.0:
-            await self._k_turn_to_heading(path_heading)
-
-    def _direct_to_goal_clear(self, gx: float, gy: float) -> bool:
-        """True если прямая от текущей позиции робота до (gx, gy) свободна
-        от опасных зон (с учетом раздутия по корпусу + safety_margin).
-        Используется follower'ом для динамической перепланировки:
-        как только препятствия пройдены — выходим и доводим прямой."""
-        if not self.world.danger_zones:
-            return True
-        import path_planner as pp
-        s = self.robot_state
-        zones = [pp.Obstacle(z.x, z.y, z.radius) for z in self.world.danger_zones]
-        infl = (max(self.cfg.robot_length_cm, self.cfg.robot_width_cm) / 2.0
-                + self.cfg.robot_length_cm / 2.0)
-        return not pp.line_hits_zones((s.x, s.y), (gx, gy),
-                                       zones, infl, self.cfg.wall_thickness_cm)
-
-    async def _follow_pure_pursuit(self, points: list[tuple[float, float]]) -> bool:
-        """Pure-pursuit: руль крутится к точке на расстоянии LOOKAHEAD впереди.
-        Плавно срезает углы. Подходит большинству сцен.
-
-        Дополнительно: каждые ~0.5 сек проверяет, свободна ли прямая до
-        цели — если да, выходит из кривой (наружный wrapper доведет прямой)."""
-        if not points or len(points) < 2:
-            return True
-        s   = self.robot_state
-        cfg = self.cfg
-        base_spd  = cfg.move_speed
-        MAX_STEER = float(cfg.turn_angle)
-        LOOKAHEAD = max(30.0, cfg.robot_length_cm * 1.5)
-        TOL_CM    = 5.0
-        TIMEOUT_S = 90.0
-        # Если стоим лицом не туда — сначала разворачиваемся
-        await self._align_to_path_start(points)
-
-        await self.robot.set_angle(0)
-        await self.robot.move(base_spd)
-        s.speed      = float(base_spd)
-        s.dist_left  = 0.0
-        s.laser_stop = bool(cfg.laser_enabled)
-
-        gx, gy = points[-1]
-        last_idx = 0
-        deadline = time.monotonic() + TIMEOUT_S
-        tick     = 0      # счетчик для динамической перепланировки
-        # Антизалипание: засчитываем прогресс ЛИБО продвижение по индексу
-        # пути, ЛИБО приближение к цели «по воздуху». Это защищает от двух
-        # сценариев: вращение в круге (нет ни того, ни другого) И срезание
-        # угла (индекс не растет, но дистанция до цели падает).
-        last_progress_idx  = 0
-        last_progress_dist = math.hypot(gx - s.x, gy - s.y)
-        last_progress_time = time.monotonic()
-        STUCK_S = 6.0
-
-        try:
-            while True:
-                if math.hypot(gx - s.x, gy - s.y) < TOL_CM:
-                    return True
-                if s.speed == 0:
-                    return False
-                now = time.monotonic()
-                if now > deadline:
-                    return False
-
-                # Динамическая перепланировка: каждые ~0.5 сек проверяем,
-                # свободна ли уже прямая до цели. Если да — выходим, наружный
-                # wrapper доведет через _run_goto_direct (он умеет K-turn).
-                tick += 1
-                if tick % 5 == 0 and self._direct_to_goal_clear(gx, gy):
-                    return True
-
-                # Ближайшая точка на пути от прошлого индекса
-                best_i = last_idx
-                best_d2 = float('inf')
-                for i in range(last_idx, len(points)):
-                    dx = points[i][0] - s.x
-                    dy = points[i][1] - s.y
-                    d2 = dx * dx + dy * dy
-                    if d2 < best_d2:
-                        best_d2 = d2
-                        best_i  = i
-                    elif d2 > best_d2 + 100.0:
-                        break
-                last_idx = best_i
-
-                # Антизалипание (круг)
-                # Прогресс — это ЛИБО продвижение по индексу пути, ЛИБО
-                # сокращение прямого расстояния до цели хотя бы на 5 см.
-                # Без второй метрики антизалипание ложно срабатывало,
-                # когда робот срезает угол и идет к цели «по воздуху».
-                cur_dist = math.hypot(gx - s.x, gy - s.y)
-                if best_i > last_progress_idx or cur_dist < last_progress_dist - 5.0:
-                    last_progress_idx  = best_i
-                    last_progress_dist = cur_dist
-                    last_progress_time = now
-                elif now - last_progress_time > STUCK_S:
-                    return False
-
-                # Точка-цель на LOOKAHEAD впереди
-                target_i = best_i
-                accumulated = 0.0
-                for i in range(best_i, len(points) - 1):
-                    seg = math.hypot(points[i + 1][0] - points[i][0],
-                                     points[i + 1][1] - points[i][1])
-                    accumulated += seg
-                    if accumulated >= LOOKAHEAD:
-                        target_i = i + 1
-                        break
-                else:
-                    target_i = len(points) - 1
-                tx, ty = points[target_i]
-
-                bx, by = tx - s.x, ty - s.y
-                if bx * bx + by * by < 1.0:
-                    tx, ty = points[-1]
-                    bx, by = tx - s.x, ty - s.y
-                bearing = math.degrees(math.atan2(bx, by))
-                heading_diff = (bearing - s.heading + 540.0) % 360.0 - 180.0
-
-                # Меньший коэффициент — мягче руль, нет «закусывания» в круг
-                desired_steer = max(-MAX_STEER,
-                                    min(MAX_STEER, heading_diff * 0.7))
-                if abs(desired_steer - s.steer) > 0.5:
-                    await self.robot.set_angle(int(desired_steer))
-                    s.steer = float(desired_steer)
-
-                # Замедление: на поворотах И на подходе к концу пути.
-                # approach_speed_factor смотрит и на оставшийся путь, и на
-                # прямое расстояние до цели — берет более жесткое.
-                approach = self._approach_speed_factor(points, best_i, s.x, s.y)
-                if cfg.cautious_slow_curves:
-                    curvy = self._curvature_speed_factor(points, best_i)
-                    factor = min(approach, curvy)
-                else:
-                    factor = approach
-                target_spd = base_spd * factor
-                if abs(target_spd - s.speed) > 1.5:
-                    await self.robot.move(target_spd)
-                    s.speed = float(target_spd)
-
-                await asyncio.sleep(0.1)
-        except asyncio.CancelledError:
-            return False
-        finally:
-            s.speed      = 0
-            s.steer      = 0.0
-            s.dist_left  = 0
-            s.laser_stop = False
-            try:
-                await self.robot.move(0)
-                await self.robot.set_servo_center()
-            except Exception:
-                pass
-
-    async def _follow_stanley(self, points: list[tuple[float, float]]) -> bool:
-        """Stanley controller (Stanford / DARPA Grand Challenge):
-            steer = heading_error + atan(K · cross_track_error / velocity)
-
-        Учитывает не только направление, но и боковое смещение от пути —
-        активно стягивает робота обратно на линию. Точнее pure-pursuit
-        на длинных кривых, но может быть резче на тугих поворотах."""
-        if not points or len(points) < 2:
-            return True
-        s   = self.robot_state
-        cfg = self.cfg
-        base_spd  = cfg.move_speed
-        MAX_STEER = float(cfg.turn_angle)
-        # K_CROSS: чем больше — тем активнее тянет на путь, но тем неустойчивей.
-        # 0.6 дает мягкое доведение без раскачки.
-        K_CROSS   = 0.6
-        # В знаменателе используем НОМИНАЛЬНУЮ скорость, не текущую.
-        # При slow_curves текущая скорость падает до 11 см/с — atan(K·cte/v)
-        # тогда взрывается на любом боковом смещении и вызывает раскачку.
-        # Стабильность Stanley важнее реакции на малой скорости.
-        SOFTEN_V  = max(20.0, base_spd / 100.0 * cfg.speed_at_100)
-        TOL_CM    = 5.0
-        TIMEOUT_S = 90.0
-        # Если стоим лицом не туда — сначала разворачиваемся
-        await self._align_to_path_start(points)
-
-        await self.robot.set_angle(0)
-        await self.robot.move(base_spd)
-        s.speed      = float(base_spd)
-        s.dist_left  = 0.0
-        s.laser_stop = bool(cfg.laser_enabled)
-
-        gx, gy = points[-1]
-        last_idx = 0
-        deadline = time.monotonic() + TIMEOUT_S
-        # См. комментарий выше про антизалипание (тот же подход, что в pure-pursuit).
-        last_progress_idx  = 0
-        last_progress_dist = math.hypot(gx - s.x, gy - s.y)
-        last_progress_time = time.monotonic()
-        STUCK_S = 6.0
-        tick = 0     # счетчик для динамической перепланировки
-
-        try:
-            while True:
-                if math.hypot(gx - s.x, gy - s.y) < TOL_CM:
-                    return True
-                if s.speed == 0:
-                    return False
-                now = time.monotonic()
-                if now > deadline:
-                    return False
-
-                # Динамическая перепланировка: каждые ~0.5 сек проверяем,
-                # свободна ли уже прямая до цели.
-                tick += 1
-                if tick % 5 == 0 and self._direct_to_goal_clear(gx, gy):
-                    return True
-
-                # Ближайшая точка на пути
-                best_i = last_idx
-                best_d2 = float('inf')
-                for i in range(last_idx, len(points)):
-                    dx = points[i][0] - s.x
-                    dy = points[i][1] - s.y
-                    d2 = dx * dx + dy * dy
-                    if d2 < best_d2:
-                        best_d2 = d2
-                        best_i  = i
-                    elif d2 > best_d2 + 100.0:
-                        break
-                last_idx = best_i
-
-                # Антизалипание (круг)
-                # Прогресс — это ЛИБО продвижение по индексу пути, ЛИБО
-                # сокращение прямого расстояния до цели хотя бы на 5 см.
-                # Без второй метрики антизалипание ложно срабатывало,
-                # когда робот срезает угол и идет к цели «по воздуху».
-                cur_dist = math.hypot(gx - s.x, gy - s.y)
-                if best_i > last_progress_idx or cur_dist < last_progress_dist - 5.0:
-                    last_progress_idx  = best_i
-                    last_progress_dist = cur_dist
-                    last_progress_time = now
-                elif now - last_progress_time > STUCK_S:
-                    return False
-
-                px, py = points[best_i]
-
-                # Касательная к пути в этой точке
-                j = min(best_i + 1, len(points) - 1)
-                if j == best_i and best_i > 0:
-                    pp_prev = points[best_i - 1]
-                    tx_dir = px - pp_prev[0]
-                    ty_dir = py - pp_prev[1]
-                else:
-                    tx_dir = points[j][0] - px
-                    ty_dir = points[j][1] - py
-                t_len = math.hypot(tx_dir, ty_dir)
-                if t_len < 1e-6:
-                    tx_dir, ty_dir = 0.0, 1.0
-                    t_len = 1.0
-                tx_dir /= t_len
-                ty_dir /= t_len
-
-                # heading_error: разница между текущим heading и направлением пути
-                path_heading = math.degrees(math.atan2(tx_dir, ty_dir))
-                heading_diff = (path_heading - s.heading + 540.0) % 360.0 - 180.0
-
-                # Cross-track error (signed). Используем нормаль СЛЕВА от tangent
-                # = (-ty_dir, tx_dir). Положительный CTE = робот СЛЕВА от пути,
-                # значит надо рулить ВПРАВО (положительный steer).
-                # Для соответствия знакам нашего steering — формула стандартная.
-                offset_x = s.x - px
-                offset_y = s.y - py
-                # Перпендикуляр от пути направо = (ty_dir, -tx_dir)
-                # CTE = (right_normal · offset) — положителен когда робот справа.
-                cte = ty_dir * offset_x - tx_dir * offset_y
-
-                # Используем НОМИНАЛЬНУЮ скорость как «v» для Стэнли.
-                # Так формула остается стабильной даже когда slow_curves
-                # снизил реальную скорость почти до нуля у финиша.
-                v_for_atan = SOFTEN_V
-
-                # Stanley formula: положительный CTE справа → рулим ВЛЕВО
-                # (отрицательный atan), отсюда МИНУС перед atan.
-                cte_term_deg = -math.degrees(math.atan2(K_CROSS * cte, v_for_atan))
-                desired_steer = heading_diff + cte_term_deg
-                desired_steer = max(-MAX_STEER, min(MAX_STEER, desired_steer))
-
-                if abs(desired_steer - s.steer) > 0.5:
-                    await self.robot.set_angle(int(desired_steer))
-                    s.steer = float(desired_steer)
-
-                # Замедление: на поворотах И на подходе к концу пути.
-                # approach_speed_factor теперь требует robot_x/y — учитывает
-                # и оставшийся путь, и прямое расстояние до цели.
-                approach = self._approach_speed_factor(points, best_i, s.x, s.y)
-                if cfg.cautious_slow_curves:
-                    curvy = self._curvature_speed_factor(points, best_i)
-                    factor = min(approach, curvy)
-                else:
-                    factor = approach
-                target_spd = base_spd * factor
-                if abs(target_spd - s.speed) > 1.5:
-                    await self.robot.move(target_spd)
-                    s.speed = float(target_spd)
-
-                await asyncio.sleep(0.1)
-        except asyncio.CancelledError:
-            return False
-        finally:
-            s.speed      = 0
-            s.steer      = 0.0
-            s.dist_left  = 0
-            s.laser_stop = False
-            try:
-                await self.robot.move(0)
-                await self.robot.set_servo_center()
-            except Exception:
-                pass
-
     async def _run_goto_direct(self, target_x: float, target_y: float):
         """Заход в точку с проверкой и повторными попытками.
 
@@ -2258,34 +1629,6 @@ class UserSession:
         await self.push_code_append(code, desc)
 
     @staticmethod
-    def _autopilot_thin(points: list) -> list:
-        """Прореживает плотную кривую до «узловых» точек: оставляет старт,
-        финиш и точки, где курс заметно (> 8°) меняется. Так сглаженный
-        маршрут едется немногими участками face+forward, а трасса при
-        этом повторяет плавную кривую."""
-        pts = [(float(x), float(y)) for x, y in points]
-        if len(pts) < 3:
-            return pts
-        nodes = [pts[0]]
-        run_h = None
-        for i in range(1, len(pts)):
-            ax, ay = nodes[-1]
-            bx, by = pts[i]
-            if math.hypot(bx - ax, by - ay) < 1.0:
-                continue
-            h = math.degrees(math.atan2(bx - ax, by - ay)) % 360.0
-            if run_h is None:
-                run_h = h
-            elif abs((h - run_h + 540.0) % 360.0 - 180.0) > 8.0:
-                # Курс к текущей точке заметно отклонился от курса прогона —
-                # фиксируем предыдущую точку как узел, начинаем новый прогон.
-                nodes.append(pts[i - 1])
-                run_h = None
-        if nodes[-1] != pts[-1]:
-            nodes.append(pts[-1])
-        return nodes
-
-    @staticmethod
     def _autopilot_clear_zones(points: list, obstacles: list,
                                min_clear: float) -> list:
         """Выталкивает точки сглаженной кривой НАРУЖУ из раздутых зон:
@@ -2357,9 +1700,13 @@ class UserSession:
 
     async def _follow_curve_smooth(self, route) -> None:
         """Плавное НЕПРЕРЫВНОЕ ведение по кривой (pure pursuit): робот
-        едет вперёд без остановок и поворотов на месте — каждый тик
-        подруливает к точке на LOOKAHEAD см впереди по сглаженной кривой.
-        Результат — сплошная плавная дуга.
+        едет вперёд без остановок — каждый тик подруливает к точке на
+        LOOKAHEAD см впереди по сглаженной кривой. Результат — сплошная
+        плавная дуга.
+
+        Перед стартом робот ОДИН раз доворачивается на месте носом вдоль
+        начала кривой: иначе pure-pursuit с произвольного курса заложил
+        бы широкую дугу-коррекцию и мог зацепить зону на старте.
 
         `route` — опорные точки (ломаная); внутри сглаживается Чайкином
         и очищается от заезда в зоны (_smooth_route). Команда `robot.curve`
@@ -2374,6 +1721,19 @@ class UserSession:
         LOOKAHEAD = 30.0
         GAIN      = 1.7
         gx, gy    = pts[-1]
+        # Доворот на месте носом вдоль начала кривой. Точка на LOOKAHEAD см
+        # вперёд по кривой задаёт желаемый стартовый курс. Если робот уже
+        # смотрит почти туда (≤ 25°) — pure-pursuit выправит сам, лишний
+        # K-turn не делаем.
+        aim_j, aim_acc = 0, 0.0
+        while aim_j < len(pts) - 1 and aim_acc < LOOKAHEAD:
+            aim_acc += math.hypot(pts[aim_j + 1][0] - pts[aim_j][0],
+                                  pts[aim_j + 1][1] - pts[aim_j][1])
+            aim_j += 1
+        ax, ay = pts[aim_j]
+        init_h = math.degrees(math.atan2(ax - s.x, ay - s.y)) % 360.0
+        if abs((init_h - s.heading + 540.0) % 360.0 - 180.0) > 25.0:
+            await self._run_face_cardinal(init_h, "началу маршрута")
         await self.robot.set_angle(0)
         await self.robot.move(spd)
         s.speed = float(spd)
@@ -2992,77 +2352,6 @@ class UserSession:
         beta  = 2.0 * math.degrees(math.asin(s_half / 2.0))
         alpha = (d - beta) / 2.0
         return R * math.sin(math.radians(alpha))
-
-    @staticmethod
-    def _kturn_step_extents(step_deg: float, direction: int, R: float,
-                             body_l: float = 0.0, body_w: float = 0.0
-                             ) -> tuple[float, float, float, float]:
-        """Численно прокручивает 3-дуговой K-turn step_deg в указанном
-        direction (±1) и возвращает (forward, backward, right, left) —
-        максимальное удаление корпуса робота (с учётом 4 углов
-        прямоугольника L×W) от стартовой позиции в start-heading frame.
-
-        forward = +y (по курсу),  backward = -y,
-        right   = +x (heading+90), left = -x (heading-90).
-
-        Все 4 значения ≥ 0. Применяется в `_pick_kturn_step_count` для
-        проверки 4-сторонних клиренсов до стен."""
-        if step_deg <= 0.5:
-            # Очень маленький шаг — только габарит робота
-            return (0.0, body_l, body_w / 2.0, body_w / 2.0)
-        half = math.radians(step_deg / 2.0)
-        s_half = math.sin(half)
-        if abs(s_half / 2.0) > 1.0:
-            return (R, R, R, R)
-        beta_deg  = 2.0 * math.degrees(math.asin(s_half / 2.0))
-        alpha_deg = (step_deg - beta_deg) / 2.0
-
-        # 4 угла корпуса в локальной (start-heading) системе при позиции
-        # (x, y) и курсе h_deg. Нос — это (x, y); корпус уходит назад на body_l.
-        def body_corners(x, y, h_deg):
-            hr  = math.radians(h_deg)
-            sh, ch = math.sin(hr), math.cos(hr)
-            # перпендикуляр (вправо от курса): (cos h, -sin h)
-            half_w = body_w / 2.0
-            nose_l = (x - ch * half_w, y + sh * half_w)
-            nose_r = (x + ch * half_w, y - sh * half_w)
-            rx = x - sh * body_l
-            ry = y - ch * body_l
-            rear_l = (rx - ch * half_w, ry + sh * half_w)
-            rear_r = (rx + ch * half_w, ry - sh * half_w)
-            return [nose_l, nose_r, rear_l, rear_r]
-
-        # Дискретная прокрутка дуги ~1° на микрошаг, как в физике.
-        def trace_arc(x, y, h, sweep_signed_deg, drive_sign):
-            steps = max(1, int(math.ceil(abs(sweep_signed_deg))))
-            d_head = sweep_signed_deg / steps
-            ds     = R * math.radians(abs(d_head))
-            corners_all = []
-            for _ in range(steps):
-                h += d_head
-                hr = math.radians(h)
-                x += drive_sign * math.sin(hr) * ds
-                y += drive_sign * math.cos(hr) * ds
-                corners_all.extend(body_corners(x, y, h))
-            return x, y, h, corners_all
-
-        all_corners = list(body_corners(0.0, 0.0, 0.0))
-        # Дуга 1: вперёд, heading += direction · α
-        x, y, h, c1 = trace_arc(0.0, 0.0, 0.0, direction * alpha_deg, +1)
-        all_corners.extend(c1)
-        # Дуга 2: назад, heading += direction · β
-        x, y, h, c2 = trace_arc(x, y, h, direction * beta_deg, -1)
-        all_corners.extend(c2)
-        # Дуга 3: вперёд, heading += direction · α
-        x, y, h, c3 = trace_arc(x, y, h, direction * alpha_deg, +1)
-        all_corners.extend(c3)
-
-        xs = [c[0] for c in all_corners]
-        ys = [c[1] for c in all_corners]
-        return (max(0.0, max(ys)),
-                max(0.0, -min(ys)),
-                max(0.0, max(xs)),
-                max(0.0, -min(xs)))
 
     @staticmethod
     def _pick_kturn_step_count(diff: float, forward_have: float,
@@ -4563,13 +3852,9 @@ class UserSession:
             await self._run_pause(secs)
             msg = f"Пауза {secs:g} с завершена."
         elif intent == "resume":
-            # Возобновляет программу, паузнутую _pause_for_manual_handoff.
-            # Если ждать не на чем — мягкая ошибка.
-            if not getattr(s, "awaiting_user", False):
-                msg, ok = "Сейчас программа не на паузе — нечего возобновлять.", False
-            else:
-                self._resume_event.set()
-                msg = "▶ Возобновляю программу."
+            # Ручной handoff с ожиданием ▶ убран; паузой программы
+            # управляют кнопки ⏸ Пауза / ▶ Продолжить, а не эта команда.
+            msg, ok = "Сейчас программа не на паузе — нечего возобновлять.", False
         elif intent == "set_algorithm_zone":
             xy = nlu.extract_coordinates(raw)
             r = nlu.extract_radius(raw)

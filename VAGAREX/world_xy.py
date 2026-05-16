@@ -45,20 +45,15 @@ class RobotStateXY:
     laser_stop: bool  = False  # остановить когда лазер ≤ WALL_THICKNESS_CM
     light_color: tuple = (0, 0, 0)
     battery:    float = 100.0  # заряд аккумулятора, 0..100%
-    # Состояние «робот думает» (планировщик в режиме «осторожно»):
-    #   "idle"           — обычное
-    #   "planning"       — фиолетовая иконка 🖥, идет A*-поиск пути
-    #   "failed"         — красная иконка, путь не найден, нужен ручной режим
-    #   "awaiting_user"  — пауза: ждём ▶ Продолжить от пользователя
+    # Состояние «робот думает»:
+    #   "idle"      — обычное
+    #   "planning"  — фиолетовая иконка 🖥, идёт A*-поиск пути (автопилот)
+    #   "failed"    — красная иконка, путь не найден
     thinking:   str   = "idle"
     # True пока идёт K-turn (разворот на месте Reeds-Shepp). На этом
     # участке робот делает forward/back и физически уходит со связи
     # waypoint-to-waypoint — оценка миссии должна игнорировать отклонения.
     turning_in_place: bool = False
-    # Программа сейчас стоит на ожидании ручного управления (cautious +
-    # algo="manual" или fallback при провале pp/stanley/linear). Выставляется
-    # в _pause_for_manual_handoff, сбрасывается при intent="resume".
-    awaiting_user:    bool = False
     # Образовательная пауза: пользователь нажал ⏸ Пауза. Робот замер,
     # программа стоит в текущей точке движения; ▶ Продолжить — возобновляет.
     # В отличие от ■ СТОП — exec НЕ убит, мотор возобновится с тем же
@@ -169,7 +164,6 @@ def state_to_dict(state: RobotStateXY) -> dict:
         "light_color": list(state.light_color),
         "battery":   state.battery,
         "thinking":  state.thinking,
-        "awaiting_user": state.awaiting_user,
         "program_paused": state.program_paused,
         "zone_mode": state.zone_mode,
     }
