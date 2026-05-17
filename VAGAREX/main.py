@@ -852,6 +852,14 @@ async def missions_save_custom(request: Request,
     waypoints: list[list[float]] = (
         [[x, y] for x, y in key[1:]] if len(key) > 1 else [])
 
+    # Контрольных точек нет, хотя путь на поле есть. Типичный случай:
+    # маршрут построен 🧭 Автопилотом — он ведёт робота и дописывает код,
+    # но его движения идут мимо _run_segment, поэтому _traj_segments пуст.
+    # Просим клиент прогнать программу (▶) — тогда сгенерированные
+    # face/forward пройдут через RobotProxy и отрезки манёвров запишутся.
+    if not waypoints:
+        return JSONResponse({"error": "no_trajectory"})
+
     # Зоны: красные — pre-placed обстановка; жёлтые — обязательные действия.
     danger_zones = []
     actions_required = []

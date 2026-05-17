@@ -1512,8 +1512,9 @@
     }
     if (data.error === 'no_trajectory') {
       if (allowAutoRun) {
-        logMsg('На поле нет траектории — запускаю программу (▶), '
-               + 'после завершения сохраню миссию…', 'info');
+        logMsg('Перед сохранением прогоняю программу (▶) — '
+               + 'после прогона запишутся контрольные точки маршрута…',
+               'info');
         window._missionSaveTitle   = title;
         window._missionSavePending = true;
         runPythonCode();
