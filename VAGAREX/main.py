@@ -1788,7 +1788,15 @@ async def websocket_endpoint(ws: WebSocket):
                 # Галочки «Препятствия» (Опасные зоны / Зоны внимания).
                 # data["obstacles"] — список из {"danger", "attention"}.
                 obs = data.get("obstacles", [])
-                if isinstance(obs, list):
+                # Во время миссии (режим WM) набор препятствий зафиксирован
+                # пустым (только стены) — менять нельзя.
+                if sess._mission is not None:
+                    await sess.push_message(
+                        "🎯 Во время миссии препятствия зафиксированы "
+                        "(только стены). Заверши миссию, чтобы менять.",
+                        "warning")
+                    await sess.push_state()
+                elif isinstance(obs, list):
                     await sess.apply_obstacles_from_ui(obs)
             elif t == "set_zone_mode":
                 # ⛯ «Режим зон» — взаимоисключающий с Инспектором и

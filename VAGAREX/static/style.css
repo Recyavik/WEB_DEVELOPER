@@ -2098,7 +2098,9 @@ body { padding-bottom: 22px; }
 #btn-mode-inspector.is-locked,
 #btn-mode-cautious.is-locked,
 #btn-goto.is-locked,
-#btn-set-zone.is-locked {
+#btn-set-zone.is-locked,
+#btn-autopilot.is-locked,
+#btn-zone-mode.is-locked {
   opacity:        0.55;
   cursor:         not-allowed;
   filter:         grayscale(35%);

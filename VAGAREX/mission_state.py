@@ -84,15 +84,15 @@ def keypoints_from_segments(segments: list,
 
 # ── ActiveMission ──────────────────────────────────────────────────────────
 
-# Допуск попадания в waypoint = safety_margin_cm миссии (= Запас безопасности
-# пользователя на момент генерации). Это симметрично с проверкой отклонения
-# от траектории: можно отклоняться в пределах того же радиуса, в пределах
-# которого засчитывается точка. Проверяется не точка (которую робот может
-# «проскочить» между двумя кадрами на быстрой скорости), а ОТРЕЗОК движения
-# за один тик: точка засчитана, если её расстояние до отрезка
-# (prev_pos → curr_pos) ≤ safety_margin_cm.
-# Константа оставлена как fallback для миссий с safety_margin_cm = 0.
-WAYPOINT_FALLBACK_TOLERANCE_CM = 1.0
+# Допуск попадания в контрольную точку (см). Жёсткий и небольшой: точку
+# нужно посетить ТОЧНО, а не «проехать рядом». 5 см совпадает с точностью
+# захода автопилота (TOL_CM) и с типовым «Запасом безопасности» миссии.
+# Это НЕ то же, что track_tolerance_cm (габарит робота, ~20 см) — тот шире
+# и отвечает только за коридор следования траектории, не за зачёт точек.
+# Проверяется не позиция (её робот может «проскочить» между двумя кадрами
+# на быстрой скорости), а ОТРЕЗОК движения за тик: точка засчитана, если
+# её расстояние до отрезка (prev_pos → curr_pos) ≤ этого допуска.
+WAYPOINT_TOLERANCE_CM = 5.0
 
 # Радиус матчинга действия с зоной (для зон-действий).
 ACTION_TOLERANCE_CM = 15.0
@@ -123,6 +123,9 @@ class ActiveMission:
     title:            str = ""
     description:      str = ""
     level:            int = 1
+    # Допуск точности маршрута, см = габарит робота max(длина, ширина).
+    # Дальше этого от линии траектории — отклонение, точность падает.
+    track_tolerance_cm: float = 20.0
 
     # Динамическое состояние трекинга
     waypoints_visited: set[int] = field(default_factory=set)
@@ -133,7 +136,7 @@ class ActiveMission:
     last_robot_pos:    Optional[tuple[float, float]] = None
     started_at:        datetime = field(default_factory=datetime.utcnow)
     last_algo_duration_sec: Optional[float] = None
-    # Учёт наездов на опасные зоны (инспектор-режим L2). Используется
+    # Учёт наездов на опасные зоны. Используется
     # state-машина «exit-only counting»:
     #   inside       — робот ВПРЯМО СЕЙЧАС внутри этой зоны
     #   forgiven     — игрок выполнил действие (remove_danger/place_attention)
@@ -147,15 +150,6 @@ class ActiveMission:
     danger_zones_forgiven:  set[int] = field(default_factory=set)
     danger_zones_finalized: set[int] = field(default_factory=set)
 
-    # ── Режим миссии ─────────────────────────────────────────────────────
-
-    @property
-    def is_inspector(self) -> bool:
-        """Уровни 1-2 «инспектор» — без эталонной траектории.
-        Оценка идёт только по посещению точек, выполнению действий и
-        наездам на опасные зоны (каждый наезд −5% точности)."""
-        return self.level in (1, 2)
-
     # ── Трекинг отклонения и обновление коэффициента ─────────────────────
 
     def full_path(self) -> list[tuple[float, float]]:
@@ -163,25 +157,25 @@ class ActiveMission:
         return [(self.start_x, self.start_y), *self.waypoints]
 
     def update_coefficient(self, robot_x: float, robot_y: float) -> bool:
-        """Обновить коэффициент по текущей позиции робота.
+        """Обновить коэффициент точности по текущей позиции робота.
 
-        В обычном режиме: расстояние до эталонной траектории. В пределах
-        safety_margin — коэффициент растёт, вне — падает.
+        Эталон — ПЛОТНАЯ траектория автора `path` (если задана), иначе
+        ломаная старт→waypoints. Допуск — габарит робота `track_tolerance_cm`.
 
-        В инспектор-режиме (L1/L2): эталонной траектории нет, коэффициент
-        НЕ меняется по позиции. Штрафы идут только при наездах на опасные
-        зоны (`mark_danger_zone_hits`). Возвращает True если случился
-        переход «в margin / вне margin» (для журнала)."""
-        if self.is_inspector:
-            # Инспектор: проверяем только наезды на опасные зоны.
-            self._mark_danger_zone_hits(robot_x, robot_y)
-            return False
+        Точность — ХРАПОВИК ВНИЗ: вне допуска коэффициент падает, в
+        пределах допуска НЕ растёт. Вернувшись на маршрут, потерянную
+        точность вернуть нельзя — можно растерять её всю.
 
-        d = dist_to_path(robot_x, robot_y, self.full_path())
-        in_margin = d <= self.safety_margin_cm
-        if in_margin:
-            self.coefficient = min(1.0, self.coefficient + COEFF_STEP_PER_TICK)
-        else:
+        Наезды на опасные зоны (−5% за зону) учитываются всегда.
+        Возвращает True если случился переход «в margin / вне margin»
+        (для журнала)."""
+        self._mark_danger_zone_hits(robot_x, robot_y)
+
+        ref = self.path if len(self.path) >= 2 else self.full_path()
+        d = dist_to_path(robot_x, robot_y, ref)
+        in_margin = d <= self.track_tolerance_cm
+        # Храповик: только вниз. В допуске коэффициент не пополняется.
+        if not in_margin:
             self.coefficient = max(0.0, self.coefficient - COEFF_STEP_PER_TICK)
 
         transitioned = (in_margin != self.last_in_margin)
@@ -223,6 +217,47 @@ class ActiveMission:
                     new_hits += 1
         return new_hits
 
+    def finalize_remaining_zones(self) -> int:
+        """Закрыть учёт зон в конце миссии (вызывается из stop_mission).
+
+        Робот мог завершить прогон, ОСТАВШИСЬ внутри опасной зоны —
+        выхода не было, exit-only машина `_mark_danger_zone_hits` такую
+        зону не финализировала. Здесь добиваем только такие зоны:
+        прощена (действие выполнено внутри) → бесплатно, иначе −5%.
+
+        Зоны, которых робот вообще не касался, тут НЕ трогаются — они
+        не в `danger_zones_inside`, наездом не считаются.
+        Возвращает число штрафных зон."""
+        new_hits = 0
+        for i in list(self.danger_zones_inside):
+            if i in self.danger_zones_finalized:
+                continue
+            self.danger_zones_inside.discard(i)
+            self.danger_zones_finalized.add(i)
+            if i in self.danger_zones_forgiven:
+                self.danger_zones_forgiven.discard(i)
+            else:
+                self.coefficient = max(0.0, self.coefficient - 0.05)
+                new_hits += 1
+        return new_hits
+
+    def reset_for_new_run(self) -> None:
+        """Сброс динамики трекинга перед новым прогоном (▶ Проверка кода).
+
+        Оценивается только ПОСЛЕДНЕЕ исполнение — иначе старый успех даёт
+        звёзды даже после порчи кода. Учёт зон тоже обнуляется: финализация
+        прошлого прогона не должна «помнить» зоны в этом. Накопленное
+        время алгоритма (last_algo_duration_sec) НЕ сбрасывается."""
+        self.waypoints_visited.clear()
+        self.actions_done.clear()
+        self.coefficient    = 1.0
+        self.deviations     = 0
+        self.last_in_margin = True
+        self.last_robot_pos = None
+        self.danger_zones_inside.clear()
+        self.danger_zones_forgiven.clear()
+        self.danger_zones_finalized.clear()
+
     def forgive_current_zone_hits(self, robot_x: float, robot_y: float) -> None:
         """Помечает все опасные зоны, в которых сейчас находится робот,
         как «прощённые» — при выходе из них штраф −5% не начисляется.
@@ -239,9 +274,9 @@ class ActiveMission:
     def mark_waypoint_visits(self, robot_x: float, robot_y: float) -> list[int]:
         """Отметить waypoints, через которые робот ПРОЕХАЛ.
 
-        Допуск = safety_margin_cm миссии (Запас безопасности). Это тот же
-        радиус, в пределах которого «отклонение от траектории» считается
-        приемлемым — симметричная логика.
+        Допуск = `WAYPOINT_TOLERANCE_CM` (5 см) — жёсткий: точку нужно
+        посетить ТОЧНО. Это НЕ `track_tolerance_cm` (габарит робота,
+        ~20 см) — тот отвечает только за коридор следования траектории.
 
         Проверяется не точка (текущая позиция), а ОТРЕЗОК движения за
         один тик: точка засчитана, если расстояние от неё до отрезка
@@ -250,8 +285,7 @@ class ActiveMission:
         может уйти на 5-10 см и при точечной проверке промахнуться.
 
         На первом кадре отрезка ещё нет — fallback на точку."""
-        tolerance = self.safety_margin_cm if self.safety_margin_cm > 0 \
-                    else WAYPOINT_FALLBACK_TOLERANCE_CM
+        tolerance = WAYPOINT_TOLERANCE_CM
         prev = self.last_robot_pos
         self.last_robot_pos = (robot_x, robot_y)
         new = []
@@ -380,8 +414,11 @@ class ActiveMission:
 
 def from_mission_row(mission_row, user_id: int,
                      start_x: float, start_y: float,
-                     run_id: Optional[int] = None) -> ActiveMission:
-    """Создать ActiveMission из ORM-объекта Mission."""
+                     run_id: Optional[int] = None,
+                     track_tolerance_cm: float = 20.0) -> ActiveMission:
+    """Создать ActiveMission из ORM-объекта Mission.
+    `track_tolerance_cm` — габарит робота (max длина/ширина), допуск
+    точности маршрута; передаёт start_mission из cfg."""
     waypoints = [tuple(p) for p in json.loads(mission_row.waypoints or "[]")]
     danger    = [tuple(z) for z in json.loads(mission_row.danger_zones or "[]")]
     actions   = json.loads(mission_row.actions_required or "[]")
@@ -402,6 +439,7 @@ def from_mission_row(mission_row, user_id: int,
         danger_zones     = danger,
         actions_required = actions,
         safety_margin_cm = float(mission_row.safety_margin_cm or 5.0),
+        track_tolerance_cm = float(track_tolerance_cm),
         start_x          = start_x,
         start_y          = start_y,
     )

@@ -382,21 +382,10 @@ class RobotCanvas {
       ctx.restore();
     }
 
-    // 2) Опасные зоны миссии (предзаданы) — красные dashed.
-    (m.danger_zones || []).forEach(([x, y, r]) => {
-      const c = this.worldToCanvas(x, y);
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(c.x, c.y, r * this.scale, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(248,81,73,0.08)';
-      ctx.fill();
-      ctx.strokeStyle = '#f85149';
-      ctx.lineWidth = 1.2;
-      ctx.setLineDash([4, 3]);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.restore();
-    });
+    // 2) Опасные зоны миссии НЕ рисуем здесь: при старте миссии
+    //    start_mission кладёт их как настоящие зоны в world, и их уже
+    //    рисует _drawZones (красные пронумерованные). Рисовать их ещё
+    //    раз тут — дублирование (две концентричные окружности).
 
     // 3) Зоны внимания из actions_required — ЖЁЛТЫЙ пунктир + лёгкая
     //    жёлтая заливка (выполненные — зелёные). Жёлтый, а НЕ серый:

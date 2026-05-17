@@ -211,13 +211,13 @@
           _startMissionTimer();
           // Уровень ≥ 2 (опасные зоны) — режим зафиксирован «осторожно»
           // на всё время миссии. Сервер тоже не даст переключиться.
-          const hasDanger = Array.isArray(msg.mission.danger_zones)
-                            && msg.mission.danger_zones.length > 0;
-          _setModeButtonsLocked(hasDanger,
-            'Режим зафиксирован миссией с опасными зонами. '
-            + 'Завершите или остановите миссию, чтобы переключиться.');
-          // Запрещаем «📍 В точку…» — обучающийся составляет маршрут
-          // программно, а не телепортирует робота одной кнопкой.
+          // Во время ЛЮБОЙ миссии набор препятствий зафиксирован
+          // (только стены — режим WM): зоны не тормозят робота, наезды
+          // на них штрафуют точность. Галочки «Препятствия» блокируем.
+          _setModeButtonsLocked(true,
+            'Во время миссии препятствия зафиксированы (только стены). '
+            + 'Завершите или остановите миссию, чтобы менять.');
+          // Запрещаем читы: «📍 В точку», «🧭 Автопилот», «⛯ Обстановка».
           _setMissionShortcutsLocked(true);
         }
         break;
@@ -408,22 +408,34 @@
   }
 
   function _setMissionShortcutsLocked(locked) {
-    // Блокирует команды-«читы», обходящие программирование во время миссии:
-    // «📍 В точку…» (телепорт-подобный goto). Сервер тоже отвергает,
-    // но визуальная индикация важна — иначе пользователь думает, что
-    // кнопка просто не работает.
-    const btn = document.getElementById('btn-goto');
-    if (!btn) return;
-    btn.disabled = !!locked;
-    btn.classList.toggle('is-locked', !!locked);
-    if (locked) {
-      if (!btn.dataset._titleOrig) btn.dataset._titleOrig = btn.title || '';
-      btn.title = 'Во время миссии команду «в точку» нельзя — '
-                + 'составьте маршрут из forward/поворотов в коде.';
-    } else if (btn.dataset._titleOrig !== undefined) {
-      btn.title = btn.dataset._titleOrig;
-      delete btn.dataset._titleOrig;
-    }
+    // Блокирует «читы», обходящие честное прохождение миссии:
+    //   • «📍 В точку…»  — телепорт-подобный goto;
+    //   • «🧭 Автопилот» — авто-объезд зон;
+    //   • «⛯ Обстановка» — мышиная правка/снятие зон.
+    // Сервер тоже отвергает эти команды; кнопки гасим для ясности
+    // (.is-locked — серый вид + not-allowed).
+    const items = [
+      ['btn-goto',
+       'Во время миссии «в точку» нельзя — составьте маршрут из '
+       + 'forward/поворотов в коде.'],
+      ['btn-autopilot',
+       'Во время миссии автопилот недоступен — пройдите маршрут сами.'],
+      ['btn-zone-mode',
+       'Во время миссии правка зон мышью («Обстановка») запрещена.'],
+    ];
+    items.forEach(([id, lockedTitle]) => {
+      const btn = document.getElementById(id);
+      if (!btn) return;
+      btn.disabled = !!locked;
+      btn.classList.toggle('is-locked', !!locked);
+      if (locked) {
+        if (!btn.dataset._titleOrig) btn.dataset._titleOrig = btn.title || '';
+        btn.title = lockedTitle;
+      } else if (btn.dataset._titleOrig !== undefined) {
+        btn.title = btn.dataset._titleOrig;
+        delete btn.dataset._titleOrig;
+      }
+    });
   }
 
   function _clearLogPanel() {
@@ -460,10 +472,6 @@
         `  <button type="button" class="btn btn--xs btn--success js-mission-finalize"` +
         `          title="Зафиксировать результат: оценка по последнему прогону + суммарное время алгоритма">` +
         `    🏁 Проверка задания</button>` +
-        `  <button type="button" class="btn btn--xs js-mission-stop"` +
-        `          style="background:#3d1a1a;color:var(--danger);border-color:rgba(248,81,73,0.35)"` +
-        `          title="Отказаться от миссии — 0 звёзд">` +
-        `    ⏹ Стоп миссия</button>` +
         `</div>`;
       card.querySelector('.js-mission-hint').addEventListener('click', _requestMissionHint);
       card.querySelector('.js-mission-finalize').addEventListener('click', async () => {
@@ -471,10 +479,6 @@
             + 'Звёзды считаются по ПОСЛЕДНЕМУ прогону программы.\n'
             + 'После этого миссию можно будет запустить заново через каталог.')) return;
         await fetch('/missions/active/finalize', {method: 'POST'});
-      });
-      card.querySelector('.js-mission-stop').addEventListener('click', async () => {
-        if (!confirm('Отказаться от миссии? Звёзд не будет.')) return;
-        await fetch('/missions/active/stop', {method: 'POST'});
       });
     } else {
       card.innerHTML =
@@ -1168,7 +1172,12 @@
     const obstacles = Array.isArray(s.obstacles) ? s.obstacles : [];
     const cautious  = obstacles.length > 0;   // активен хоть один тип зон
     let modeText, modeTitle;
-    if (zoneMode) {
+    if (window._currentMission) {
+      // Идёт проверка миссии — препятствия только стены (W), миссия (M).
+      modeText  = 'WM';
+      modeTitle = 'Проверка миссии: препятствия — только стены, '
+                + 'зоны не тормозят робота (наезд — штраф точности).';
+    } else if (zoneMode) {
       modeText  = '⛯ Обстановка';
       modeTitle = 'Обстановка — расстановка зон мышью';
     } else {

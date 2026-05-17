@@ -17,15 +17,13 @@ if ROOT not in sys.path:
 from mission_state import (
     ActiveMission, dist_to_path, path_total_length,
     _dist_point_to_segment,
-    WAYPOINT_FALLBACK_TOLERANCE_CM, ACTION_TOLERANCE_CM, COEFF_STEP_PER_TICK,
+    WAYPOINT_TOLERANCE_CM, ACTION_TOLERANCE_CM, COEFF_STEP_PER_TICK,
 )  # noqa: E402
 
 
 def _mk_mission(**overrides) -> ActiveMission:
     """Конструктор тестового ActiveMission с разумными дефолтами.
-    level=3 (с трекингом траектории) — иначе включится инспектор-режим
-    L1/L2 (см. ActiveMission.is_inspector), и тесты update_coefficient
-    провалятся (там не отслеживается отклонение)."""
+    track_tolerance_cm по умолчанию 20 см (габарит робота)."""
     defaults = dict(
         mission_id=1, run_id=None, user_id=1,
         waypoints=[(100.0, 0.0), (100.0, 100.0)],
@@ -67,28 +65,29 @@ class TestGeometry(unittest.TestCase):
 
 
 class TestCoefficientUpdate(unittest.TestCase):
-    """Коэффициент растёт внутри margin, падает вне него, в пределах [0,1]."""
+    """Коэффициент — храповик вниз: вне допуска падает, в допуске не растёт."""
 
-    def test_in_margin_keeps_or_grows_to_max_1(self):
-        m = _mk_mission(safety_margin_cm=5.0)
+    def test_in_margin_keeps_coefficient(self):
+        m = _mk_mission()
         m.coefficient = 0.5
         # Робот ровно на траектории (на отрезке start→wp1).
         m.update_coefficient(50, 0)
-        self.assertGreater(m.coefficient, 0.5)
-        # При непрерывном «в margin» доходит до 1.0
+        self.assertEqual(m.coefficient, 0.5)
+        # При непрерывном «в margin» так и держится — храповик только вниз,
+        # потерянную точность не вернуть.
         for _ in range(1000):
             m.update_coefficient(50, 0)
-        self.assertEqual(m.coefficient, 1.0)
+        self.assertEqual(m.coefficient, 0.5)
 
     def test_out_of_margin_decreases_to_zero(self):
-        m = _mk_mission(safety_margin_cm=5.0)
-        # 30 см от траектории — далеко вне margin
+        m = _mk_mission()
+        # 30 см от траектории — далеко вне допуска (20 см)
         for _ in range(1000):
             m.update_coefficient(50, 30)
         self.assertEqual(m.coefficient, 0.0)
 
     def test_deviation_counted_once_per_excursion(self):
-        m = _mk_mission(safety_margin_cm=5.0)
+        m = _mk_mission()
         # Сначала в margin
         m.update_coefficient(50, 0)
         self.assertEqual(m.deviations, 0)
@@ -106,17 +105,18 @@ class TestCoefficientUpdate(unittest.TestCase):
         self.assertEqual(m.deviations, 2)
 
 
-class TestDangerZoneHitsInspector(unittest.TestCase):
-    """Инспектор-режим: −5% начисляется только когда робот ВЫЕХАЛ из
-    опасной зоны без действия внутри. Действие (place_attention или
-    remove_danger), выполненное пока робот внутри зоны, прощает наезд."""
+class TestDangerZoneHits(unittest.TestCase):
+    """Наезд на опасную зону: −5% начисляется только когда робот ВЫЕХАЛ из
+    зоны без действия внутри. Действие (place_attention или remove_danger),
+    выполненное пока робот внутри зоны, прощает наезд. Учёт зон работает
+    в любой миссии (отдельного «инспектор-режима» больше нет)."""
 
-    def _inspector(self, danger_zones):
-        return _mk_mission(level=2, danger_zones=danger_zones)
+    def _with_zones(self, danger_zones):
+        return _mk_mission(danger_zones=danger_zones)
 
     def test_no_hit_while_only_inside(self):
         # Заехали в зону → коэффициент не падает, finalize ещё нет
-        m = self._inspector([(0.0, 0.0, 15.0)])
+        m = self._with_zones([(0.0, 0.0, 15.0)])
         m.update_coefficient(5, 5)
         self.assertEqual(m.coefficient, 1.0)
         self.assertIn(0, m.danger_zones_inside)
@@ -124,7 +124,7 @@ class TestDangerZoneHitsInspector(unittest.TestCase):
 
     def test_hit_fires_on_exit(self):
         # Заехали → выехали → −5%
-        m = self._inspector([(0.0, 0.0, 15.0)])
+        m = self._with_zones([(0.0, 0.0, 15.0)])
         m.update_coefficient(5, 5)       # внутри
         m.update_coefficient(50, 0)      # выехали
         self.assertAlmostEqual(m.coefficient, 0.95, places=4)
@@ -132,7 +132,7 @@ class TestDangerZoneHitsInspector(unittest.TestCase):
 
     def test_hit_forgiven_when_action_performed_inside(self):
         # Заехали → выполнили действие → выехали → штрафа НЕТ
-        m = self._inspector([(0.0, 0.0, 15.0)])
+        m = self._with_zones([(0.0, 0.0, 15.0)])
         m.update_coefficient(5, 5)        # внутри
         m.forgive_current_zone_hits(5, 5) # выполнил remove/place внутри
         m.update_coefficient(50, 0)       # выехали
@@ -141,18 +141,43 @@ class TestDangerZoneHitsInspector(unittest.TestCase):
 
     def test_forgive_outside_zone_no_effect(self):
         # forgive вызван снаружи зоны → ничего не прощается
-        m = self._inspector([(0.0, 0.0, 15.0)])
+        m = self._with_zones([(0.0, 0.0, 15.0)])
         m.forgive_current_zone_hits(100, 100)   # робот далеко от зоны
         m.update_coefficient(5, 5)               # внутри
         m.update_coefficient(50, 0)              # выехали — штраф
         self.assertAlmostEqual(m.coefficient, 0.95, places=4)
 
+    def test_finalize_remaining_zones_penalizes_stuck_inside(self):
+        # Робот завершил миссию, ОСТАВШИСЬ внутри зоны → −5% на финале.
+        m = self._with_zones([(0.0, 0.0, 15.0)])
+        m.update_coefficient(5, 5)               # внутри, выхода не было
+        hits = m.finalize_remaining_zones()
+        self.assertEqual(hits, 1)
+        self.assertAlmostEqual(m.coefficient, 0.95, places=4)
+
+    def test_finalize_remaining_zones_forgives_action_inside(self):
+        # Остался внутри, но выполнил действие → финал без штрафа.
+        m = self._with_zones([(0.0, 0.0, 15.0)])
+        m.update_coefficient(5, 5)
+        m.forgive_current_zone_hits(5, 5)
+        hits = m.finalize_remaining_zones()
+        self.assertEqual(hits, 0)
+        self.assertAlmostEqual(m.coefficient, 1.0, places=4)
+
+    def test_finalize_ignores_untouched_zones(self):
+        # Зону, которой робот не касался, финал не штрафует.
+        m = self._with_zones([(200.0, 200.0, 15.0)])
+        m.update_coefficient(5, 5)               # далеко от зоны
+        hits = m.finalize_remaining_zones()
+        self.assertEqual(hits, 0)
+        self.assertAlmostEqual(m.coefficient, 1.0, places=4)
+
 
 class TestWaypointVisits(unittest.TestCase):
-    """Точное прохождение (1 см) с проверкой по отрезку движения."""
+    """Точное прохождение (допуск 5 см) с проверкой по отрезку движения."""
 
     def test_waypoint_marked_when_robot_on_point(self):
-        # Tolerance 1 см. Первый тик — fallback на точку.
+        # Допуск 5 см. Первый тик — fallback на точку.
         m = _mk_mission(waypoints=[(100.0, 0.0), (200.0, 0.0)])
         new = m.mark_waypoint_visits(100.5, 0.3)            # dist ≈ 0.58
         self.assertEqual(new, [0])
@@ -163,13 +188,13 @@ class TestWaypointVisits(unittest.TestCase):
 
     def test_waypoint_not_marked_when_far(self):
         m = _mk_mission(waypoints=[(100.0, 0.0)])
-        new = m.mark_waypoint_visits(95, 5)                 # dist ≈ 7.07 — далеко
+        new = m.mark_waypoint_visits(70, 5)                 # dist ≈ 30 — за допуском 5
         self.assertEqual(new, [])
         self.assertNotIn(0, m.waypoints_visited)
 
     def test_multiple_waypoints_visited_in_one_tick(self):
         # На первом тике сравниваем с точкой. Близкие точки 100 и 100.5 —
-        # обе попадают в 1 см от (100, 0).
+        # обе попадают в 5 см от (100.2, 0).
         m = _mk_mission(waypoints=[(100.0, 0.0), (100.5, 0.0)])
         new = m.mark_waypoint_visits(100.2, 0.0)
         self.assertEqual(set(new), {0, 1})
@@ -181,41 +206,35 @@ class TestWaypointVisits(unittest.TestCase):
         # Первый кадр — робот далеко перед точкой.
         m.mark_waypoint_visits(0.0, 0.0)
         self.assertNotIn(0, m.waypoints_visited)
-        # Следующий кадр — робот уже за точкой на 5 см. Точечная проверка
-        # бы дала dist=5 > 1 → точка пропущена. Сегментная — точка лежит
-        # на отрезке (0,0)→(55,0) → dist=0 → засчитывается.
-        m.mark_waypoint_visits(55.0, 0.0)
+        # Следующий кадр — робот уже за точкой на 10 см. Точечная проверка
+        # бы дала dist=10 > 5 → точка пропущена. Сегментная — точка лежит
+        # на отрезке (0,0)→(60,0) → dist=0 → засчитывается.
+        m.mark_waypoint_visits(60.0, 0.0)
         self.assertIn(0, m.waypoints_visited)
 
     def test_segment_check_ignores_point_far_from_track(self):
         """Если точка в стороне от отрезка — не засчитывается, даже если
         робот проехал близко по оси."""
-        m = _mk_mission(waypoints=[(50.0, 10.0)])
+        m = _mk_mission(waypoints=[(50.0, 30.0)])
         m.mark_waypoint_visits(0.0, 0.0)
         m.mark_waypoint_visits(100.0, 0.0)
-        # Точка (50, 10) — в 10 см над отрезком (0,0)→(100,0).
+        # Точка (50, 30) — в 30 см над отрезком (0,0)→(100,0), за допуском 5.
         self.assertNotIn(0, m.waypoints_visited)
 
-    def test_tolerance_follows_safety_margin(self):
-        """Допуск waypoint = safety_margin_cm миссии. С margin=2 точка
-        в 5 см не засчитывается, с margin=10 — засчитывается."""
-        # margin=2 — допуск тесный
-        m_tight = _mk_mission(waypoints=[(100.0, 0.0)], safety_margin_cm=2.0)
-        m_tight.mark_waypoint_visits(105.0, 0.0)
-        self.assertNotIn(0, m_tight.waypoints_visited,
-                         "При margin=2 точка в 5 см не должна засчитываться")
-        # margin=10 — допуск шире, та же позиция засчитывается
-        m_wide = _mk_mission(waypoints=[(100.0, 0.0)], safety_margin_cm=10.0)
-        m_wide.mark_waypoint_visits(105.0, 0.0)
-        self.assertIn(0, m_wide.waypoints_visited,
-                      "При margin=10 точка в 5 см должна засчитываться")
-
-    def test_fallback_tolerance_when_safety_margin_zero(self):
-        """Если у миссии margin=0 (вырожденный случай) — используем
-        WAYPOINT_FALLBACK_TOLERANCE_CM = 1 см, чтобы трекинг работал."""
-        m = _mk_mission(waypoints=[(100.0, 0.0)], safety_margin_cm=0.0)
-        m.mark_waypoint_visits(100.5, 0.0)                 # в 0.5 см
-        self.assertIn(0, m.waypoints_visited)
+    def test_waypoint_tolerance_is_fixed_5cm(self):
+        """Допуск точки — жёсткий WAYPOINT_TOLERANCE_CM (5 см): точка в 4 см
+        засчитывается, точка в 8 см — нет. Не зависит от track_tolerance_cm."""
+        self.assertEqual(WAYPOINT_TOLERANCE_CM, 5.0)
+        # В пределах 5 см — засчитывается.
+        m_ok = _mk_mission(waypoints=[(100.0, 0.0)])
+        m_ok.mark_waypoint_visits(104.0, 0.0)              # dist 4
+        self.assertIn(0, m_ok.waypoints_visited)
+        # За пределами 5 см — НЕ засчитывается, даже при широком track-допуске.
+        m_far = _mk_mission(waypoints=[(100.0, 0.0)], track_tolerance_cm=20.0)
+        m_far.mark_waypoint_visits(108.0, 0.0)             # dist 8
+        self.assertNotIn(0, m_far.waypoints_visited,
+                         "Точку в 8 см засчитывать нельзя — допуск точки 5 см, "
+                         "track_tolerance_cm на зачёт точек не влияет")
 
 
 class TestActionMatching(unittest.TestCase):

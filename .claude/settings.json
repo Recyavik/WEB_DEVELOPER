@@ -28,7 +28,14 @@
       "Bash(git add *)",
       "Bash(git -C m:\\\\WEB_DEVELOPER log --oneline -30)",
       "Bash(python -m pytest VAGAREX/tests/test_codegen.py -x -q)",
-      "Bash(python -m unittest discover -s VAGAREX/tests)"
+      "Bash(python -m unittest discover -s VAGAREX/tests)",
+      "Bash(python -m py_compile *.py)",
+      "Bash(python -)",
+      "Bash(python -c \"import world_xy, nlu, path_planner, config, mission_state, mission_generator, robot_driver, models; print\\('Импорт лёгких модулей: OK'\\); s=world_xy.RobotStateXY\\(\\); d=world_xy.state_to_dict\\(s\\) if hasattr\\(world_xy,'state_to_dict'\\) else None; print\\('RobotStateXY + сериализация: OK' if d else 'RobotStateXY: создан OK'\\)\")",
+      "Bash(node -c static/control.js)",
+      "Bash(git tag *)",
+      "Bash(git push *)",
+      "Bash(node -c static/canvas.js)"
     ]
   }
 }

@@ -370,13 +370,16 @@ class UserSession:
             # зоны сбрасываются, _program пустеет.
             # keep_mode=True — режим «осторожно» сохраняется через активацию,
             # иначе action-кнопки моргают между синим и жёлтым.
-            await self._run_reset(db, keep_mode=True)
+            await self._run_reset(db, keep_mode=True, clear_zones=True)
             run = MissionRun(mission_id=row.id, user_id=self.user_id)
             db.add(run); db.commit(); db.refresh(run)
             self._mission = from_mission_row(
                 row, user_id=self.user_id,
                 start_x=self.robot_state.x, start_y=self.robot_state.y,
                 run_id=run.id,
+                # Допуск точности маршрута = габарит робота max(длина, ширина).
+                track_tolerance_cm=max(self.cfg.robot_length_cm,
+                                       self.cfg.robot_width_cm),
             )
             # Опасные зоны миссии — это ОБСТАНОВКА: ставятся СРАЗУ в
             # world + DB (а не в код программы). Программа их не создаёт
@@ -398,18 +401,16 @@ class UserSession:
             await self.push_world()
         finally:
             db.close()
-        # На миссиях с опасными зонами (уровень ≥ 2) форсим режим
-        # «осторожно». Проверка миссии должна выполняться в нём, и
-        # переключиться обратно нельзя до stop/finalize (см. handler
-        # mode_inspector).
-        if self._mission.danger_zones and "danger" not in self.robot_state.obstacles:
-            obs = set(self.robot_state.obstacles)
-            obs.add("danger")
-            self._apply_obstacles(obs)
-            await self.push_message(
-                "⚠ Миссия с опасными зонами — опасные зоны включены в "
-                "препятствия. До завершения миссии их нельзя снять.",
-                "info")
+        # Режим WM: проверка миссии идёт «как будто препятствие — только
+        # стены». Робот должен СМОЧЬ проехать сквозь зоны (наезд — штраф
+        # точности, а не авто-стоп), поэтому на время миссии набор
+        # препятствий принудительно пуст. Галочки заблокированы (UI +
+        # сервер), вернуть danger/attention нельзя до stop/finalize.
+        if self.robot_state.obstacles:
+            self._apply_obstacles(set())
+        await self.push_message(
+            "🎯 Режим WM: препятствия — только стены. Зоны не тормозят "
+            "робота, но наезды снижают точность миссии.", "info")
         await self.push_message(
             f"🎯 Миссия «{self._mission.title}» активирована. "
             f"Точек: {len(self._mission.waypoints)}, "
@@ -433,15 +434,18 @@ class UserSession:
         if self._mission is None:
             return False
         m = self._mission
-        m.waypoints_visited.clear()
-        m.actions_done.clear()
-        m.coefficient        = 1.0
-        m.deviations         = 0
-        m.last_in_margin     = True
-        m.last_robot_pos     = None
+        m.reset_for_new_run()
+        # run_user_python начинает прогон с _run_reset(), а та очищает
+        # self._program. В свободном режиме список заново наполняет
+        # _pending-реплей, но миссия исполняет код через exec() мимо
+        # этого цикла. Без снапшота _program после прогона оказался бы
+        # пустым — и следующая команда (кнопкой или руками) стёрла бы
+        # весь набранный план миссии. Прогон не должен разрушать план.
+        program_snapshot = list(self._program)
         algo_start_t = _time.monotonic()
         out = await run_user_python(self, code)
         run_dur = _time.monotonic() - algo_start_t
+        self._program = program_snapshot
         if self._mission is not None:
             cumulative = (self._mission.last_algo_duration_sec or 0.0) + run_dur
             self._mission.last_algo_duration_sec = round(cumulative, 2)
@@ -476,12 +480,7 @@ class UserSession:
                 "Программа пуста — нечего запускать.", "warning")
             return False
         m = self._mission
-        m.waypoints_visited.clear()
-        m.actions_done.clear()
-        m.coefficient        = 1.0
-        m.deviations         = 0
-        m.last_in_margin     = True
-        m.last_robot_pos     = None
+        m.reset_for_new_run()
         algo_start_t = time.monotonic()
         await self._run_program()
         while self._pending or self._executing is not None:
@@ -516,16 +515,15 @@ class UserSession:
         одному из обязательных actions_required (place/remove зон).
         No-op если миссии нет.
 
-        Для инспектор-режима (L1/L2): любое action прощает наезд на
-        ту опасную зону, внутри которой сейчас находится робот. Без
-        этого игрок, который остановился внутри опасной зоны чтобы
-        её убрать (или поставить attention рядом), получал бы −5% при
-        выезде — что неверно, действие как раз и нейтрализует наезд."""
+        Любое action прощает наезд на ту опасную зону, внутри которой
+        сейчас находится робот. Без этого игрок, который остановился
+        внутри опасной зоны чтобы её убрать (или поставить attention
+        рядом), получал бы −5% при выезде — что неверно, действие как
+        раз и нейтрализует наезд. Работает во всех режимах миссии."""
         if self._mission is None:
             return
-        if self._mission.is_inspector:
-            s = self.robot_state
-            self._mission.forgive_current_zone_hits(s.x, s.y)
+        s = self.robot_state
+        self._mission.forgive_current_zone_hits(s.x, s.y)
         idx = self._mission.try_match_action(action_type, x, y)
         if idx is not None:
             # Уведомим пользователя, что засчитали действие миссии.
@@ -545,6 +543,10 @@ class UserSession:
         from datetime import datetime
         from models import MissionRun
         m = self._mission
+        # Робот мог финишировать внутри опасной зоны — exit-only машина
+        # её не закрыла. Добиваем учёт зон ДО подсчёта звёзд: эти штрафы
+        # должны попасть в финальный coefficient.
+        m.finalize_remaining_zones()
         if success is None:
             success = m.is_complete()
         ended_at = datetime.utcnow()
@@ -758,14 +760,11 @@ class UserSession:
         return lines
 
     def _program_text(self) -> str:
-        """Полный текст программы для textarea:
-          константы → сентинель → объединение def-блоков, нужных всем командам
-          (с транзитивными зависимостями) → блоки вызовов команд.
-        Пустая программа → только константы, без cmd_*-функций."""
+        """Полный текст программы для textarea: преамбула (константы +
+        блок ОБСТАНОВКА + сентинель) → блоки вызовов команд.
+        Пустая программа → только преамбула."""
         parts = [self._python_code_preamble(self._program).rstrip()]
         if not self._program:
-            parts.append("")
-            parts.append("# (программа пуста — выполни команды кнопками управления)")
             return "\n".join(parts) + "\n"
         for cmd in self._program:
             parts.append("")
@@ -3032,7 +3031,8 @@ class UserSession:
         return zones
 
     async def _run_reset(self, db: Session = None, keep_mode: bool = False,
-                         code_text: Optional[str] = None):
+                         code_text: Optional[str] = None,
+                         clear_zones: bool = False):
         """Сброс поля.
 
         keep_mode=False (по умолчанию, явная команда «↺ Поле») — полный
@@ -3040,6 +3040,12 @@ class UserSession:
         keep_mode=True — частичный сброс для replay ▶ Запуск кода и
         для активации миссии: пользовательский выбор «осторожно» должен
         сохраниться через перезапуск, иначе action-кнопки моргают.
+
+        clear_zones=True — при активации миссии: не восстанавливать зоны
+        свободного режима (снапшот / парсинг кода). `start_mission`
+        вызывает reset ДО присвоения self._mission, поэтому без этого
+        флага сюда «протекли» бы старые зоны и продублировались с
+        зонами миссии.
 
         Начальная позиция: пытаемся взять `START_X` / `START_Y` /
         `START_HEADING_DEG` из текста программы (код — главнее настроек).
@@ -3084,12 +3090,18 @@ class UserSession:
         # Препятствия — из строки OBSTACLES в коде (код главнее галочек,
         # как START_X). Нет строки: при полном сбросе ↺ Поле → только
         # стены; при keep_mode (▶ Run / миссия) — оставляем текущий набор.
-        code_obs = self._parse_obstacles_from_python(self._last_python_code)
-        if code_obs is not None:
-            self._apply_obstacles(code_obs)
-        elif not keep_mode:
-            # Нет строки OBSTACLES в коде → дефолт: опасные зоны включены.
-            self._apply_obstacles({"danger"})
+        # Во время миссии (режим WM) набор всегда пуст (только стены) —
+        # строка OBSTACLES игнорируется, иначе ▶ при прогоне миссии
+        # вернул бы зоны в препятствия и робот не проехал бы сквозь них.
+        if self._mission is not None:
+            self._apply_obstacles(set())
+        else:
+            code_obs = self._parse_obstacles_from_python(self._last_python_code)
+            if code_obs is not None:
+                self._apply_obstacles(code_obs)
+            elif not keep_mode:
+                # Нет строки OBSTACLES в коде → дефолт: опасные зоны включены.
+                self._apply_obstacles({"danger"})
         s.thinking  = "idle"
         s.light_color = (0, 0, 0)
         # Очищаем накопленную программу — после reset поле «как новое»,
@@ -3129,7 +3141,9 @@ class UserSession:
         #   5) Fallback — парсинг из кэша _last_python_code (для загрузки
         #      сессии, когда снапшот пустой).
         zones_to_place: list[tuple[float, float, float]] = []
-        if self._mission and self._mission.danger_zones:
+        if clear_zones:
+            zones_to_place = []   # активация миссии: зоны поставит start_mission
+        elif self._mission and self._mission.danger_zones:
             zones_to_place = [(float(x), float(y), float(r))
                               for (x, y, r) in self._mission.danger_zones]
         elif s.zone_mode:
@@ -3424,22 +3438,18 @@ class UserSession:
     def _python_constants_block(self) -> str:
         c = self.cfg
         return (
-            "# Программа для 1T REX. Команды robot.X(...) — см. «Справка → API».\n"
+            "# Программа 1T REX. robot.X(...) — см. Справку.\n"
             "import math, time\n"
             "\n"
-            "# ── Препятствия: на что робот реагирует авто-стопом ──────────\n"
-            "# Стены — всегда препятствие. Дополнительно (галочки в UI):\n"
-            "#   \"danger\"    — опасные зоны\n"
-            "#   \"attention\" — зоны внимания\n"
+            "# Препятствия (стены — всегда): \"danger\", \"attention\"\n"
             f"OBSTACLES = {self._obstacles_repr()}\n"
             "\n"
-            "# ── RGB-индикатор на плате (для robot.set_rgb) ───────────────\n"
-            f"LIGHT_INDEX         = {LIGHT_INDEX}      # индекс LED\n"
-            f"LIGHT_DELAY_SEC     = {LIGHT_DELAY_SEC}    # задержка между каналами (0 = мгновенно)\n"
-            f"LIGHT_DEFAULT_COLOR = {LIGHT_DEFAULT_COLOR}  # белый по умолчанию (R, G, B)\n"
+            "# RGB-индикатор\n"
+            f"LIGHT_INDEX         = {LIGHT_INDEX}\n"
+            f"LIGHT_DELAY_SEC     = {LIGHT_DELAY_SEC}\n"
+            f"LIGHT_DEFAULT_COLOR = {LIGHT_DEFAULT_COLOR}\n"
             "\n"
-            "# ── Стартовая точка робота — отсюда начнётся каждый ▶ Запуск ──\n"
-            "# Курс 0° = «север» (вверх по экрану). 90=E, 180=S, 270=W.\n"
+            "# Старт: курс 0°=север, 90=E 180=S 270=W\n"
             f"START_X           = {c.start_x_cm:.1f}\n"
             f"START_Y           = {c.start_y_cm:.1f}\n"
             f"START_HEADING_DEG = {c.start_heading_deg:.1f}\n"
@@ -3465,27 +3475,20 @@ class UserSession:
             key=lambda z: z.display_no or 0)
         lines = [
             self.OBSTACLE_BLOCK_TOP,
-            "# Автоблок: обновляется при выходе из режима «Обстановка».",
-            "# Программа может читать DANGER_ZONES, но НЕ создаёт новые "
-            "красные зоны.",
+            "# Автоблок «Обстановки». Можно читать, не создавать.",
         ]
         if not danger:
-            lines.append("# Сейчас опасных зон нет.")
             lines.append("DANGER_ZONES = []")
         else:
-            lines.append("DANGER_ZONES = [")
-            lines.append("    # (x, y, radius)")
+            lines.append("DANGER_ZONES = [          # (x, y, radius)")
             for z in danger:
                 no = z.display_no or 0
-                no_tag = f"  # Опасная #{no}" if no else ""
+                no_tag = f"  # #{no}" if no else ""
                 lines.append(
                     f"    ({z.x:.1f}, {z.y:.1f}, {z.radius:.1f}),{no_tag}")
             lines.append("]")
-        # Явный вызов установки: пользователь видит ДЕЙСТВИЕ, а не только
-        # координаты. Метод идемпотентен — повторный запуск с теми же
-        # данными не плодит дубликатов.
-        lines.append("robot.load_danger_zones(DANGER_ZONES)  "
-                     "# установить зоны на карте")
+        # Идемпотентно — повторный запуск дубликатов не плодит.
+        lines.append("robot.load_danger_zones(DANGER_ZONES)")
         lines.append(self.OBSTACLE_BLOCK_BOT)
         return "\n".join(lines) + "\n"
 
@@ -4406,10 +4409,17 @@ class UserSession:
         if self._mission is not None and intent not in _NO_RECORD:
             self._program.append(cmd)
             self._save_program()
-            await self.push_program()
+            # Команду ДОПИСЫВАЕМ в окно Python, а не пере-рендерим всю
+            # программу из _program через push_program(). Полный
+            # пере-рендер затирал бы строки, которые пользователь
+            # вписал в код руками (их нет в _program). Клиент склеит
+            # по сентинелю «# === НАЧАЛО ПРОГРАММЫ ===» — см.
+            # appendPythonCode в control.js.
+            description, code = self._python_code_for_cmd(cmd)
             await self.push_message(
                 f"➕ {cmd.label} — добавлено в программу. "
-                f"Для проверки кода нажми ▶ Запустить.", "info")
+                f"Для проверки кода нажми ▶ Запустить.", "info",
+                code=code, description=description)
             return
 
         self._pending.append(cmd)
