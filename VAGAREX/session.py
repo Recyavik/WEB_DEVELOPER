@@ -198,6 +198,12 @@ class UserSession:
         self._executing:    Optional[RobotCmd]      = None
         self._exec_task:    Optional[asyncio.Task]  = None
         self._program:      list[RobotCmd]  = []
+        # Отрезки траектории движущихся манёвров за текущий прогон:
+        # [((x0,y0),(x1,y1)), …]. Пишет RobotProxy._run_segment (forward/
+        # arc/curve/…), развороты и автопилот — НЕ пишут. Используется при
+        # сохранении кастомной миссии для «ключевых точек» (границы манёвров).
+        # Сбрасывается в _run_reset (= в начале каждого ▶ Запуска).
+        self._traj_segments: list = []
         self._sonar_state   = {"last_fire": 0.0}
 
         self._connections: list[WebSocket] = []
@@ -2873,6 +2879,20 @@ class UserSession:
         await self.push_world()
         return len(removed)
 
+    async def _attention_obstacle_block(self) -> bool:
+        """True (+ предупреждение в журнал), если «⚠ Зоны внимания»
+        включены в «Препятствия». В этом случае ставить зоны внимания
+        нельзя: зона стала бы препятствием, и робот оказался бы заперт
+        внутри только что поставленной зоны и не смог бы двигаться."""
+        if "attention" in self.robot_state.obstacles:
+            await self.push_message(
+                "⛔ «⚠ Зоны внимания» включены в «Препятствия» — установка "
+                "зоны внимания запрещена: зона стала бы препятствием, и "
+                "робот оказался бы заперт внутри неё. Снимите галочку "
+                "«⚠ Зоны внимания», чтобы ставить зоны.", "warning")
+            return True
+        return False
+
     async def _run_set_algorithm_zone(self, target_x: float, target_y: float,
                                       radius: Optional[float] = None,
                                       db: Session = None):
@@ -2880,6 +2900,8 @@ class UserSession:
         пунктирная) — это часть алгоритма (не зона обстановки).
         Радиус по умолчанию из cfg."""
         s = self.robot_state
+        if await self._attention_obstacle_block():
+            return
         await self.push_message(
             f"📍 Установить зону внимания в ({target_x:.0f}, {target_y:.0f}).",
             "info")
@@ -2911,6 +2933,8 @@ class UserSession:
         робота — без поездки. Используется UI-кнопкой «🟡 Установить зону»:
         пользователь сначала вручную едет в нужное место, потом помечает."""
         s = self.robot_state
+        if await self._attention_obstacle_block():
+            return
         r = float(radius) if radius is not None else float(self.cfg.danger_zone_radius)
         no = self._next_zone_display_no("algorithm")
         await self.push_message(
@@ -3074,6 +3098,8 @@ class UserSession:
         # выполняемые команды обратно в _program с актуальными end_x/y —
         # тогда save_custom видит то, что только что выполнилось.
         self._program = []
+        # Отрезки манёвров — новый прогон начинается с чистого листа.
+        self._traj_segments = []
         await self.robot.stop()
         await self.robot.set_servo_center()
         # Деактивация ВСЕХ зон пользователя в DB — должна происходить

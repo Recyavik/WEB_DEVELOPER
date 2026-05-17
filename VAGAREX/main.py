@@ -131,6 +131,7 @@ def _ensure_schema_migrations():
         },
         "missions": {
             "path": "TEXT NOT NULL DEFAULT '[]'",
+            "obstacles": "TEXT NOT NULL DEFAULT '[]'",
         },
         "mission_runs": {
             "duration_sec":      "REAL NOT NULL DEFAULT 0.0",
@@ -771,6 +772,15 @@ async def missions_delete(mission_id: int,
     return JSONResponse({"ok": True})
 
 
+@app.get("/missions/next_id")
+async def missions_next_id(db: Session = Depends(get_db),
+                           current_user: User = Depends(require_user)):
+    """Следующий свободный номер миссии — для подсказки в диалоге
+    сохранения кастомной миссии («будет «Кастомная #N»»). Это лишь
+    предпросмотр: фактический id присваивается при сохранении."""
+    return JSONResponse({"next_id": _smallest_unused_mission_id(db)})
+
+
 @app.post("/missions/save_custom")
 async def missions_save_custom(request: Request,
                                db: Session = Depends(get_db),
@@ -787,34 +797,62 @@ async def missions_save_custom(request: Request,
     if sess is None:
         return JSONResponse({"error": "no active session"}, status_code=400)
 
-    # Снимок состояния симулятора.
+    # ── Снимок состояния симулятора ───────────────────────────────────
     import math as _math
+    from mission_state import keypoints_from_segments
 
-    # Контрольные точки = endpoints команд-МАНЁВРОВ (движение,
-    # развороты, объезды, циклы). Каждый манёвр даёт свою точку,
-    # даже если она совпадает со стартом или предыдущей (например
-    # круг возвращает в начало — точка всё равно «концовка манёвра»,
-    # обозначаем её).
-    # face_*/kturn (повороты на месте без движения) и зоновые
-    # команды НЕ создают точек.
-    raw_path_full = list(sess.world.path_history or [])
     start_x = round(float(sess.cfg.start_x_cm), 1)
     start_y = round(float(sess.cfg.start_y_cm), 1)
-    MANEUVER_INTENTS = {
-        "forward", "back", "forward_to_wall", "backward_to_wall",
-        "goto", "home", "course",
-        "turn_around", "turn_around_place",
-        "circle", "figure_eight", "spiral_in", "spiral_out",
-        "bypass_left", "bypass_right",
-    }
-    waypoints: list[list[float]] = []
-    for c in sess._program:
-        if c.intent not in MANEUVER_INTENTS:
-            continue
-        if c.end_x is None or c.end_y is None:
-            continue
-        waypoints.append([c.end_x, c.end_y])
 
+    # Полная траектория для визуализации — сэмпл path_history с шагом 5 см.
+    # Даёт плавную дашед-линию в превью миссии (в т. ч. для кривых).
+    raw_path = list(sess.world.path_history or [])
+    path: list[list[float]] = []
+    if raw_path:
+        path.append([round(raw_path[0][0], 1), round(raw_path[0][1], 1)])
+        last = raw_path[0]
+        for x, y in raw_path[1:]:
+            if _math.hypot(x - last[0], y - last[1]) >= 5.0:
+                path.append([round(x, 1), round(y, 1)])
+                last = (x, y)
+        fx, fy = raw_path[-1]
+        if _math.hypot(fx - path[-1][0], fy - path[-1][1]) > 0.1:
+            path.append([round(fx, 1), round(fy, 1)])
+
+    # На поле нет траектории (программу не запускали / робот не двигался) —
+    # сохранять нечего: путь не прорисуется в миссии. Возвращаем no_trajectory;
+    # клиент по этому ответу сам запустит программу (▶) и повторит сохранение.
+    if len(path) < 2:
+        return JSONResponse({"error": "no_trajectory"})
+
+    # Контрольные точки = ГРАНИЦЫ движущихся манёвров (начало/конец дуги,
+    # прямой, объезда, …). Развороты и автопилот точек НЕ дают: развернуться
+    # можно по-разному, а отклонения при развороте и так не штрафуются.
+    # Источник — отрезки манёвров, записанные ПРИ ВЫПОЛНЕНИИ:
+    #   • Python-программа (▶) — RobotProxy._run_segment пишет sess._traj_segments;
+    #   • голос/кнопки — отрезки восстанавливаем из endpoints _program.
+    # waypoints — БЕЗ стартовой точки; последний waypoint = финиш маршрута.
+    segments = list(sess._traj_segments)
+    if not segments:
+        MOVE_INTENTS = {
+            "forward", "back", "forward_to_wall", "backward_to_wall",
+            "course", "goto", "home",
+            "circle", "figure_eight", "spiral_in", "spiral_out",
+            "bypass_left", "bypass_right",
+        }
+        prev = (start_x, start_y)
+        for c in sess._program:
+            if c.end_x is None or c.end_y is None:
+                continue
+            end = (c.end_x, c.end_y)
+            if c.intent in MOVE_INTENTS:
+                segments.append((prev, end))
+            prev = end
+    key = keypoints_from_segments(segments)
+    waypoints: list[list[float]] = (
+        [[x, y] for x, y in key[1:]] if len(key) > 1 else [])
+
+    # Зоны: красные — pre-placed обстановка; жёлтые — обязательные действия.
     danger_zones = []
     actions_required = []
     for z in sess.world.danger_zones:
@@ -828,50 +866,59 @@ async def missions_save_custom(request: Request,
                 "r": round(z.radius, 1),
             })
 
-    # Полная траектория для визуализации — сэмпл path_history с шагом
-    # 5см. Это даёт плавную линию для отрисовки в превью миссии,
-    # включая криволинейные маршруты (круг, спираль, восьмёрка).
-    raw_path = list(sess.world.path_history or [])
-    path: list[list[float]] = []
-    if raw_path:
-        path.append([round(raw_path[0][0], 1), round(raw_path[0][1], 1)])
-        last = raw_path[0]
-        for x, y in raw_path[1:]:
-            if _math.hypot(x - last[0], y - last[1]) >= 5.0:
-                path.append([round(x, 1), round(y, 1)])
-                last = (x, y)
-        # Финальная точка
-        fx, fy = raw_path[-1]
-        if not path or _math.hypot(fx - path[-1][0], fy - path[-1][1]) > 0.1:
-            path.append([round(fx, 1), round(fy, 1)])
+    # Набор препятствий, при которых строилась траектория. Решать миссию
+    # нужно с теми же галочками «Препятствия» (стены — всегда).
+    obstacles = sorted(sess.robot_state.obstacles)
 
     reference_voice = [c.raw for c in sess._program if c.raw]
     reference_code  = sess._program_text() or ""
     safety_margin_cm = float(sess.cfg.wall_thickness_cm)
 
-    # Описание = только ЦЕЛИ миссии: координаты контрольных точек, зоны.
-    # БЕЗ списка команд: путь подсказывает SVG-траектория, пользователь
-    # сам выбирает манёвры. reference_voice/code сохраняются на сервере
-    # как «эталонное решение» — доступны только админу через подсказку.
+    # ── Условие миссии (description) ──────────────────────────────────
+    # Только ЦЕЛИ: старт, препятствия, контрольные точки, зоны. Список
+    # команд НЕ пишем — путь подсказывает SVG-траектория, манёвры игрок
+    # выбирает сам. reference_voice/code — эталон, виден только админу.
+    obs_human = ["стены"]
+    if "danger" in obstacles:    obs_human.append("опасные зоны")
+    if "attention" in obstacles: obs_human.append("зоны внимания")
+
+    # Округление координат для описания — ТОЧНО как Math.round в JS:
+    # карта (tasks.html) подписывает точки через Math.round, и если в
+    # описании брать int() (отбрасывает дробь), числа расходятся
+    # (−14.6 → int −14, но Math.round −15). math.floor(v+0.5) совпадает
+    # с Math.round для любых значений, включая .5.
+    def _r(v):
+        return _math.floor(float(v) + 0.5)
+
     desc_parts = []
-    desc_parts.append(f"🟢 Начало маршрута ({int(start_x)}, {int(start_y)})")
+    desc_parts.append(f"🟢 Старт маршрута ({_r(start_x)}, {_r(start_y)}).")
+    desc_parts.append(
+        "🚧 Препятствия — пройдите с этими галочками: "
+        + ", ".join(obs_human) + ".")
     if waypoints:
-        wp_str = ", ".join(f"({int(x)}, {int(y)})" for x, y in waypoints)
+        *mid, finish = waypoints
+        if mid:
+            mid_str = ", ".join(f"({_r(x)}, {_r(y)})" for x, y in mid)
+            desc_parts.append(
+                f"📍 Контрольные точки маршрута ({len(mid)} шт.): {mid_str}.")
         desc_parts.append(
-            f"📍 Контрольные точки маршрута ({len(waypoints)} шт.): {wp_str}.")
+            f"🏁 Финиш маршрута ({_r(finish[0])}, {_r(finish[1])}) — "
+            f"обязательная точка.")
     else:
         desc_parts.append("📍 Манёвров не зафиксировано (робот не двигался).")
     if actions_required:
         zs = ", ".join(f"({a['x']:.0f}, {a['y']:.0f})" for a in actions_required)
-        desc_parts.append(f"📌 Установите зоны внимания: {zs}.")
+        desc_parts.append(f"🟡 Установите зоны внимания: {zs}.")
     if danger_zones:
         zs = ", ".join(f"({z[0]:.0f}, {z[1]:.0f})" for z in danger_zones)
         desc_parts.append(
             f"⚠ Опасные зоны на карте ({len(danger_zones)} шт.): {zs}. "
             f"Не задевайте.")
     desc_parts.append(
-        "⭐ За правильно выполненное задание и прохождение траектории "
-        "вы получите звёзды.")
+        "⭐ Звёзды — за проезд через контрольные точки маршрута. "
+        "Важна и точность ведения: робот должен идти по линии "
+        "траектории. Если он отклонится от неё дальше габаритов "
+        "робота — точность снижается.")
     description = "\n".join(desc_parts)
 
     for attempt in range(3):
@@ -885,6 +932,7 @@ async def missions_save_custom(request: Request,
             level=0,                        # 0 = «кастомная», не 1-5
             waypoints=json.dumps(waypoints),
             path=json.dumps(path),
+            obstacles=json.dumps(obstacles),
             danger_zones=json.dumps(danger_zones),
             actions_required=json.dumps(actions_required),
             reference_voice=json.dumps(reference_voice),
@@ -894,6 +942,9 @@ async def missions_save_custom(request: Request,
         )
         try:
             db.add(m); db.commit(); db.refresh(m)
+            await sess.push_message(
+                f"💾 Миссия #{m.id} «{m.title}» сохранена в Каталог.",
+                "success")
             return JSONResponse({"id": m.id, "ok": True, "title": m.title})
         except IntegrityError:
             db.rollback()

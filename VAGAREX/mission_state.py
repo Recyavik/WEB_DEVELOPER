@@ -56,6 +56,32 @@ def path_total_length(path: list[tuple[float, float]]) -> float:
     )
 
 
+# ── Ключевые точки из отрезков манёвров ────────────────────────────────────
+
+def keypoints_from_segments(segments: list,
+                            merge_cm: float = 3.0) -> list[tuple[float, float]]:
+    """Из отрезков движущихся манёвров [((x0,y0),(x1,y1)), …] собирает
+    цепочку «ключевых» точек: старт первого манёвра, концы манёвров,
+    а также начала манёвров, если разворот между ними сдвинул робота.
+    Соседние совпадающие точки (ближе merge_cm) склеиваются.
+
+    Развороты в segments не попадают (их не пишет RobotProxy._run_segment) —
+    точки разворотов в ключевые не идут, как и задумано: развернуться
+    можно по-разному."""
+    pts: list[tuple[float, float]] = []
+
+    def push(x: float, y: float) -> None:
+        p = (round(float(x), 1), round(float(y), 1))
+        if not pts or math.hypot(p[0] - pts[-1][0], p[1] - pts[-1][1]) > merge_cm:
+            pts.append(p)
+
+    for seg in segments:
+        (sx, sy), (ex, ey) = seg
+        push(sx, sy)
+        push(ex, ey)
+    return pts
+
+
 # ── ActiveMission ──────────────────────────────────────────────────────────
 
 # Допуск попадания в waypoint = safety_margin_cm миссии (= Запас безопасности

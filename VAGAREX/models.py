@@ -254,6 +254,11 @@ class Mission(Base):
     # сэмпл path_history. Для сгенерированных — обычно совпадает с
     # waypoints (линии между ними). [] = используем waypoints.
     path             = Column(Text, nullable=False, default="[]")
+    # Набор препятствий, при которых строилась траектория (кастомные
+    # миссии): JSON-список ⊆ ["danger", "attention"]. Решающий миссию
+    # должен пройти её с теми же галочками «Препятствия». Стены — всегда.
+    # [] = только стены.
+    obstacles        = Column(Text, nullable=False, default="[]")
 
     # Эталонное решение (видно админу как «подсказка»).
     reference_voice = Column(Text, nullable=True)        # JSON: список голосовых фраз

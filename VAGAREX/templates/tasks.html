@@ -405,7 +405,18 @@
     // Чипы уровней в заголовке превью — в режиме unsaved активны:
     // клик по другому уровню сразу регенерирует миссию.
     renderLevelChips(level !== undefined && level !== null ? level : (data.level ?? 0), true);
-    document.getElementById('preview-description').textContent = data.description;
+    // Описание построчно: строку про опасные зоны (⚠) — красным,
+    // чтобы предупреждение выделялось. Остальные строки — обычным цветом.
+    {
+      const descEl = document.getElementById('preview-description');
+      descEl.innerHTML = '';
+      (data.description || '').split('\n').forEach(line => {
+        const div = document.createElement('div');
+        div.textContent = line;                        // textContent — экранирует
+        if (line.trimStart().startsWith('⚠')) div.style.color = '#f85149';
+        descEl.appendChild(div);
+      });
+    }
     drawPreviewSvg(data);
     setPreviewState(false);                  // unsaved
     // Сбросить возможные display:none от предыдущего просмотра из каталога.
@@ -683,11 +694,13 @@
         fill:'rgba(248,81,73,0.10)', stroke:'#f85149',
         'stroke-width':0.8, 'stroke-dasharray':'3 2'}));
     });
-    // Зоны внимания из actions_required (серые dashed без заливки)
+    // Зоны внимания из actions_required — ЖЁЛТЫЙ пунктир + очень
+    // прозрачная жёлтая заливка. Серый сливался с серой эталонной
+    // траекторией и читался как «движение по кругу».
     (m.actions_required || []).filter(a => a.type === 'place_attention')
       .forEach(a => {
         svg.appendChild(mk('circle', {cx:a.x, cy:-a.y, r:a.r || 15,
-          fill:'none', stroke:'#8b949e',
+          fill:'rgba(255,215,0,0.07)', stroke:'#ffd700',
           'stroke-width':0.8, 'stroke-dasharray':'3 2'}));
       });
     // Траектория: серый пунктир ПО ПЛОТНОЙ цепочке path (если задана),
@@ -709,17 +722,21 @@
           'stroke-linejoin': 'round'}));
       }
     }
-    // Маркеры контрольных точек поверх линии.
+    // Маркеры контрольных точек поверх линии. Последняя точка — ФИНИШ:
+    // крупнее, светлая обводка и флажок 🏁, чтобы выделялась.
     wp.forEach(([x, y], i) => {
-      svg.appendChild(mk('circle', {cx:x, cy:-y, r:5,
-        fill:'#1c2330', stroke:'#8b949e', 'stroke-width':1.2}));
-      const t = mk('text', {x:x+8, y:-y+4, fill:'#c9d1d9',
+      const isFinish = (i === wp.length - 1);
+      svg.appendChild(mk('circle', {cx:x, cy:-y, r: isFinish ? 7 : 5,
+        fill:'#1c2330',
+        stroke: isFinish ? '#e6edf3' : '#8b949e',
+        'stroke-width': isFinish ? 2 : 1.2}));
+      const t = mk('text', {x:x + (isFinish ? 11 : 8), y:-y+4, fill:'#c9d1d9',
         'font-size':'10', 'font-family':'monospace', 'font-weight':'600'});
-      t.textContent = (i+1) + '';
+      t.textContent = isFinish ? `${i+1} 🏁 финиш` : `${i+1}`;
       svg.appendChild(t);
       // Координаты точки серым полупрозрачным под маркером —
       // чтобы видеть условие задачи прямо на превью без открытия деталей.
-      const coord = mk('text', {x:x+8, y:-y+15,
+      const coord = mk('text', {x:x + (isFinish ? 11 : 8), y:-y+15,
         fill:'rgba(150,162,175,0.7)',
         'font-size':'8', 'font-family':'monospace'});
       coord.textContent = `(${Math.round(x)}, ${Math.round(y)})`;
@@ -794,7 +811,18 @@
         titleInput.value = data.title || '';
         titleInput.readOnly = true;
       }
-      document.getElementById('preview-description').textContent = data.description;
+      // Описание построчно: строку про опасные зоны (⚠) — красным,
+    // чтобы предупреждение выделялось. Остальные строки — обычным цветом.
+    {
+      const descEl = document.getElementById('preview-description');
+      descEl.innerHTML = '';
+      (data.description || '').split('\n').forEach(line => {
+        const div = document.createElement('div');
+        div.textContent = line;                        // textContent — экранирует
+        if (line.trimStart().startsWith('⚠')) div.style.color = '#f85149';
+        descEl.appendChild(div);
+      });
+    }
       drawPreviewSvg(data);
       // Чипы уровня — индикация без интерактивности (миссия сохранена).
       renderLevelChips(data.level ?? 0, false);

@@ -398,7 +398,10 @@ class RobotCanvas {
       ctx.restore();
     });
 
-    // 3) Зоны внимания из actions_required — серые dashed без заливки.
+    // 3) Зоны внимания из actions_required — ЖЁЛТЫЙ пунктир + лёгкая
+    //    жёлтая заливка (выполненные — зелёные). Жёлтый, а НЕ серый:
+    //    серый пунктирный круг сливался с серой эталонной траекторией
+    //    и читался как «робот проехал по кругу».
     (m.actions || []).forEach((a, idx) => {
       if (a.type !== 'place_attention') return;
       const c = this.worldToCanvas(a.x, a.y);
@@ -407,8 +410,10 @@ class RobotCanvas {
       ctx.save();
       ctx.beginPath();
       ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
-      ctx.strokeStyle = done ? '#2ea043' : '#8b949e';
-      ctx.lineWidth = 1.2;
+      ctx.fillStyle = done ? 'rgba(46,160,67,0.10)' : 'rgba(255,215,0,0.10)';
+      ctx.fill();
+      ctx.strokeStyle = done ? '#2ea043' : '#ffd700';
+      ctx.lineWidth = 1.4;
       ctx.setLineDash([4, 3]);
       ctx.stroke();
       ctx.setLineDash([]);

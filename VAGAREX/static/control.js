@@ -157,6 +157,20 @@
         // Многострочный traceback (`File "..."`, `NameError: ...`) рендерим
         // переносами, чтобы было читаемо как в обычной IDE-консоли.
         logMsg(msg.output || 'Выполнено.', msg.level || 'info');
+        // Программа запущена ради сохранения миссии (траектории не было).
+        // code_exec_result приходит ДВАЖДЫ: при старте (level 'info') и
+        // при завершении (level 'ok'/'error'). Досохраняем ТОЛЬКО по
+        // завершению — иначе POST уйдёт, пока программа ещё едет, и
+        // в миссию попадёт лишь часть траектории.
+        if (window._missionSavePending && msg.level !== 'info') {
+          window._missionSavePending = false;
+          if (msg.level === 'error') {
+            logMsg('Миссия не сохранена: программа завершилась с ошибкой — '
+                   + 'исправьте код и сохраните снова.', 'warning');
+          } else {
+            saveMission(window._missionSaveTitle || '', false);
+          }
+        }
         break;
 
       case 'obstacle_block':
@@ -1202,6 +1216,23 @@
       const chkA = document.getElementById('chk-obst-attention');
       if (chkD) chkD.checked = obstacles.includes('danger');
       if (chkA) chkA.checked = obstacles.includes('attention');
+      // «🟡 Установить зону…» недоступна, когда «Зоны внимания» включены
+      // в препятствия: поставленная зона заперла бы робота внутри себя
+      // (сервер такую команду и так отклоняет — кнопку гасим для ясности).
+      const btnSetZone = document.getElementById('btn-set-zone');
+      if (btnSetZone) {
+        const attnObstacle = obstacles.includes('attention');
+        btnSetZone.disabled = attnObstacle;
+        // .is-locked — визуальная блокировка (серый вид + not-allowed);
+        // без неё disabled-кнопка .btn выглядит как обычная активная.
+        btnSetZone.classList.toggle('is-locked', attnObstacle);
+        btnSetZone.title = attnObstacle
+          ? '«⚠ Зоны внимания» включены в «Препятствия» — установка '
+            + 'запрещена: зона заперла бы робота внутри. Снимите галочку '
+            + '«⚠ Зоны внимания».'
+          : 'Поставить жёлтую зону внимания в ТЕКУЩЕЙ позиции робота '
+            + '(только радиус — без поездки)';
+      }
       const btnZone = document.getElementById('btn-zone-mode');
       if (btnZone) btnZone.classList.toggle('is-active', zoneMode);
       const appbar = document.querySelector('.appbar');
@@ -1456,6 +1487,49 @@
     if (modal && !modal.hidden && window.cmEditor && window.cmEditor.isReady()) {
       window.cmEditor.setValue(merged);
     }
+  }
+
+  // Сохранение кастомной миссии. Если на поле нет траектории — сервер
+  // вернёт no_trajectory; тогда (allowAutoRun) сами запускаем программу
+  // (▶) и после её завершения сохраняем повторно. Так миссия всегда
+  // сохраняется с траекторией, а из диалогов — только запрос названия.
+  async function saveMission(title, allowAutoRun) {
+    let data;
+    try {
+      const r = await fetch('/missions/save_custom', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({title}),
+      });
+      if (!r.ok) {
+        logMsg(`Ошибка сохранения миссии: HTTP ${r.status}`, 'error');
+        return;
+      }
+      data = await r.json();
+    } catch (e) {
+      logMsg(`Ошибка сохранения миссии: ${e.message}`, 'error');
+      return;
+    }
+    if (data.error === 'no_trajectory') {
+      if (allowAutoRun) {
+        logMsg('На поле нет траектории — запускаю программу (▶), '
+               + 'после завершения сохраню миссию…', 'info');
+        window._missionSaveTitle   = title;
+        window._missionSavePending = true;
+        runPythonCode();
+      } else {
+        logMsg('Миссия не сохранена: программа не оставила траектории. '
+               + 'Проверьте код — в нём должны быть команды движения '
+               + 'робота.', 'warning');
+      }
+      return;
+    }
+    if (data.error) {
+      logMsg(`Ошибка сохранения миссии: ${data.error}`, 'error');
+      return;
+    }
+    // Успех: запись «💾 Миссия #N «…» сохранена в Каталог» в журнал
+    // делает сервер (push_message) — здесь не дублируем.
   }
 
   async function runPythonCode() {
@@ -2152,29 +2226,23 @@
     // (позиция, зоны, программа) → кастомная миссия в Каталоге.
     document.getElementById('btn-save-mission')?.addEventListener('click',
       async () => {
+        // Узнаём реальный следующий номер миссии — чтобы в подсказке
+        // показать «Кастомная #6», а не плейсхолдер «#N».
+        let hint = 'Кастомная';
+        try {
+          const r = await fetch('/missions/next_id');
+          if (r.ok) {
+            const d = await r.json();
+            if (d && d.next_id != null) hint = 'Кастомная #' + d.next_id;
+          }
+        } catch (e) { /* подсказка не критична */ }
         const raw = window.prompt(
           'Название кастомной миссии:\n' +
-          '(оставьте пустым — будет «Кастомная #N»)',
+          '(оставьте пустым — будет «' + hint + '»)',
           ''
         );
         if (raw === null) return;        // нажал Отмена — не сохраняем
-        const title = raw.trim();
-        try {
-          const r = await fetch('/missions/save_custom', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({title}),
-          });
-          if (!r.ok) {
-            logMsg(`Ошибка сохранения миссии: HTTP ${r.status}`, 'error');
-            return;
-          }
-          const data = await r.json();
-          logMsg(`✓ Миссия #${data.id} «${data.title}» сохранена в Каталог.`,
-                 'success');
-        } catch (e) {
-          logMsg(`Ошибка сохранения миссии: ${e.message}`, 'error');
-        }
+        saveMission(raw.trim(), true);
       });
 
     // ── ⛯ Режим установки опасных зон мышью ───────────────────────────

@@ -82,6 +82,20 @@ class RobotProxy:
         finally:
             self._session._python_active_future = None
 
+    def _run_segment(self, coro):
+        """Как `_run`, но фиксирует пройденный отрезок траектории
+        (позиция носа ДО → ПОСЛЕ) в `session._traj_segments`. Вызывается
+        движущимися манёврами (forward / arc / curve / …) — из этих
+        отрезков при сохранении кастомной миссии строятся «ключевые
+        точки» (границы манёвров). Развороты и `autopilot` его не зовут."""
+        s = self._session.robot_state
+        x0, y0 = round(s.x, 1), round(s.y, 1)
+        try:
+            return self._run(coro)
+        finally:
+            self._session._traj_segments.append(
+                ((x0, y0), (round(s.x, 1), round(s.y, 1))))
+
     @property
     def x(self) -> float:
         return float(self._session.robot_state.x)
@@ -99,12 +113,12 @@ class RobotProxy:
     def forward(self, distance_cm: float, speed: Optional[int] = None):
         """Едет ВПЕРЁД на `distance_cm` см. Скорость по умолчанию — из настроек."""
         spd = int(speed) if speed is not None else int(self._session.cfg.move_speed)
-        self._run(self._session._run_forward(float(distance_cm), spd))
+        self._run_segment(self._session._run_forward(float(distance_cm), spd))
 
     def back(self, distance_cm: float, speed: Optional[int] = None):
         """Едет НАЗАД на `distance_cm` см."""
         spd = int(speed) if speed is not None else int(self._session.cfg.move_speed)
-        self._run(self._session._run_back(float(distance_cm), spd))
+        self._run_segment(self._session._run_back(float(distance_cm), spd))
 
     def turn_right(self, angle_deg: float):
         """Поворот НА МЕСТЕ направо на `angle_deg` градусов."""
@@ -120,14 +134,14 @@ class RobotProxy:
 
     def set_course(self, target_deg: float):
         """Развернуться курсом на абсолютный угол (0=север, 90=восток, …)."""
-        self._run(self._session._run_set_course(int(target_deg)))
+        self._run_segment(self._session._run_set_course(int(target_deg)))
 
     def home(self):
         """Вернуться в стартовую точку. Центрирует руль перед стартом —
         иначе оставшийся угол с прошлого `set_angle(...)` испортил бы
         прямую фазу маршрута (робот ехал бы по дуге)."""
         self._center_steer()
-        self._run(self._session._run_home())
+        self._run_segment(self._session._run_home())
 
     def _center_steer(self):
         """Установить руль в 0° и в драйвере, и в robot_state.steer.
@@ -214,12 +228,12 @@ class RobotProxy:
     def forward_to_wall(self, speed: Optional[int] = None):
         """Едет вперёд до ближайшей стены или препятствия."""
         spd = int(speed) if speed is not None else int(self._session.cfg.move_speed)
-        self._run(self._session._run_forward_to_wall(spd))
+        self._run_segment(self._session._run_forward_to_wall(spd))
 
     def backward_to_wall(self, speed: Optional[int] = None):
         """Едет назад до ближайшей стены или препятствия."""
         spd = int(speed) if speed is not None else int(self._session.cfg.move_speed)
-        self._run(self._session._run_backward_to_wall(spd))
+        self._run_segment(self._session._run_backward_to_wall(spd))
 
     def turn_around(self, direction: int = 1):
         """Разворот на 180° через дугу. `direction`: +1 = вправо, -1 = влево."""
@@ -238,24 +252,24 @@ class RobotProxy:
         (из настроек «Максимальный угол руля»). По умолчанию ПРОТИВ
         часовой стрелки (математическое +). `direction`: +1 = по часовой,
         -1 = против часовой. `arc(360)` = полный круг."""
-        self._run(self._session._run_arc(float(angle_deg), int(direction)))
+        self._run_segment(self._session._run_arc(float(angle_deg), int(direction)))
 
     def figure_eight(self, direction: int = -1):
         """Восьмёрка через две дуги по 360°: круг в одну сторону + круг
         в другую. `direction` задаёт направление ПЕРВОГО круга
         (+1 = по часовой, -1 = против часовой)."""
-        self._run(self._session._run_figure_eight(int(direction)))
+        self._run_segment(self._session._run_figure_eight(int(direction)))
 
     def spiral(self, direction: int = 1, outward: bool = True):
         """Спираль: 2 оборота с меняющимся радиусом.
         `outward=True` — раскручивается (радиус растёт);
         `outward=False` — скручивается (радиус сужается)."""
-        self._run(self._session._run_spiral(int(direction), bool(outward)))
+        self._run_segment(self._session._run_spiral(int(direction), bool(outward)))
 
     def bypass(self, start_dir: int = 1):
         """S-волна для объезда препятствия. `start_dir`: +1 = сначала вправо,
         -1 = сначала влево. После 4-х дуг возвращается на исходный курс."""
-        self._run(self._session._run_bypass(int(start_dir)))
+        self._run_segment(self._session._run_bypass(int(start_dir)))
 
     def face(self, target_deg: float):
         """Развернуться лицом к абсолютному курсу (0=N, 90=E, 180=S, 270=W).
@@ -271,7 +285,7 @@ class RobotProxy:
         Во время миссии команда блокируется (см. _dispatch goto-ветку) —
         обучающийся должен составить маршрут вручную."""
         self._center_steer()
-        self._run(self._session._run_goto(float(x), float(y)))
+        self._run_segment(self._session._run_goto(float(x), float(y)))
 
     def autopilot(self, x: float, y: float):
         """Автопилот: построить маршрут в обход опасных зон и стен (A*)
@@ -288,7 +302,7 @@ class RobotProxy:
         от заезда в зоны. Этим автопилот в сглаженном режиме записывает
         пройденный маршрут — повторный ▶ воспроизводит дугу."""
         self._center_steer()
-        self._run(self._session._follow_curve_smooth(list(route)))
+        self._run_segment(self._session._follow_curve_smooth(list(route)))
 
     def remove_zone(self, x: float, y: float):
         """Удалить зону, накрывающую точку (x, y). Робот должен быть внутри."""
@@ -397,6 +411,8 @@ class RobotProxy:
     async def _add_attention_at(self, x: float, y: float, radius: Optional[float]):
         """Ставит зону внимания в произвольной точке (x, y) — без поездки."""
         sess = self._session
+        if await sess._attention_obstacle_block():
+            return
         r = float(radius) if radius is not None else float(sess.cfg.danger_zone_radius)
         zone = sess.world.add_danger_zone(x, y, radius=r,
                                           label="Зона внимания",
