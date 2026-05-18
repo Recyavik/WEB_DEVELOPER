@@ -387,25 +387,34 @@ class RobotCanvas {
     //    рисует _drawZones (красные пронумерованные). Рисовать их ещё
     //    раз тут — дублирование (две концентричные окружности).
 
-    // 3) Зоны внимания из actions_required — ЖЁЛТЫЙ пунктир + лёгкая
-    //    жёлтая заливка (выполненные — зелёные). Жёлтый, а НЕ серый:
-    //    серый пунктирный круг сливался с серой эталонной траекторией
-    //    и читался как «робот проехал по кругу».
+    // 3) Зоны внимания из задания — ЦЕЛЬ «установить зону»: жёлтый
+    //    пунктирный контур + штриховка. Когда игрок установил зону
+    //    правильно (action засчитан) — цель-оверлей убираем СОВСЕМ:
+    //    штриховка исчезает, на поле остаётся только реальная жёлтая
+    //    зона игрока (её рисует _drawDangerZones). Так нет путаницы
+    //    «две окружности».
     (m.actions || []).forEach((a, idx) => {
       if (a.type !== 'place_attention') return;
+      if ((p.actions_done || []).includes(idx)) return;   // установлено — цель убрана
       const c = this.worldToCanvas(a.x, a.y);
       const r = (a.r || 15) * this.scale;
-      const done = (p.actions_done || []).includes(idx);
       ctx.save();
       ctx.beginPath();
       ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
-      ctx.fillStyle = done ? 'rgba(46,160,67,0.10)' : 'rgba(255,215,0,0.10)';
-      ctx.fill();
-      ctx.strokeStyle = done ? '#2ea043' : '#ffd700';
+      ctx.strokeStyle = '#ffd700';
       ctx.lineWidth = 1.4;
       ctx.setLineDash([4, 3]);
       ctx.stroke();
       ctx.setLineDash([]);
+      // Диагональная штриховка — «здесь нужно установить зону внимания».
+      ctx.clip();
+      ctx.lineWidth = 1;
+      for (let d = -2 * r; d < 2 * r; d += 7) {
+        ctx.beginPath();
+        ctx.moveTo(c.x + d, c.y - r);
+        ctx.lineTo(c.x + d + 2 * r, c.y + r);
+        ctx.stroke();
+      }
       ctx.restore();
     });
 
@@ -447,12 +456,15 @@ class RobotCanvas {
     const stars = p.stars_now ?? 0;
     const wpDone = (p.waypoints_visited || []).length;
     const wpTotal = (m.waypoints || []).length;
-    const acDone = (p.actions_done || []).length;
-    const acTotal = (m.actions || []).length;
+    const ac = p.action_counts || {};
+    const quality = Math.round((p.quality ?? 0) * 100);
     const precision = Math.round((p.coefficient ?? 1) * 100);
     let text = `⭐ ${stars}  ·  точки ${wpDone}/${wpTotal}`;
-    if (acTotal) text += `  ·  действия ${acDone}/${acTotal}`;
-    text += `  ·  точность ${precision}%`;
+    if (ac.place_total)
+      text += `  ·  установлено ${ac.place_done || 0}/${ac.place_total}`;
+    if (ac.remove_total)
+      text += `  ·  удалено ${ac.remove_done || 0}/${ac.remove_total}`;
+    text += `  ·  качество ${quality}%  ·  точность ${precision}%`;
     if (!p.in_margin && p.in_margin !== undefined) text += '  ·  ⚠ отклонение';
 
     ctx.save();
@@ -645,6 +657,19 @@ class RobotCanvas {
     ctx.fill();
   }
 
+  // Опасная зона — задача «удалить» (есть парный remove_danger в миссии)?
+  // Такие зоны не штрафуются: их рисуем штриховкой.
+  _isRemovableZone(z) {
+    if (!this.mission || z.kind === 'algorithm') return false;
+    const acts = this.mission.actions || [];
+    for (const a of acts) {
+      if (a.type !== 'remove_danger') continue;
+      if (Math.hypot(z.x - (a.x || 0), z.y - (a.y || 0))
+          <= Math.max(z.radius, 5)) return true;
+    }
+    return false;
+  }
+
   _drawDangerZones() {
     const ctx = this.ctx;
     // Резервные счётчики по типам — только для legacy-зон без display_no.
@@ -658,6 +683,7 @@ class RobotCanvas {
       const c = this.worldToCanvas(z.x, z.y);
       const r = z.radius * this.scale;
       const isAlgo = z.kind === 'algorithm';
+      const isRemovable = this._isRemovableZone(z);
       const fallback = isAlgo ? (++algoNum) : (++dangerNum);
       const num = (typeof z.display_no === 'number' && z.display_no > 0)
                   ? z.display_no : fallback;
@@ -687,6 +713,24 @@ class RobotCanvas {
       ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
       ctx.stroke();
       ctx.setLineDash([]);
+
+      // Зона-задача «удалить» — диагональная штриховка: визуально
+      // отличает её от нетронутой зоны-препятствия (наезд не штрафуется).
+      if (isRemovable) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+        ctx.clip();
+        ctx.strokeStyle = stroke;
+        ctx.lineWidth = 1;
+        for (let d = -2 * r; d < 2 * r; d += 7) {
+          ctx.beginPath();
+          ctx.moveTo(c.x + d, c.y - r);
+          ctx.lineTo(c.x + d + 2 * r, c.y + r);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
 
       // ── Нумерация зоны: крупная цифра в центре, белая обводка ─────
       // Размер от scale, но в разумных пределах, чтобы не перекрыть.

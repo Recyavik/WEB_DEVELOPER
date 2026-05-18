@@ -860,7 +860,8 @@ async def missions_save_custom(request: Request,
     if not waypoints:
         return JSONResponse({"error": "no_trajectory"})
 
-    # Зоны: красные — pre-placed обстановка; жёлтые — обязательные действия.
+    # Зоны: красные на поле — pre-placed обстановка («не задевать»);
+    # жёлтые — обязательные действия «установить зону внимания».
     danger_zones = []
     actions_required = []
     for z in sess.world.danger_zones:
@@ -873,6 +874,20 @@ async def missions_save_custom(request: Request,
                 "x": round(z.x, 1), "y": round(z.y, 1),
                 "r": round(z.radius, 1),
             })
+    # Опасные зоны, которые эталонная программа УДАЛИЛА при построении, —
+    # это задачи «удалить зону». На поле к моменту сохранения их уже нет,
+    # поэтому берём их из лога sess._removed_zones_run. На старте миссии
+    # они ставятся обратно (входят в danger_zones), игрок снимает их сам.
+    removed_seen: set = set()
+    for (rx, ry, rr) in getattr(sess, "_removed_zones_run", []):
+        key = (rx, ry)
+        if key in removed_seen:
+            continue
+        removed_seen.add(key)
+        danger_zones.append([rx, ry, rr])
+        actions_required.append({
+            "type": "remove_danger", "x": rx, "y": ry, "r": rr,
+        })
 
     # Набор препятствий, при которых строилась траектория. Решать миссию
     # нужно с теми же галочками «Препятствия» (стены — всегда).
@@ -886,10 +901,6 @@ async def missions_save_custom(request: Request,
     # Только ЦЕЛИ: старт, препятствия, контрольные точки, зоны. Список
     # команд НЕ пишем — путь подсказывает SVG-траектория, манёвры игрок
     # выбирает сам. reference_voice/code — эталон, виден только админу.
-    obs_human = ["стены"]
-    if "danger" in obstacles:    obs_human.append("опасные зоны")
-    if "attention" in obstacles: obs_human.append("зоны внимания")
-
     # Округление координат для описания — ТОЧНО как Math.round в JS:
     # карта (tasks.html) подписывает точки через Math.round, и если в
     # описании брать int() (отбрасывает дробь), числа расходятся
@@ -900,9 +911,6 @@ async def missions_save_custom(request: Request,
 
     desc_parts = []
     desc_parts.append(f"🟢 Старт маршрута ({_r(start_x)}, {_r(start_y)}).")
-    desc_parts.append(
-        "🚧 Препятствия — пройдите с этими галочками: "
-        + ", ".join(obs_human) + ".")
     if waypoints:
         *mid, finish = waypoints
         if mid:
@@ -914,19 +922,32 @@ async def missions_save_custom(request: Request,
             f"обязательная точка.")
     else:
         desc_parts.append("📍 Манёвров не зафиксировано (робот не двигался).")
-    if actions_required:
-        zs = ", ".join(f"({a['x']:.0f}, {a['y']:.0f})" for a in actions_required)
-        desc_parts.append(f"🟡 Установите зоны внимания: {zs}.")
-    if danger_zones:
-        zs = ", ".join(f"({z[0]:.0f}, {z[1]:.0f})" for z in danger_zones)
+    # Зоны разбиваем на три группы: поставить (жёлтые), удалить (красные,
+    # снятые программой), не задевать (красные, оставшиеся на поле).
+    place_acts  = [a for a in actions_required if a["type"] == "place_attention"]
+    remove_acts = [a for a in actions_required if a["type"] == "remove_danger"]
+    remove_xy   = {(a["x"], a["y"]) for a in remove_acts}
+    avoid_zones = [z for z in danger_zones if (z[0], z[1]) not in remove_xy]
+    if place_acts:
+        zs = ", ".join(f"({a['x']:.0f}, {a['y']:.0f})" for a in place_acts)
         desc_parts.append(
-            f"⚠ Опасные зоны на карте ({len(danger_zones)} шт.): {zs}. "
-            f"Не задевайте.")
+            f"🟡 Установите зоны внимания ({len(place_acts)} шт.): {zs}.")
+    if remove_acts:
+        zs = ", ".join(f"({a['x']:.0f}, {a['y']:.0f})" for a in remove_acts)
+        desc_parts.append(
+            f"❌ Удалите опасные зоны ({len(remove_acts)} шт.): {zs}. "
+            f"Заезжайте внутрь и снимайте их.")
+    if avoid_zones:
+        zs = ", ".join(f"({z[0]:.0f}, {z[1]:.0f})" for z in avoid_zones)
+        desc_parts.append(
+            f"⚠ Не задевайте опасные зоны ({len(avoid_zones)} шт.): {zs}.")
     desc_parts.append(
-        "⭐ Звёзды — за проезд через контрольные точки маршрута. "
-        "Важна и точность ведения: робот должен идти по линии "
-        "траектории. Если он отклонится от неё дальше габаритов "
-        "робота — точность снижается.")
+        "🚧 Препятствия — не переставляйте галочки опасных зон.")
+    desc_parts.append(
+        "⭐ Звёзды — за контрольные точки и действия с зонами. "
+        "Качество прохождения растёт за каждую посещённую точку и "
+        "выполненное действие, снижается за отклонение от траектории "
+        "(дальше габаритов робота) и наезд на опасную зону.")
     description = "\n".join(desc_parts)
 
     for attempt in range(3):
@@ -1106,9 +1127,9 @@ async def stats_page(request: Request, db: Session = Depends(get_db),
 
     Общий блок:
       - сколько прохождений / сколько успешных
-      - всего звёзд, средняя точность, общее время в миссиях
+      - всего звёзд, среднее качество, общее время в миссиях
     По миссиям (агрегат лучших):
-      - название миссии, лучшие звёзды, лучшая точность, лучшее время.
+      - название миссии, лучшие звёзды, лучшее качество, лучшее время.
     """
     from sqlalchemy import func
     # Общие счётчики.
@@ -1118,10 +1139,8 @@ async def stats_page(request: Request, db: Session = Depends(get_db),
     success_runs = (db.query(func.count(MissionRun.id))
                     .filter(MissionRun.user_id == current_user.id)
                     .filter(MissionRun.success == True).scalar() or 0)
-    total_stars = (db.query(func.sum(MissionRun.stars))
-                    .filter(MissionRun.user_id == current_user.id)
-                    .filter(MissionRun.completed_at.isnot(None)).scalar() or 0)
-    avg_precision = (db.query(func.avg(MissionRun.coefficient))
+    # MissionRun.coefficient — историческое имя столбца, хранит «Качество».
+    avg_quality = (db.query(func.avg(MissionRun.coefficient))
                     .filter(MissionRun.user_id == current_user.id)
                     .filter(MissionRun.success == True).scalar() or 0.0)
     total_duration_sec = (db.query(func.sum(MissionRun.duration_sec))
@@ -1130,17 +1149,21 @@ async def stats_page(request: Request, db: Session = Depends(get_db),
     total_algo_duration_sec = (db.query(func.sum(MissionRun.algo_duration_sec))
                     .filter(MissionRun.user_id == current_user.id)
                     .filter(MissionRun.completed_at.isnot(None)).scalar() or 0.0)
-    # Лучшее по каждой миссии: best_stars + best_precision + best_time.
+    # Лучшее по каждой миссии: best_stars + best_quality + best_time.
     # Для best_time нужно min duration_sec ИМЕННО среди успешных и > 0.
     best_per_mission = (db.query(
                             MissionRun.mission_id,
                             func.max(MissionRun.stars).label("best_stars"),
-                            func.max(MissionRun.coefficient).label("best_prec"),
+                            func.max(MissionRun.coefficient).label("best_quality"),
                             func.count(MissionRun.id).label("runs_count"),
                         )
                         .filter(MissionRun.user_id == current_user.id)
                         .filter(MissionRun.completed_at.isnot(None))
                         .group_by(MissionRun.mission_id).all())
+    # Общий счёт звёзд = сумма ЛУЧШЕГО результата по каждой пройденной
+    # миссии, а НЕ сумма всех прогонов. Иначе повторный запуск той же
+    # программы на той же миссии бесконечно накручивал бы рейтинг.
+    total_stars = sum((r.best_stars or 0) for r in best_per_mission)
     # Лучшее время отдельно — только для успешных прогонов.
     best_time_per_mission = dict(
         db.query(MissionRun.mission_id, func.min(MissionRun.duration_sec))
@@ -1167,19 +1190,19 @@ async def stats_page(request: Request, db: Session = Depends(get_db),
         rows.append({
             "mission_id":  r.mission_id,
             "title":       titles.get(r.mission_id, f"Миссия #{r.mission_id}"),
-            "best_stars":  r.best_stars or 0,
-            "best_prec":   round((r.best_prec or 0.0) * 100),
+            "best_stars":   r.best_stars or 0,
+            "best_quality": round((r.best_quality or 0.0) * 100),
             "best_time":   best_time_per_mission.get(r.mission_id),
             "best_algo":   best_algo_per_mission.get(r.mission_id),
             "runs_count":  r.runs_count or 0,
         })
-    rows.sort(key=lambda x: (-x["best_stars"], -x["best_prec"]))
+    rows.sort(key=lambda x: (-x["best_stars"], -x["best_quality"]))
     return templates.TemplateResponse(request, "stats.html", {
         "current_user":       current_user,
         "total_runs":         int(total_runs),
         "success_runs":       int(success_runs),
         "total_stars":        int(total_stars),
-        "avg_precision_pct":  int(round((avg_precision or 0.0) * 100)),
+        "avg_quality_pct":    int(round((avg_quality or 0.0) * 100)),
         "total_duration_sec":      float(total_duration_sec or 0.0),
         "total_algo_duration_sec": float(total_algo_duration_sec or 0.0),
         "rows":                    rows,

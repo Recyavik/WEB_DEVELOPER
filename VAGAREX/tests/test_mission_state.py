@@ -17,7 +17,7 @@ if ROOT not in sys.path:
 from mission_state import (
     ActiveMission, dist_to_path, path_total_length,
     _dist_point_to_segment,
-    WAYPOINT_TOLERANCE_CM, ACTION_TOLERANCE_CM, COEFF_STEP_PER_TICK,
+    WAYPOINT_TOLERANCE_CM, ACTION_TOLERANCE_CM, QUALITY_DRAIN_PER_TICK,
 )  # noqa: E402
 
 
@@ -64,113 +64,218 @@ class TestGeometry(unittest.TestCase):
         self.assertAlmostEqual(path_total_length(path), 200)
 
 
-class TestCoefficientUpdate(unittest.TestCase):
-    """Коэффициент — храповик вниз: вне допуска падает, в допуске не растёт."""
+class TestQualityUpdate(unittest.TestCase):
+    """Качество: стартует с 0, растёт за посещённые точки/действия,
+    убывает вне коридора траектории. В коридоре по позиции не меняется."""
 
-    def test_in_margin_keeps_coefficient(self):
+    def test_quality_zero_when_nothing_done(self):
+        # Не делал ничего — качество 0%, а не «100% точности».
         m = _mk_mission()
-        m.coefficient = 0.5
-        # Робот ровно на траектории (на отрезке start→wp1).
-        m.update_coefficient(50, 0)
-        self.assertEqual(m.coefficient, 0.5)
-        # При непрерывном «в margin» так и держится — храповик только вниз,
-        # потерянную точность не вернуть.
-        for _ in range(1000):
-            m.update_coefficient(50, 0)
-        self.assertEqual(m.coefficient, 0.5)
+        self.assertEqual(m.quality, 0.0)
 
-    def test_out_of_margin_decreases_to_zero(self):
+    def test_quality_grows_with_visits(self):
+        # 2 точки, 0 действий → шаг 50%, каждое посещение +50%.
+        m = _mk_mission(waypoints=[(100.0, 0.0), (200.0, 0.0)])
+        self.assertEqual(m.quality_step, 0.5)
+        m.mark_waypoint_visits(100.0, 0.0)
+        self.assertAlmostEqual(m.quality, 0.5, places=4)
+        m.mark_waypoint_visits(200.0, 0.0)
+        self.assertAlmostEqual(m.quality, 1.0, places=4)
+
+    def test_quality_grows_with_actions(self):
+        # 1 точка + 1 действие → шаг 50%.
+        m = _mk_mission(waypoints=[(100.0, 0.0)],
+                        actions_required=[{"type": "place_attention",
+                                           "x": 0.0, "y": 0.0}])
+        self.assertEqual(m.quality_step, 0.5)
+        m.try_match_action("place_attention", 0.0, 0.0)
+        self.assertAlmostEqual(m.quality, 0.5, places=4)
+
+    def test_quality_clamped_at_one(self):
+        # Качество не превышает 100%.
+        m = _mk_mission(waypoints=[(100.0, 0.0)])
+        m.mark_waypoint_visits(100.0, 0.0)
+        self.assertAlmostEqual(m.quality, 1.0, places=4)
+
+    def test_in_corridor_keeps_quality(self):
         m = _mk_mission()
-        # 30 см от траектории — далеко вне допуска (20 см)
+        m.quality = 0.5
+        # Робот ровно на траектории — качество по позиции не меняется.
+        m.update_quality(50, 0)
+        self.assertEqual(m.quality, 0.5)
         for _ in range(1000):
-            m.update_coefficient(50, 30)
-        self.assertEqual(m.coefficient, 0.0)
+            m.update_quality(50, 0)
+        self.assertEqual(m.quality, 0.5)
+
+    def test_out_of_corridor_drains_to_zero(self):
+        m = _mk_mission()
+        m.quality = 1.0
+        # 30 см от траектории — вне коридора (20 см) → плавно убывает к 0.
+        for _ in range(1000):
+            m.update_quality(50, 30)
+        self.assertEqual(m.quality, 0.0)
+
+    def test_out_of_corridor_drains_one_step_per_tick(self):
+        # Один тик вне коридора убавляет качество ровно на шаг убывания.
+        m = _mk_mission()
+        m.quality = 1.0
+        m.update_quality(50, 30)
+        self.assertAlmostEqual(m.quality, 1.0 - QUALITY_DRAIN_PER_TICK,
+                               places=6)
+
+    def test_coefficient_pure_ratchet_on_deviation(self):
+        # «Точность ведения» — старт 1.0, падает за отклонение, не растёт.
+        m = _mk_mission()
+        self.assertEqual(m.coefficient, 1.0)
+        m.update_quality(50, 0)        # в коридоре — без изменений
+        self.assertEqual(m.coefficient, 1.0)
+        m.update_quality(50, 30)       # вне коридора — −шаг
+        self.assertAlmostEqual(m.coefficient, 1.0 - QUALITY_DRAIN_PER_TICK,
+                               places=6)
+
+    def test_coefficient_ignores_visits_and_zone_hits(self):
+        # Посещение точки и наезд на зону штрафуют/растят качество,
+        # но «точность ведения» не трогают — она про отклонение.
+        m = _mk_mission(waypoints=[(100.0, 0.0)],
+                        danger_zones=[(0.0, 0.0, 15.0)])
+        m.quality = 1.0
+        m.mark_waypoint_visits(100.0, 0.0)        # +качество
+        m.update_quality(5, 5)                    # в зоне, в коридоре
+        m.update_quality(50, 0)                   # выехал из зоны — −5% качества
+        self.assertAlmostEqual(m.quality, 0.95, places=4)
+        self.assertEqual(m.coefficient, 1.0)      # точность ведения цела
 
     def test_deviation_counted_once_per_excursion(self):
         m = _mk_mission()
-        # Сначала в margin
-        m.update_coefficient(50, 0)
+        # Сначала в коридоре
+        m.update_quality(50, 0)
         self.assertEqual(m.deviations, 0)
         # Уехали — один deviation
-        m.update_coefficient(50, 30)
+        m.update_quality(50, 30)
         self.assertEqual(m.deviations, 1)
-        # Ещё раз вне margin — deviation НЕ инкрементируется (тот же эпизод)
-        m.update_coefficient(50, 30)
+        # Ещё раз вне коридора — deviation НЕ инкрементируется (тот же эпизод)
+        m.update_quality(50, 30)
         self.assertEqual(m.deviations, 1)
         # Вернулись на траекторию
-        m.update_coefficient(50, 0)
+        m.update_quality(50, 0)
         self.assertEqual(m.deviations, 1)
         # Снова уехали — новый deviation
-        m.update_coefficient(50, 30)
+        m.update_quality(50, 30)
         self.assertEqual(m.deviations, 2)
 
 
 class TestDangerZoneHits(unittest.TestCase):
-    """Наезд на опасную зону: −5% начисляется только когда робот ВЫЕХАЛ из
-    зоны без действия внутри. Действие (place_attention или remove_danger),
-    выполненное пока робот внутри зоны, прощает наезд. Учёт зон работает
-    в любой миссии (отдельного «инспектор-режима» больше нет)."""
+    """Наезд на опасную зону: −5% качества начисляется только когда робот
+    ВЫЕХАЛ из зоны без действия внутри. Действие (place_attention или
+    remove_danger), выполненное пока робот внутри зоны, прощает наезд.
+    Тесты стартуют с quality=1.0, чтобы изолировать влияние зон."""
 
-    def _with_zones(self, danger_zones):
-        return _mk_mission(danger_zones=danger_zones)
+    def _with_zones(self, danger_zones, actions=None):
+        m = _mk_mission(danger_zones=danger_zones,
+                        actions_required=actions or [])
+        m.quality = 1.0
+        return m
 
     def test_no_hit_while_only_inside(self):
-        # Заехали в зону → коэффициент не падает, finalize ещё нет
+        # Заехали в зону → качество не падает, finalize ещё нет
         m = self._with_zones([(0.0, 0.0, 15.0)])
-        m.update_coefficient(5, 5)
-        self.assertEqual(m.coefficient, 1.0)
+        m.update_quality(5, 5)
+        self.assertEqual(m.quality, 1.0)
         self.assertIn(0, m.danger_zones_inside)
         self.assertEqual(m.danger_zones_finalized, set())
 
     def test_hit_fires_on_exit(self):
         # Заехали → выехали → −5%
         m = self._with_zones([(0.0, 0.0, 15.0)])
-        m.update_coefficient(5, 5)       # внутри
-        m.update_coefficient(50, 0)      # выехали
-        self.assertAlmostEqual(m.coefficient, 0.95, places=4)
+        m.update_quality(5, 5)       # внутри
+        m.update_quality(50, 0)      # выехали
+        self.assertAlmostEqual(m.quality, 0.95, places=4)
         self.assertIn(0, m.danger_zones_finalized)
 
     def test_hit_forgiven_when_action_performed_inside(self):
         # Заехали → выполнили действие → выехали → штрафа НЕТ
         m = self._with_zones([(0.0, 0.0, 15.0)])
-        m.update_coefficient(5, 5)        # внутри
+        m.update_quality(5, 5)            # внутри
         m.forgive_current_zone_hits(5, 5) # выполнил remove/place внутри
-        m.update_coefficient(50, 0)       # выехали
-        self.assertAlmostEqual(m.coefficient, 1.0, places=4)
+        m.update_quality(50, 0)           # выехали
+        self.assertAlmostEqual(m.quality, 1.0, places=4)
         self.assertIn(0, m.danger_zones_finalized)
 
     def test_forgive_outside_zone_no_effect(self):
         # forgive вызван снаружи зоны → ничего не прощается
         m = self._with_zones([(0.0, 0.0, 15.0)])
         m.forgive_current_zone_hits(100, 100)   # робот далеко от зоны
-        m.update_coefficient(5, 5)               # внутри
-        m.update_coefficient(50, 0)              # выехали — штраф
-        self.assertAlmostEqual(m.coefficient, 0.95, places=4)
+        m.update_quality(5, 5)                   # внутри
+        m.update_quality(50, 0)                  # выехали — штраф
+        self.assertAlmostEqual(m.quality, 0.95, places=4)
 
     def test_finalize_remaining_zones_penalizes_stuck_inside(self):
         # Робот завершил миссию, ОСТАВШИСЬ внутри зоны → −5% на финале.
         m = self._with_zones([(0.0, 0.0, 15.0)])
-        m.update_coefficient(5, 5)               # внутри, выхода не было
+        m.update_quality(5, 5)                   # внутри, выхода не было
         hits = m.finalize_remaining_zones()
         self.assertEqual(hits, 1)
-        self.assertAlmostEqual(m.coefficient, 0.95, places=4)
+        self.assertAlmostEqual(m.quality, 0.95, places=4)
 
     def test_finalize_remaining_zones_forgives_action_inside(self):
         # Остался внутри, но выполнил действие → финал без штрафа.
         m = self._with_zones([(0.0, 0.0, 15.0)])
-        m.update_coefficient(5, 5)
+        m.update_quality(5, 5)
         m.forgive_current_zone_hits(5, 5)
         hits = m.finalize_remaining_zones()
         self.assertEqual(hits, 0)
-        self.assertAlmostEqual(m.coefficient, 1.0, places=4)
+        self.assertAlmostEqual(m.quality, 1.0, places=4)
 
     def test_finalize_ignores_untouched_zones(self):
         # Зону, которой робот не касался, финал не штрафует.
         m = self._with_zones([(200.0, 200.0, 15.0)])
-        m.update_coefficient(5, 5)               # далеко от зоны
+        m.update_quality(5, 5)                   # далеко от зоны
         hits = m.finalize_remaining_zones()
         self.assertEqual(hits, 0)
-        self.assertAlmostEqual(m.coefficient, 1.0, places=4)
+        self.assertAlmostEqual(m.quality, 1.0, places=4)
+
+    def test_removable_zone_never_penalized(self):
+        # Зона с парным remove_danger — задача «удалить»: заехать в неё
+        # нужно по заданию, наезд НЕ штрафуется ни при выходе, ни на финале.
+        m = self._with_zones(
+            [(0.0, 0.0, 15.0)],
+            actions=[{"type": "remove_danger", "x": 0.0, "y": 0.0}])
+        self.assertIn(0, m.removable_zone_idx)
+        m.update_quality(5, 5)                   # заехали внутрь
+        m.update_quality(50, 0)                  # выехали
+        self.assertEqual(m.quality, 1.0)
+        self.assertEqual(m.finalize_remaining_zones(), 0)
+        self.assertEqual(m.quality, 1.0)
+
+    def test_untouched_zone_still_penalized_with_removable_present(self):
+        # Среди зон есть и «удалить» (0,0), и нетронутая-препятствие (50,0)
+        # на линии маршрута. Штрафуется только вторая.
+        m = self._with_zones(
+            [(0.0, 0.0, 15.0), (50.0, 0.0, 15.0)],
+            actions=[{"type": "remove_danger", "x": 0.0, "y": 0.0}])
+        self.assertEqual(m.removable_zone_idx, {0})
+        m.update_quality(50, 5)                  # заехали во вторую (на маршруте)
+        m.update_quality(90, 0)                  # выехали — штраф −5%
+        self.assertAlmostEqual(m.quality, 0.95, places=4)
+
+
+class TestActionCounts(unittest.TestCase):
+    """Раздельный счёт действий: установлено зон внимания / удалено опасных."""
+
+    def test_counts_split_by_type(self):
+        m = _mk_mission(actions_required=[
+            {"type": "place_attention", "x": 10, "y": 0},
+            {"type": "place_attention", "x": 20, "y": 0},
+            {"type": "remove_danger",   "x": 30, "y": 0},
+        ])
+        c = m.action_counts()
+        self.assertEqual((c["place_done"], c["place_total"]), (0, 2))
+        self.assertEqual((c["remove_done"], c["remove_total"]), (0, 1))
+        m.try_match_action("place_attention", 10, 0)
+        m.try_match_action("remove_danger", 30, 0)
+        c = m.action_counts()
+        self.assertEqual((c["place_done"], c["place_total"]), (1, 2))
+        self.assertEqual((c["remove_done"], c["remove_total"]), (1, 1))
 
 
 class TestWaypointVisits(unittest.TestCase):
@@ -293,55 +398,55 @@ class TestCompletionAndStars(unittest.TestCase):
 
     def test_fact_stars_one_per_visit_and_action(self):
         """1 звезда за каждую посещённую точку + 1 за каждое действие.
-        Не зависит от коэффициента."""
+        Не зависит от качества."""
         m = _mk_mission(waypoints=[(100, 0), (200, 0), (300, 0)],
                         actions_required=[{"type": "place_attention", "x": 0, "y": 0}])
         for i in range(3):
             m.waypoints_visited.add(i)
         m.actions_done.add(0)
-        m.coefficient = 0.0          # точность 0
+        m.quality = 0.0              # качество 0
         self.assertEqual(m.fact_stars(), 4,
                          "Все 3 точки + 1 действие = 4 факт-звезды, "
-                         "независимо от точности")
+                         "независимо от качества")
 
-    def test_track_bonus_proportional_to_coefficient(self):
-        """Бонус = floor(база × точность). При 100% — удваивает базу."""
+    def test_track_bonus_proportional_to_quality(self):
+        """Бонус = floor(база × качество). При 100% — удваивает базу."""
         m = _mk_mission(waypoints=[(100, 0), (200, 0), (300, 0)])
         for i in range(3):
             m.waypoints_visited.add(i)
-        # точность 100% → бонус = 3, всего 6
-        m.coefficient = 1.0
+        # качество 100% → бонус = 3, всего 6
+        m.quality = 1.0
         self.assertEqual(m.fact_stars(), 3)
         self.assertEqual(m.track_bonus_stars(), 3)
         self.assertEqual(m.compute_stars(), 6)
-        # точность 70% → бонус = floor(3 * 0.7) = 2, всего 5
-        m.coefficient = 0.7
+        # качество 70% → бонус = floor(3 * 0.7) = 2, всего 5
+        m.quality = 0.7
         self.assertEqual(m.track_bonus_stars(), 2)
         self.assertEqual(m.compute_stars(), 5)
-        # точность 22% → бонус 0, всего только факт-звёзды
-        m.coefficient = 0.22
+        # качество 22% → бонус 0, всего только факт-звёзды
+        m.quality = 0.22
         self.assertEqual(m.track_bonus_stars(), 0)
         self.assertEqual(m.compute_stars(), 3)
 
     def test_partial_completion_still_gives_fact_stars(self):
-        """Регрессия: раньше при coef=0.2 звёзды режились в 0 даже если
-        робот посетил часть точек. Сейчас факт-звёзды гарантированы."""
+        """Регрессия: звёзды за посещённые точки гарантированы даже при
+        низком качестве — факт-звёзды не режутся."""
         m = _mk_mission(waypoints=[(100, 0), (200, 0), (300, 0)])
         m.waypoints_visited.add(0)
         m.waypoints_visited.add(1)
-        m.coefficient = 0.22
+        m.quality = 0.22
         # 2 факт + floor(2 * 0.22)=0 бонус = 2 звезды
         self.assertEqual(m.compute_stars(), 2,
                          "При частичном прохождении звёзды за точки "
-                         "должны сохраняться, даже при низкой точности")
+                         "должны сохраняться, даже при низком качестве")
 
-    def test_complete_mission_at_low_coefficient(self):
-        """Полное прохождение с минимальной точностью даёт ровно factual
+    def test_complete_mission_at_low_quality(self):
+        """Полное прохождение с минимальным качеством даёт ровно factual
         количество звёзд (бонус ~0). 'Хотя бы 1' больше не нужно —
         фактом это покрыто."""
         m = _mk_mission(waypoints=[(100, 0)])
         m.waypoints_visited.add(0)
-        m.coefficient = 0.001
+        m.quality = 0.001
         self.assertEqual(m.compute_stars(), 1)
         self.assertEqual(m.fact_stars(), 1)
         self.assertEqual(m.track_bonus_stars(), 0)
@@ -381,13 +486,13 @@ class TestCompletionAndStars(unittest.TestCase):
         self.assertEqual(m.time_bonus_stars(-5), 0)
 
     def test_compute_stars_includes_time_bonus(self):
-        """compute_stars(duration) суммирует факт + точность + скорость."""
+        """compute_stars(duration) суммирует факт + качество + скорость."""
         m = _mk_mission(waypoints=[(100, 0), (200, 0), (300, 0)])
         for i in range(3): m.waypoints_visited.add(i)
-        m.coefficient = 1.0
-        # факт 3 + точность 3 + скорость 2 (быстро) = 8
+        m.quality = 1.0
+        # факт 3 + качество 3 + скорость 2 (быстро) = 8
         self.assertEqual(m.compute_stars(10), 8)
-        # факт 3 + точность 3 + скорость 0 (медленно) = 6
+        # факт 3 + качество 3 + скорость 0 (медленно) = 6
         self.assertEqual(m.compute_stars(60), 6)
         # без duration — без бонуса
         self.assertEqual(m.compute_stars(), 6)
@@ -404,11 +509,11 @@ class TestClientSerialization(unittest.TestCase):
     def test_progress_dict_reflects_state(self):
         m = _mk_mission(waypoints=[(100, 0), (200, 0)])
         m.waypoints_visited.add(0)
-        m.coefficient = 0.85
+        m.quality = 0.85
         m.deviations = 3
         p = m.progress_dict()
         self.assertEqual(p["waypoints_visited"], [0])
-        self.assertEqual(p["coefficient"], 0.85)
+        self.assertEqual(p["quality"], 0.85)
         self.assertEqual(p["deviations"], 3)
         self.assertFalse(p["complete"])
 

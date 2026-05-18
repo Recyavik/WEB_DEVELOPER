@@ -1094,7 +1094,7 @@ body { padding-bottom: 22px; }
   padding: 0.7rem 1.1rem;       /* больше воздуха между колонками */
   text-align: left;
   border-bottom: 1px solid var(--border);
-  white-space: nowrap;          /* шапка не переносится «Лучшая\nточность» */
+  white-space: nowrap;          /* шапка не переносится «Лучшее\nкачество» */
 }
 .stats-table th {
   color: var(--text-dim);

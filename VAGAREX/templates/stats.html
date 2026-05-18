@@ -36,8 +36,8 @@
       <span class="stats-value stats-value--accent">{{ total_stars }}</span>
     </div>
     <div class="stats-item">
-      <span class="stats-label">Средняя точность</span>
-      <span class="stats-value">{{ avg_precision_pct }}%</span>
+      <span class="stats-label">Среднее качество</span>
+      <span class="stats-value">{{ avg_quality_pct }}%</span>
     </div>
     <div class="stats-item">
       <span class="stats-label">⏱ Общее время заданий</span>
@@ -59,7 +59,7 @@
         <th class="stats-table__col-num">№</th>
         <th>Миссия</th>
         <th>Лучшие ⭐</th>
-        <th>Лучшая точность</th>
+        <th>Лучшее качество</th>
         <th title="С активации миссии до завершения">Лучшее время задания</th>
         <th title="Длительность последнего прогона ▶ Запустить код">Лучшее время алгоритма</th>
         <th>Прохождений</th>
@@ -77,7 +77,7 @@
             <strong>{{ r.best_stars }}</strong>⭐
           {% else %}—{% endif %}
         </td>
-        <td>{{ r.best_prec }}%</td>
+        <td>{{ r.best_quality }}%</td>
         <td>{{ fmt_time(r.best_time) }}</td>
         <td>{{ fmt_time(r.best_algo) }}</td>
         <td>{{ r.runs_count }}</td>

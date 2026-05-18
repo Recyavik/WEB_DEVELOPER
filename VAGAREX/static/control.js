@@ -213,7 +213,7 @@
           // на всё время миссии. Сервер тоже не даст переключиться.
           // Во время ЛЮБОЙ миссии набор препятствий зафиксирован
           // (только стены — режим WM): зоны не тормозят робота, наезды
-          // на них штрафуют точность. Галочки «Препятствия» блокируем.
+          // на них штрафуют качество. Галочки «Препятствия» блокируем.
           _setModeButtonsLocked(true,
             'Во время миссии препятствия зафиксированы (только стены). '
             + 'Завершите или остановите миссию, чтобы менять.');
@@ -550,6 +550,9 @@
     const factStars  = (msg.stars_fact  != null) ? msg.stars_fact  : null;
     const trackStars = (msg.stars_track != null) ? msg.stars_track : null;
     const timeStars  = (msg.stars_time  != null) ? msg.stars_time  : null;
+    const quality    = (msg.quality_pct != null)
+                       ? msg.quality_pct
+                       : Math.round((msg.quality || 0) * 100);
     const precision  = (msg.precision_pct != null)
                        ? msg.precision_pct
                        : Math.round((msg.coefficient || 0) * 100);
@@ -564,14 +567,15 @@
         `<div>⭐ Всего: <strong>${stars}</strong></div>` +
         `<div style="color:var(--text-dim); font-size:0.85rem; margin-top:0.3rem">` +
         `  За точки и действия: <strong>${factStars}</strong><br>` +
-        `  За точность траектории: <strong>${trackStars}</strong>` +
+        `  За качество прохождения: <strong>${trackStars}</strong>` +
         (timeStars != null ? `<br>  За скорость прохождения: <strong>${timeStars}</strong>` : '') +
         `</div>`;
     }
     modal.querySelector('.mission-result-body').innerHTML =
       `<div style="text-align:center; font-size:1.4rem; margin-bottom:0.6rem">${starsStr || '—'}</div>` +
       breakdown +
-      `<div style="margin-top:0.5rem">Точность траектории: <strong>${precision}%</strong></div>` +
+      `<div style="margin-top:0.5rem">Качество прохождения: <strong>${quality}%</strong></div>` +
+      `<div>Точность ведения: <strong>${precision}%</strong></div>` +
       (timeStr ? `<div>Время задания: <strong>${timeStr}</strong></div>` : '') +
       (algoStr ? `<div>Время алгоритма: <strong>${algoStr}</strong></div>` : '') +
       `<div>Отклонений: <strong>${msg.deviations || 0}</strong></div>`;
@@ -1176,7 +1180,7 @@
       // Идёт проверка миссии — препятствия только стены (W), миссия (M).
       modeText  = 'WM';
       modeTitle = 'Проверка миссии: препятствия — только стены, '
-                + 'зоны не тормозят робота (наезд — штраф точности).';
+                + 'зоны не тормозят робота (наезд — штраф качества).';
     } else if (zoneMode) {
       modeText  = '⛯ Обстановка';
       modeTitle = 'Обстановка — расстановка зон мышью';

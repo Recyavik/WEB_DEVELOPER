@@ -204,6 +204,10 @@ class UserSession:
         # сохранении кастомной миссии для «ключевых точек» (границы манёвров).
         # Сбрасывается в _run_reset (= в начале каждого ▶ Запуска).
         self._traj_segments: list = []
+        # Опасные зоны, удалённые программой за текущий прогон — [(x,y,r), …].
+        # Сбрасывается в _run_reset (начало ▶). При сохранении кастомной
+        # миссии становятся задачами «удалить зону».
+        self._removed_zones_run: list = []
         self._sonar_state   = {"last_fire": 0.0}
 
         self._connections: list[WebSocket] = []
@@ -274,6 +278,9 @@ class UserSession:
             db.close()
         # Загружаем зоны и программу пользователя
         self._load_user_state()
+        # Главный event-loop сессии — нужен для потокобезопасной отправки
+        # сообщений из потока exec() пользовательской программы.
+        self._loop = asyncio.get_running_loop()
         # Запускаем фоновые задачи
         self._physics_task = asyncio.create_task(self.update_physics())
         self._queue_task   = asyncio.create_task(self._queue_runner())
@@ -403,14 +410,14 @@ class UserSession:
             db.close()
         # Режим WM: проверка миссии идёт «как будто препятствие — только
         # стены». Робот должен СМОЧЬ проехать сквозь зоны (наезд — штраф
-        # точности, а не авто-стоп), поэтому на время миссии набор
+        # качества, а не авто-стоп), поэтому на время миссии набор
         # препятствий принудительно пуст. Галочки заблокированы (UI +
         # сервер), вернуть danger/attention нельзя до stop/finalize.
         if self.robot_state.obstacles:
             self._apply_obstacles(set())
         await self.push_message(
             "🎯 Режим WM: препятствия — только стены. Зоны не тормозят "
-            "робота, но наезды снижают точность миссии.", "info")
+            "робота, но наезды снижают качество миссии.", "info")
         await self.push_message(
             f"🎯 Миссия «{self._mission.title}» активирована. "
             f"Точек: {len(self._mission.waypoints)}, "
@@ -451,9 +458,9 @@ class UserSession:
             self._mission.last_algo_duration_sec = round(cumulative, 2)
             wp_done = len(self._mission.waypoints_visited)
             wp_total = len(self._mission.waypoints)
-            prec = int(round(self._mission.coefficient * 100))
+            qual = int(round(self._mission.quality * 100))
             await self.push_message(
-                f"{out}\nТочки {wp_done}/{wp_total}, точность {prec}%, "
+                f"{out}\nТочки {wp_done}/{wp_total}, качество {qual}%, "
                 f"всего времени алгоритма {cumulative:.1f} с. "
                 f"Жми 🏁 Проверка задания для финала.",
                 "info")
@@ -463,7 +470,7 @@ class UserSession:
         """Прогон программы для активной миссии — без автозавершения.
 
         Сбрасываем счётчики прохождения (каждый прогон оценивает только
-        ПОСЛЕДНЕЕ исполнение по точкам и точности — иначе старый успех
+        ПОСЛЕДНЕЕ исполнение по точкам и качеству — иначе старый успех
         даёт звёзды даже если код испортили), запускаем _program через
         очередь, ждём опустошения, замеряем время и НАКАПЛИВАЕМ его в
         last_algo_duration_sec — суммарное время алгоритма по всем
@@ -491,11 +498,11 @@ class UserSession:
             self._mission.last_algo_duration_sec = round(cumulative, 2)
             wp_done = len(self._mission.waypoints_visited)
             wp_total = len(self._mission.waypoints)
-            prec = int(round(self._mission.coefficient * 100))
+            qual = int(round(self._mission.quality * 100))
             await self.push_message(
                 f"✓ Прогон завершён за {run_dur:.1f} с "
                 f"(всего {cumulative:.1f} с). "
-                f"Точки {wp_done}/{wp_total}, точность {prec}%. "
+                f"Точки {wp_done}/{wp_total}, качество {qual}%. "
                 f"Жми 🏁 Проверка задания для финала.",
                 "info")
         return True
@@ -526,13 +533,24 @@ class UserSession:
         self._mission.forgive_current_zone_hits(s.x, s.y)
         idx = self._mission.try_match_action(action_type, x, y)
         if idx is not None:
-            # Уведомим пользователя, что засчитали действие миссии.
-            done = len(self._mission.actions_done)
-            total = len(self._mission.actions_required)
-            asyncio.create_task(self.push_message(
-                f"✓ Действие миссии засчитано ({action_type}). "
-                f"Прогресс: {done}/{total}.",
-                "success"))
+            # Уведомим пользователя — раздельно по установке и удалению.
+            cnt = self._mission.action_counts()
+            coro = self.push_message(
+                f"✓ Действие засчитано. Установлено зон "
+                f"{cnt['place_done']}/{cnt['place_total']}, "
+                f"удалено {cnt['remove_done']}/{cnt['remove_total']}.",
+                "success")
+            # _mission_check_action вызывается и из главного цикла
+            # (_dispatch), и из потока exec() пользовательской программы
+            # (RobotProxy.remove_zone/…). В потоке exec нет running loop —
+            # asyncio.create_task бросил бы RuntimeError «no running event
+            # loop». Планируем на loop сессии потокобезопасно (без .result()
+            # — fire-and-forget, безопасно и из самого loop-потока).
+            loop = getattr(self, "_loop", None)
+            if loop is not None:
+                asyncio.run_coroutine_threadsafe(coro, loop)
+            else:
+                coro.close()   # loop ещё не поднят — нечего планировать
 
     async def stop_mission(self, success: Optional[bool] = None) -> None:
         """Завершить активную миссию. Сохраняет финальный MissionRun
@@ -545,7 +563,7 @@ class UserSession:
         m = self._mission
         # Робот мог финишировать внутри опасной зоны — exit-only машина
         # её не закрыла. Добиваем учёт зон ДО подсчёта звёзд: эти штрафы
-        # должны попасть в финальный coefficient.
+        # должны попасть в финальное качество.
         m.finalize_remaining_zones()
         if success is None:
             success = m.is_complete()
@@ -556,15 +574,16 @@ class UserSession:
         #     ВСЕГДА засчитывается; обучающийся честно довёл робота до
         #     точки, эту звезду нельзя отнять только потому, что миссию
         #     не закрыли целиком.
-        #   • точность траектории — тоже всегда (бонус начисляется по
-        #     пройденному пути и не зависит от полноты завершения).
+        #   • бонус качества — тоже всегда (начисляется по пройденному
+        #     пути и не зависит от полноты завершения).
         #   • скорость прохождения — только при success: премия за
         #     полностью законченную миссию в срок.
         fact_stars  = m.fact_stars()
         track_stars = m.track_bonus_stars()
         time_stars  = m.time_bonus_stars(duration_sec) if success else 0
         stars = fact_stars + track_stars + time_stars
-        precision_pct = int(round(m.coefficient * 100))
+        quality_pct = int(round(m.quality * 100))
+        precision_pct = int(round(m.coefficient * 100))   # точность ведения
         algo_duration = round(m.last_algo_duration_sec or 0.0, 2)
         if m.run_id is not None:
             db = SessionLocal()
@@ -573,7 +592,9 @@ class UserSession:
                 if run:
                     run.completed_at      = ended_at
                     run.stars             = stars
-                    run.coefficient       = round(m.coefficient, 4)
+                    # Столбец coefficient хранит «Качество» (имя
+                    # историческое) — /stats показывает именно его.
+                    run.coefficient       = round(m.quality, 4)
                     run.deviations        = m.deviations
                     run.duration_sec      = round(duration_sec, 2)
                     run.algo_duration_sec = algo_duration
@@ -599,6 +620,8 @@ class UserSession:
             "stars_fact":  fact_stars,
             "stars_track": track_stars,
             "stars_time":  time_stars,
+            "quality":     round(m.quality, 3),
+            "quality_pct": quality_pct,
             "coefficient": round(m.coefficient, 3),
             "precision_pct": precision_pct,
             "deviations":  m.deviations,
@@ -614,9 +637,10 @@ class UserSession:
         await self.push_message(
             f"🏁 Задание {mission_label} завершено: "
             f"{'✓ успех' if success else '✗ не выполнено'}. "
-            f"⭐ {stars} (точки {fact_stars} + точность {track_stars} "
+            f"⭐ {stars} (точки {fact_stars} + качество {track_stars} "
             f"+ скорость {time_stars}), "
-            f"точность {precision_pct}%, время задания {time_str}, "
+            f"качество {quality_pct}%, точность ведения {precision_pct}%, "
+            f"время задания {time_str}, "
             f"время алгоритма {algo_str}, отклонений: {m.deviations}.",
             "success" if success else "warning")
         self._mission = None
@@ -790,7 +814,7 @@ class UserSession:
         mission_progress = None
         if self._mission is not None and not self.robot_state.turning_in_place:
             s = self.robot_state
-            self._mission.update_coefficient(s.x, s.y)
+            self._mission.update_quality(s.x, s.y)
             new_visits = self._mission.mark_waypoint_visits(s.x, s.y)
             for idx in new_visits:
                 wp = self._mission.waypoints[idx]
@@ -2040,7 +2064,7 @@ class UserSession:
         Фазы 2+3 повторяются итеративно до сходимости либо MAX_ITER раз.
 
         Флаг `s.turning_in_place` поднимается на весь манёвр — оценка
-        миссии (update_coefficient) игнорирует отклонения, пока он True,
+        миссии (update_quality) игнорирует отклонения, пока он True,
         потому что K-turn по геометрии съезжает с прямой waypoint→waypoint."""
         s = self.robot_state
         target_deg = float(target_deg) % 360
@@ -2726,6 +2750,12 @@ class UserSession:
                 f"r={zone_at_point.radius:.0f}.", "warning")
             return 0
         removed = self.world.remove_zones_at(x, y)
+        # Удалённые ОПАСНЫЕ зоны логируем: при сохранении кастомной миссии
+        # они станут задачами «удалить зону» (см. missions_save_custom).
+        for z in removed:
+            if getattr(z, "kind", "danger") == "danger":
+                self._removed_zones_run.append(
+                    (round(z.x, 1), round(z.y, 1), round(z.radius, 1)))
         if db:
             ids = [z.db_id for z in removed if z.db_id is not None]
             if ids:
@@ -3112,6 +3142,8 @@ class UserSession:
         self._program = []
         # Отрезки манёвров — новый прогон начинается с чистого листа.
         self._traj_segments = []
+        # Удалённые программой зоны — тоже считаем заново за прогон.
+        self._removed_zones_run = []
         await self.robot.stop()
         await self.robot.set_servo_center()
         # Деактивация ВСЕХ зон пользователя в DB — должна происходить

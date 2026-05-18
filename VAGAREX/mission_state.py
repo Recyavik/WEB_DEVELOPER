@@ -1,7 +1,7 @@
 """mission_state.py — runtime-состояние активной миссии в UserSession.
 
 Изолирует трекинг прохождения миссии (посещение точек, выполнение
-действий с зонами, отклонения от траектории, динамический коэффициент)
+действий с зонами, отклонения от траектории, качество прохождения)
 от основной логики UserSession. Чистая структура данных + утилиты,
 без внешних зависимостей.
 
@@ -97,10 +97,10 @@ WAYPOINT_TOLERANCE_CM = 5.0
 # Радиус матчинга действия с зоной (для зон-действий).
 ACTION_TOLERANCE_CM = 15.0
 
-# Шаг изменения коэффициента за один tick (push_state). Подобран так,
-# что 10 секунд непрерывного отклонения дают примерно −0.5 коэффициента
-# (~10 push_state в секунду × 0.005 = 0.05/сек, ×10с = 0.5).
-COEFF_STEP_PER_TICK = 0.005
+# Скорость убывания «Качества» за один tick (push_state), пока робот
+# вне коридора траектории. ~10 push_state/с × 0.005 = 0.05/с → 10 секунд
+# отклонения стоят −0.5 качества.
+QUALITY_DRAIN_PER_TICK = 0.005
 
 
 @dataclass
@@ -130,6 +130,14 @@ class ActiveMission:
     # Динамическое состояние трекинга
     waypoints_visited: set[int] = field(default_factory=set)
     actions_done:      set[int] = field(default_factory=set)
+    # «Качество прохождения» 0..1: стартует с 0, растёт за посещённые
+    # точки и выполненные действия, убывает за отклонение от траектории
+    # и наезды на опасные зоны. Зажато в [0, 1]. Идёт в звёзды-бонус.
+    quality:           float    = 0.0
+    # «Точность ведения» 0..1: чистый храповик следования траектории —
+    # старт 1.0, падает ТОЛЬКО за выход из коридора, не зависит от
+    # посещения точек и наездов на зоны. Справочная метрика рядом с
+    # «Качеством»; в звёзды НЕ идёт (бонус считается от качества).
     coefficient:       float    = 1.0
     deviations:        int      = 0
     last_in_margin:    bool     = True
@@ -149,34 +157,61 @@ class ActiveMission:
     danger_zones_inside:    set[int] = field(default_factory=set)
     danger_zones_forgiven:  set[int] = field(default_factory=set)
     danger_zones_finalized: set[int] = field(default_factory=set)
+    # Индексы danger_zones, которые являются задачей «удалить зону»
+    # (есть парный remove_danger action). Наезд на них НЕ штрафуется —
+    # заехать внутрь нужно по заданию. Штрафуются только нетронутые
+    # зоны-препятствия. Заполняется в __post_init__.
+    removable_zone_idx: set[int] = field(default_factory=set)
+    # Вклад одной проверочной позиции (точка / действие с зоной) в
+    # «Качество» = 1 / (точки + действия). Заполняется в __post_init__.
+    quality_step: float = 0.0
 
-    # ── Трекинг отклонения и обновление коэффициента ─────────────────────
+    def __post_init__(self):
+        """Вычисляет производные поля:
+          • removable_zone_idx — danger-зоны с парным remove_danger
+            (наезд на них не штрафуется — заехать нужно по заданию);
+          • quality_step — вклад одной проверочной позиции в «Качество»."""
+        for i, (zx, zy, zr) in enumerate(self.danger_zones):
+            for a in self.actions_required:
+                if a.get("type") != "remove_danger":
+                    continue
+                ax, ay = float(a.get("x", 0)), float(a.get("y", 0))
+                if math.hypot(zx - ax, zy - ay) <= max(float(zr), 5.0):
+                    self.removable_zone_idx.add(i)
+                    break
+        n_positions = len(self.waypoints) + len(self.actions_required)
+        self.quality_step = (1.0 / n_positions) if n_positions else 0.0
+
+    # ── Трекинг отклонения и обновление качества ─────────────────────────
 
     def full_path(self) -> list[tuple[float, float]]:
         """Эталонная траектория: старт → waypoint_1 → waypoint_2 → …"""
         return [(self.start_x, self.start_y), *self.waypoints]
 
-    def update_coefficient(self, robot_x: float, robot_y: float) -> bool:
-        """Обновить коэффициент точности по текущей позиции робота.
+    def update_quality(self, robot_x: float, robot_y: float) -> bool:
+        """Обновить «Качество прохождения» по текущей позиции робота.
 
-        Эталон — ПЛОТНАЯ траектория автора `path` (если задана), иначе
-        ломаная старт→waypoints. Допуск — габарит робота `track_tolerance_cm`.
-
-        Точность — ХРАПОВИК ВНИЗ: вне допуска коэффициент падает, в
-        пределах допуска НЕ растёт. Вернувшись на маршрут, потерянную
-        точность вернуть нельзя — можно растерять её всю.
-
-        Наезды на опасные зоны (−5% за зону) учитываются всегда.
-        Возвращает True если случился переход «в margin / вне margin»
-        (для журнала)."""
+        Качество РАСТЁТ за посещённые точки и выполненные действия —
+        это делают mark_waypoint_visits / try_match_action. Здесь оно
+        только УБЫВАЕТ:
+          • робот вне коридора траектории → качество плавно падает,
+            пока он не вернётся. Эталон — плотная траектория `path`
+            (если задана), иначе ломаная старт→waypoints; ширина
+            коридора — `track_tolerance_cm` (габарит робота);
+          • наезд на нетронутую опасную зону → −5% (_mark_danger_zone_hits).
+        Параллельно ведётся `coefficient` («точность ведения») — чистый
+        храповик следования траектории: падает за то же отклонение, но
+        не реагирует на точки/зоны и не растёт обратно.
+        Зажато в [0, 1]. Возвращает True при переходе «в коридор / вне»."""
         self._mark_danger_zone_hits(robot_x, robot_y)
 
         ref = self.path if len(self.path) >= 2 else self.full_path()
         d = dist_to_path(robot_x, robot_y, ref)
         in_margin = d <= self.track_tolerance_cm
-        # Храповик: только вниз. В допуске коэффициент не пополняется.
         if not in_margin:
-            self.coefficient = max(0.0, self.coefficient - COEFF_STEP_PER_TICK)
+            self.quality = max(0.0, self.quality - QUALITY_DRAIN_PER_TICK)
+            self.coefficient = max(0.0,
+                                   self.coefficient - QUALITY_DRAIN_PER_TICK)
 
         transitioned = (in_margin != self.last_in_margin)
         if transitioned and not in_margin:
@@ -192,6 +227,10 @@ class ActiveMission:
                 действие внутри);
               иначе → finalize со штрафом −5%.
 
+        Зоны-задачи «удалить» (removable_zone_idx) НЕ штрафуются вовсе —
+        заехать в них нужно по заданию. Штрафуются только нетронутые
+        зоны-препятствия.
+
         Зоны в finalized больше не учитываются (повторные заезды бесплатны
         — у нас «один наезд = один минус», как и раньше).
 
@@ -202,6 +241,8 @@ class ActiveMission:
         for i, (zx, zy, zr) in enumerate(self.danger_zones):
             if i in self.danger_zones_finalized:
                 continue
+            if i in self.removable_zone_idx:
+                continue   # зона-задача «удалить» — наезд не штрафуется
             inside_now = math.hypot(robot_x - zx, robot_y - zy) <= zr
             was_inside = i in self.danger_zones_inside
             if inside_now and not was_inside:
@@ -213,7 +254,7 @@ class ActiveMission:
                 if i in self.danger_zones_forgiven:
                     self.danger_zones_forgiven.discard(i)
                 else:
-                    self.coefficient = max(0.0, self.coefficient - 0.05)
+                    self.quality = max(0.0, self.quality - 0.05)
                     new_hits += 1
         return new_hits
 
@@ -237,7 +278,7 @@ class ActiveMission:
             if i in self.danger_zones_forgiven:
                 self.danger_zones_forgiven.discard(i)
             else:
-                self.coefficient = max(0.0, self.coefficient - 0.05)
+                self.quality = max(0.0, self.quality - 0.05)
                 new_hits += 1
         return new_hits
 
@@ -250,6 +291,7 @@ class ActiveMission:
         время алгоритма (last_algo_duration_sec) НЕ сбрасывается."""
         self.waypoints_visited.clear()
         self.actions_done.clear()
+        self.quality        = 0.0
         self.coefficient    = 1.0
         self.deviations     = 0
         self.last_in_margin = True
@@ -300,6 +342,10 @@ class ActiveMission:
             if d <= tolerance:
                 self.waypoints_visited.add(i)
                 new.append(i)
+        # Каждая новая посещённая точка поднимает «Качество».
+        if new:
+            self.quality = min(1.0, self.quality
+                               + self.quality_step * len(new))
         return new
 
     def try_match_action(self, action_type: str,
@@ -320,6 +366,8 @@ class ActiveMission:
             ay = float(action.get("y", 0))
             if math.hypot(x - ax, y - ay) <= ACTION_TOLERANCE_CM:
                 self.actions_done.add(i)
+                # Выполненное действие с зоной поднимает «Качество».
+                self.quality = min(1.0, self.quality + self.quality_step)
                 return i
         return None
 
@@ -332,14 +380,14 @@ class ActiveMission:
         return all_waypoints and all_actions
 
     def compute_stars(self, duration_sec: Optional[float] = None) -> int:
-        """Финальное количество звёзд = факт + бонус_точности + бонус_скорости.
+        """Финальное количество звёзд = факт + бонус_качества + бонус_скорости.
 
         Факт: 1 звезда за каждую посещённую точку + 1 за каждое
               выполненное действие. Не зависит от траектории — если робот
               физически попал на точку, звезда гарантирована.
 
-        Бонус точности: floor(база × coefficient). При точности 100%
-              удваивает базу. При точности 0% бонуса нет.
+        Бонус качества: floor(база × качество). При качестве 100%
+              удваивает базу. При качестве 0% бонуса нет.
 
         Бонус скорости (если duration_sec задан): до +2 звёзд за быстрое
               прохождение, см. time_bonus_stars."""
@@ -352,8 +400,8 @@ class ActiveMission:
         return len(self.waypoints_visited) + len(self.actions_done)
 
     def track_bonus_stars(self) -> int:
-        """Бонусные звёзды за точность траектории."""
-        return int(math.floor(self.fact_stars() * self.coefficient))
+        """Бонусные звёзды за качество прохождения: floor(факт × качество)."""
+        return int(math.floor(self.fact_stars() * self.quality))
 
     def time_bonus_stars(self, duration_sec: Optional[float]) -> int:
         """Бонусные звёзды за скорость прохождения.
@@ -395,11 +443,34 @@ class ActiveMission:
             "progress":     self.progress_dict(),
         }
 
+    def action_counts(self) -> dict:
+        """Счётчики обязательных действий с зонами по типам:
+        установлено зон внимания (place_*) и удалено опасных зон —
+        каждое в виде done/total. Для строки «Установлено K/M, удалено P/Q»."""
+        place_total = place_done = remove_total = remove_done = 0
+        for i, a in enumerate(self.actions_required):
+            is_place = str(a.get("type", "")).startswith("place")
+            done = i in self.actions_done
+            if is_place:
+                place_total += 1
+                place_done  += int(done)
+            else:
+                remove_total += 1
+                remove_done  += int(done)
+        return {
+            "place_done":   place_done,
+            "place_total":  place_total,
+            "remove_done":  remove_done,
+            "remove_total": remove_total,
+        }
+
     def progress_dict(self) -> dict:
         """Только динамика прогресса — для частых апдейтов на каждый push_state."""
         return {
             "waypoints_visited": sorted(self.waypoints_visited),
             "actions_done":      sorted(self.actions_done),
+            "action_counts":     self.action_counts(),
+            "quality":           round(self.quality, 3),
             "coefficient":       round(self.coefficient, 3),
             "deviations":        self.deviations,
             "in_margin":         self.last_in_margin,
