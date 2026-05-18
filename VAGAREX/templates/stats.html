@@ -93,18 +93,190 @@
   {% endif %}
 </section>
 
+{% if rating %}
+<section class="card">
+  <h2 class="card__title">🏆 Рейтинг пользователей</h2>
+  <p class="hint">
+    Сортировка: звёзды → доля успешных прохождений → среднее качество →
+    суммарное время алгоритмов → суммарное время заданий. Показан топ-10;
+    поиском можно найти любого пользователя.
+  </p>
+  <input type="search" id="rating-search" class="settings-input" name="rating_q"
+         placeholder="🔍 Поиск пользователя по логину…"
+         autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+         style="margin-bottom:0.7rem; max-width:320px;">
+  <table class="stats-table" id="rating-table">
+    <thead>
+      <tr>
+        <th class="stats-table__col-num">Место</th>
+        <th>Логин</th>
+        <th>Лучшие ⭐</th>
+        <th>Успешно / Завершено</th>
+        <th>Качество</th>
+        <th>Время алгоритмов</th>
+        <th>Время заданий</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rating %}
+      <tr data-username="{{ r.username|lower }}" data-rank="{{ loop.index }}">
+        <td class="stats-table__num">{{ loop.index }}</td>
+        <td>
+          <strong>{{ r.username }}</strong>
+          {%- if r.is_admin %} <span class="badge badge--sim">админ</span>{% endif %}
+        </td>
+        <td class="stats-table__stars">
+          {% if r.stars > 0 %}<strong>{{ r.stars }}</strong>⭐{% else %}—{% endif %}
+        </td>
+        <td>{{ r.success }} / {{ r.total }}{% if r.total %} ({{ r.ratio_pct }}%){% endif %}</td>
+        <td>{{ r.quality_pct }}%</td>
+        <td>{{ r.algo_str }}</td>
+        <td>{{ r.task_str }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="empty-hint" id="rating-empty" hidden>Пользователь не найден.</p>
+  <script>
+  (function () {
+    var inp = document.getElementById('rating-search');
+    var tbl = document.getElementById('rating-table');
+    var empty = document.getElementById('rating-empty');
+    if (!inp || !tbl) return;
+    var rows = Array.prototype.slice.call(tbl.querySelectorAll('tbody tr'));
+    function apply() {
+      var q = inp.value.trim().toLowerCase();
+      var shown = 0;
+      rows.forEach(function (tr) {
+        // Без запроса — топ-10; с запросом — все совпадения по логину.
+        var vis = q ? (tr.dataset.username.indexOf(q) !== -1)
+                    : (parseInt(tr.dataset.rank, 10) <= 10);
+        tr.style.display = vis ? '' : 'none';
+        if (vis) shown++;
+      });
+      if (empty) empty.hidden = !(q && shown === 0);
+    }
+    inp.addEventListener('input', apply);
+    apply();
+  })();
+  </script>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2 class="card__title">♻ Моя статистика</h2>
+  {% if request.query_params.get('reset') == 'mine' %}
+  <p class="hint" style="color:var(--accent2,#3fb950)">✓ Ваша статистика сброшена.</p>
+  {% endif %}
+  <p class="hint">
+    Сбросить свой прогресс — удаляются записи только ваших прохождений
+    миссий. Чужая статистика и сами миссии не затрагиваются.
+  </p>
+  <form method="POST" action="/stats/reset_mine" class="settings-actions"
+        onsubmit="return confirm('Сбросить ВАШУ статистику прохождений? Это действие необратимо.');">
+    <button type="submit" class="btn btn--danger">🗑 Сбросить мою статистику</button>
+  </form>
+</section>
+
 {% if current_user and current_user.is_admin %}
 <section class="card">
   <h2 class="card__title">🛡 Администрирование</h2>
   <p class="hint">
-    Сбросить статистику всех пользователей. Удаляются все записи
+    Сбросить статистику ВСЕХ пользователей. Удаляются все записи
     прохождений миссий (MissionRun). Сами миссии и их данные остаются
-    нетронутыми, карточки «Набрано: N⭐» в каталоге исчезнут.
+    нетронутыми, карточки «Набрано: N⭐» в каталоге исчезнут. При нажатии
+    запросим пароль администратора.
   </p>
-  <form method="POST" action="/stats/reset" class="settings-actions"
-        onsubmit="return confirm('Сбросить ВСЮ статистику прохождений? Это действие необратимо.');">
-    <button type="submit" class="btn btn--danger">🗑 Сбросить статистику</button>
-  </form>
+  <div class="settings-actions">
+    <button type="button" id="btn-reset-all" class="btn btn--danger">🗑 Сбросить всю статистику</button>
+  </div>
 </section>
+
+{# Модалка ввода пароля — поле type=password, ввод скрыт от посторонних глаз.
+   Видимость — через класс .is-open (специфичнее базового правила, поэтому
+   надёжно перекрывает display:none). Без атрибута hidden и без inline
+   display, чтобы не было конфликта приоритетов. #}
+<style>
+  #reset-modal { display:none; position:fixed; inset:0; z-index:1000;
+                 align-items:center; justify-content:center;
+                 background:rgba(0,0,0,0.65); }
+  #reset-modal.is-open { display:flex; }
+</style>
+<div id="reset-modal">
+  <div style="background:#161b22; border:1px solid #30363d; border-radius:8px;
+              padding:1.3rem 1.4rem; width:340px; max-width:90vw;">
+    <h3 style="margin:0 0 0.6rem; font-size:1rem">Сброс всей статистики</h3>
+    <p class="hint" style="margin:0 0 0.7rem">
+      Введите пароль администратора для подтверждения.
+    </p>
+    <input type="password" id="reset-pwd" autocomplete="current-password"
+           placeholder="Пароль администратора"
+           style="width:100%; box-sizing:border-box; padding:0.5rem 0.7rem;
+                  background:#0d1117; color:#c9d1d9;
+                  border:1px solid #30363d; border-radius:6px;">
+    <p id="reset-error" class="hint" hidden
+       style="color:#f85149; margin:0.5rem 0 0"></p>
+    <div style="display:flex; gap:0.6rem; justify-content:flex-end; margin-top:1rem">
+      <button type="button" id="reset-cancel" class="btn btn--sm">Отмена</button>
+      <button type="button" id="reset-ok" class="btn btn--sm btn--danger">Продолжить</button>
+    </div>
+  </div>
+</div>
+<script>
+(function () {
+  var openBtn = document.getElementById('btn-reset-all');
+  var modal   = document.getElementById('reset-modal');
+  var pwd     = document.getElementById('reset-pwd');
+  var errEl   = document.getElementById('reset-error');
+  var okBtn   = document.getElementById('reset-ok');
+  var cancel  = document.getElementById('reset-cancel');
+  if (!openBtn || !modal) return;
+
+  function showError(msg) { errEl.textContent = msg; errEl.hidden = false; }
+  function open()  {
+    pwd.value = ''; errEl.hidden = true;
+    modal.classList.add('is-open'); pwd.focus();
+  }
+  function close() { modal.classList.remove('is-open'); }
+
+  openBtn.addEventListener('click', open);
+  cancel.addEventListener('click', close);
+  modal.addEventListener('click', function (e) { if (e.target === modal) close(); });
+  pwd.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); okBtn.click(); }
+    if (e.key === 'Escape') close();
+  });
+
+  okBtn.addEventListener('click', async function () {
+    var p = pwd.value;
+    if (!p) { showError('Введите пароль.'); return; }
+    // Шаг 1 — проверка пароля.
+    var r = await fetch('/stats/reset', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({password: p, confirmed: false})
+    });
+    if (r.status === 403) { showError('Неверный пароль.'); return; }
+    var d = await r.json();
+    if (!d.need_confirm) { showError('Не удалось проверить пароль.'); return; }
+    // Пароль верный — закрываем модалку, предупреждаем о необратимости.
+    close();
+    if (!confirm('Пароль верный.\n\n⚠ ВНИМАНИЕ: сброс НЕОБРАТИМ — '
+               + 'вернуть статистику будет НЕВОЗМОЖНО.\n\n'
+               + 'Сбросить статистику всех пользователей?')) return;
+    var r2 = await fetch('/stats/reset', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({password: p, confirmed: true})
+    });
+    var d2 = await r2.json();
+    if (d2.ok) {
+      alert('Статистика всех пользователей сброшена (удалено записей: '
+            + (d2.deleted || 0) + ').');
+      location.reload();
+    } else {
+      alert('Ошибка сброса.');
+    }
+  });
+})();
+</script>
 {% endif %}
 {% endblock %}

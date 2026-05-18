@@ -688,37 +688,55 @@
       'font-size':'11', 'font-family':'monospace'});
     lblY.textContent = 'Y';
     svg.appendChild(lblY);
-    // Штриховка для опасных зон-задач «удалить» — наезд на них не
-    // штрафуется, отличаем визуально от нетронутых зон-препятствий.
-    const defs = mk('defs', {});
-    const pat = mk('pattern', {id:'hatch-remove', patternUnits:'userSpaceOnUse',
-      width:4, height:4, patternTransform:'rotate(45)'});
-    pat.appendChild(mk('line', {x1:0, y1:0, x2:0, y2:4,
-      stroke:'#f85149', 'stroke-width':0.8}));
-    defs.appendChild(pat);
-    svg.appendChild(defs);
-    // Опасные зоны: «удалить» (есть парный remove_danger) — штриховка;
-    // остальные («не задевать») — обычная полупрозрачная заливка.
+    // Опасные зоны: «удалить» (есть парный remove_danger) — контур +
+    // полупрозрачная диагональная штриховка; остальные («не задевать») —
+    // обычная полупрозрачная заливка. Штриховку рисуем явными линиями
+    // с обрезкой по кругу (clipPath) — надёжнее SVG-pattern.
     const removeXY = (m.actions_required || [])
       .filter(a => a.type === 'remove_danger')
       .map(a => [a.x, a.y]);
     const isRemovable = (x, y, r) => removeXY.some(
       ([ax, ay]) => Math.hypot(x - ax, y - ay) <= Math.max(r, 5));
-    (m.danger_zones || []).forEach(([x, y, r]) => {
-      svg.appendChild(mk('circle', {cx:x, cy:-y, r:r,
-        fill: isRemovable(x, y, r) ? 'url(#hatch-remove)'
-                                   : 'rgba(248,81,73,0.10)',
-        stroke:'#f85149',
+    (m.danger_zones || []).forEach(([x, y, r], i) => {
+      const cyv = -y;
+      svg.appendChild(mk('circle', {cx:x, cy:cyv, r:r,
+        fill:'rgba(248,81,73,0.10)', stroke:'#f85149',
         'stroke-width':0.8, 'stroke-dasharray':'3 2'}));
+      if (isRemovable(x, y, r)) {
+        const clipId = 'rmclip-' + i;
+        const clip = mk('clipPath', {id: clipId});
+        clip.appendChild(mk('circle', {cx:x, cy:cyv, r:r}));
+        svg.appendChild(clip);
+        const g = mk('g', {'clip-path': 'url(#' + clipId + ')',
+          stroke:'#f85149', 'stroke-width':1, opacity:0.4});
+        for (let off = -1.5 * r; off <= 1.5 * r; off += 9) {
+          g.appendChild(mk('line', {x1: x - r + off, y1: cyv - r,
+                                    x2: x + r + off, y2: cyv + r}));
+        }
+        svg.appendChild(g);
+      }
     });
-    // Зоны внимания из actions_required — ЖЁЛТЫЙ пунктир + очень
-    // прозрачная жёлтая заливка. Серый сливался с серой эталонной
-    // траекторией и читался как «движение по кругу».
+    // Зоны внимания из задания — ЦЕЛЬ «установить зону»: жёлтый
+    // пунктирный контур + полупрозрачная диагональная штриховка
+    // (так же, как на поле миссии).
     (m.actions_required || []).filter(a => a.type === 'place_attention')
-      .forEach(a => {
-        svg.appendChild(mk('circle', {cx:a.x, cy:-a.y, r:a.r || 15,
+      .forEach((a, ai) => {
+        const r = a.r || 15;
+        const cyv = -a.y;
+        svg.appendChild(mk('circle', {cx:a.x, cy:cyv, r:r,
           fill:'rgba(255,215,0,0.07)', stroke:'#ffd700',
           'stroke-width':0.8, 'stroke-dasharray':'3 2'}));
+        const clipId = 'atclip-' + ai;
+        const clip = mk('clipPath', {id: clipId});
+        clip.appendChild(mk('circle', {cx:a.x, cy:cyv, r:r}));
+        svg.appendChild(clip);
+        const g = mk('g', {'clip-path': 'url(#' + clipId + ')',
+          stroke:'#ffd700', 'stroke-width':1, opacity:0.4});
+        for (let off = -1.5 * r; off <= 1.5 * r; off += 9) {
+          g.appendChild(mk('line', {x1: a.x - r + off, y1: cyv - r,
+                                    x2: a.x + r + off, y2: cyv + r}));
+        }
+        svg.appendChild(g);
       });
     // Траектория: серый пунктир ПО ПЛОТНОЙ цепочке path (если задана),
     // Уровни 1-2 «инспектор»: эталонной траектории нет, только точки.

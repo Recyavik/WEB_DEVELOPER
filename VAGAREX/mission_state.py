@@ -102,6 +102,11 @@ ACTION_TOLERANCE_CM = 15.0
 # отклонения стоят −0.5 качества.
 QUALITY_DRAIN_PER_TICK = 0.005
 
+# Штраф к «Качеству» за каждую запрошенную подсказку (как за наезд
+# на зону). Считается отдельным счётчиком hints_used и вычитается в
+# effective_quality() — переживает перезапуск программы (▶).
+HINT_PENALTY = 0.05
+
 
 @dataclass
 class ActiveMission:
@@ -140,6 +145,9 @@ class ActiveMission:
     # «Качеством»; в звёзды НЕ идёт (бонус считается от качества).
     coefficient:       float    = 1.0
     deviations:        int      = 0
+    # Сколько подсказок запросил игрок за всю миссию. НЕ сбрасывается
+    # прогоном ▶ — штраф за подсказку должен пережить перезапуск кода.
+    hints_used:        int      = 0
     last_in_margin:    bool     = True
     last_robot_pos:    Optional[tuple[float, float]] = None
     started_at:        datetime = field(default_factory=datetime.utcnow)
@@ -399,15 +407,27 @@ class ActiveMission:
         """Звёзды-факт: по 1 за каждую посещённую точку и выполненное действие."""
         return len(self.waypoints_visited) + len(self.actions_done)
 
+    def register_hint(self) -> None:
+        """Игрок запросил подсказку — увеличиваем счётчик. Сам штраф
+        к качеству вычисляется в effective_quality()."""
+        self.hints_used += 1
+
+    def effective_quality(self) -> float:
+        """«Качество» с учётом штрафа за подсказки. Поле quality —
+        run-аккумулятор, сбрасывается каждым прогоном ▶; hints_used
+        живёт всю миссию. Поэтому штраф за подсказки вычитаем здесь,
+        поверх аккумулятора. Зажато в [0, 1]."""
+        return max(0.0, self.quality - self.hints_used * HINT_PENALTY)
+
     def track_bonus_stars(self) -> int:
         """Бонусные звёзды за качество прохождения: floor(факт × качество)."""
-        return int(math.floor(self.fact_stars() * self.quality))
+        return int(math.floor(self.fact_stars() * self.effective_quality()))
 
     def time_bonus_stars(self, duration_sec: Optional[float]) -> int:
         """Бонусные звёзды за скорость прохождения.
 
         Шкала привязана к количеству waypoints в миссии:
-            target = 10 секунд × n_waypoints
+            target = 30 секунд × n_waypoints
             ≤ target/2 → 2⭐
             ≤ target   → 1⭐
             > target   → 0
@@ -418,7 +438,7 @@ class ActiveMission:
         if self.fact_stars() == 0:
             return 0
         n = max(1, len(self.waypoints))
-        target_sec = 10.0 * n
+        target_sec = 30.0 * n
         if duration_sec <= target_sec / 2.0:
             return 2
         if duration_sec <= target_sec:
@@ -470,7 +490,7 @@ class ActiveMission:
             "waypoints_visited": sorted(self.waypoints_visited),
             "actions_done":      sorted(self.actions_done),
             "action_counts":     self.action_counts(),
-            "quality":           round(self.quality, 3),
+            "quality":           round(self.effective_quality(), 3),
             "coefficient":       round(self.coefficient, 3),
             "deviations":        self.deviations,
             "in_margin":         self.last_in_margin,

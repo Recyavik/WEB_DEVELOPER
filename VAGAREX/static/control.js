@@ -324,6 +324,11 @@
   }
   function _startMissionTimer() {
     const el = document.getElementById('mission-timer');
+    const fin = document.getElementById('btn-mission-finalize');
+    // style.display, а НЕ .hidden: у .btn задан display:inline-flex,
+    // который перебивает атрибут hidden (равная специфичность, авторский
+    // стиль > UA). Inline-style надёжно управляет видимостью.
+    if (fin) fin.style.display = '';   // «🏁 Проверка» видна, пока идёт миссия
     if (!el) return;
     _missionStartedAt = Date.now();
     el.hidden = false;
@@ -337,6 +342,15 @@
     if (_missionTimerId) { clearInterval(_missionTimerId); _missionTimerId = null; }
     const el = document.getElementById('mission-timer');
     if (el) el.hidden = true;
+    const fin = document.getElementById('btn-mission-finalize');
+    if (fin) fin.style.display = 'none';
+  }
+
+  async function _finalizeMission() {
+    if (!confirm('Зафиксировать результат миссии?\n\n'
+        + 'Звёзды считаются по ПОСЛЕДНЕМУ прогону программы.\n'
+        + 'После этого миссию можно будет запустить заново через каталог.')) return;
+    await fetch('/missions/active/finalize', {method: 'POST'});
   }
 
   function showMissionButton(mission) {
@@ -469,17 +483,8 @@
         `  <button type="button" class="btn btn--xs js-mission-hint"` +
         `          title="Показать угол и расстояние до ближайшей непосещённой точки">` +
         `    💡 Подсказка</button>` +
-        `  <button type="button" class="btn btn--xs btn--success js-mission-finalize"` +
-        `          title="Зафиксировать результат: оценка по последнему прогону + суммарное время алгоритма">` +
-        `    🏁 Проверка задания</button>` +
         `</div>`;
       card.querySelector('.js-mission-hint').addEventListener('click', _requestMissionHint);
-      card.querySelector('.js-mission-finalize').addEventListener('click', async () => {
-        if (!confirm('Зафиксировать результат миссии?\n\n'
-            + 'Звёзды считаются по ПОСЛЕДНЕМУ прогону программы.\n'
-            + 'После этого миссию можно будет запустить заново через каталог.')) return;
-        await fetch('/missions/active/finalize', {method: 'POST'});
-      });
     } else {
       card.innerHTML =
         '<div class="log-task-card__title">🎯 Миссия не загружена</div>' +
@@ -2342,6 +2347,12 @@
     const btnShowMission = document.getElementById('btn-show-mission');
     if (btnShowMission) {
       btnShowMission.addEventListener('click', _appendTaskCard);
+    }
+
+    // «🏁 Проверка» в шапке журнала — фиксирует результат активной миссии.
+    const btnFinalize = document.getElementById('btn-mission-finalize');
+    if (btnFinalize) {
+      btnFinalize.addEventListener('click', _finalizeMission);
     }
 
     // Голосовое управление

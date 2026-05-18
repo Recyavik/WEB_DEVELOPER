@@ -163,6 +163,22 @@ class TestQualityUpdate(unittest.TestCase):
         m.update_quality(50, 30)
         self.assertEqual(m.deviations, 2)
 
+    def test_hint_penalizes_quality(self):
+        # Каждая подсказка — −5% к качеству; счётчик подсказок переживает
+        # перезапуск прогона (reset_for_new_run сбрасывает quality, но не его).
+        m = _mk_mission(waypoints=[(100.0, 0.0)])   # 1 точка → шаг 100%
+        m.mark_waypoint_visits(100.0, 0.0)
+        self.assertAlmostEqual(m.effective_quality(), 1.0, places=4)
+        m.register_hint()
+        self.assertAlmostEqual(m.effective_quality(), 0.95, places=4)
+        m.register_hint()
+        self.assertAlmostEqual(m.effective_quality(), 0.90, places=4)
+        # Перезапуск: quality обнуляется, hints_used — нет.
+        m.reset_for_new_run()
+        self.assertEqual(m.hints_used, 2)
+        m.mark_waypoint_visits(100.0, 0.0)
+        self.assertAlmostEqual(m.effective_quality(), 0.90, places=4)
+
 
 class TestDangerZoneHits(unittest.TestCase):
     """Наезд на опасную зону: −5% качества начисляется только когда робот
@@ -453,25 +469,25 @@ class TestCompletionAndStars(unittest.TestCase):
 
     def test_time_bonus_fast_run_two_stars(self):
         """Скорость ≤ половины target — +2 звезды.
-        Target = 10 сек × N_waypoints. Для 3 точек target=30 сек, /2 = 15 сек."""
+        Target = 30 сек × N_waypoints. Для 3 точек target=90 сек, /2 = 45 сек."""
         m = _mk_mission(waypoints=[(100, 0), (200, 0), (300, 0)])
         for i in range(3): m.waypoints_visited.add(i)
-        self.assertEqual(m.time_bonus_stars(10), 2)
-        self.assertEqual(m.time_bonus_stars(15), 2)  # ровно на границе
+        self.assertEqual(m.time_bonus_stars(30), 2)
+        self.assertEqual(m.time_bonus_stars(45), 2)  # ровно на границе
 
     def test_time_bonus_normal_run_one_star(self):
-        """Скорость ≤ target — +1 звезда."""
+        """Скорость ≤ target — +1 звезда. Для 3 точек target=90 сек."""
         m = _mk_mission(waypoints=[(100, 0), (200, 0), (300, 0)])
         for i in range(3): m.waypoints_visited.add(i)
-        self.assertEqual(m.time_bonus_stars(20), 1)
-        self.assertEqual(m.time_bonus_stars(30), 1)  # ровно на границе
+        self.assertEqual(m.time_bonus_stars(60), 1)
+        self.assertEqual(m.time_bonus_stars(90), 1)  # ровно на границе
 
     def test_time_bonus_slow_run_zero(self):
         """Превышение target — 0 звёзд."""
         m = _mk_mission(waypoints=[(100, 0)])
         m.waypoints_visited.add(0)
-        # target = 10 сек × 1 = 10. 20 сек > 10 → 0
-        self.assertEqual(m.time_bonus_stars(20), 0)
+        # target = 30 сек × 1 = 30. 40 сек > 30 → 0
+        self.assertEqual(m.time_bonus_stars(40), 0)
 
     def test_time_bonus_zero_when_no_fact_stars(self):
         """Если ничего не пройдено — бонус 0, даже если робот был быстрый."""
@@ -490,10 +506,10 @@ class TestCompletionAndStars(unittest.TestCase):
         m = _mk_mission(waypoints=[(100, 0), (200, 0), (300, 0)])
         for i in range(3): m.waypoints_visited.add(i)
         m.quality = 1.0
-        # факт 3 + качество 3 + скорость 2 (быстро) = 8
+        # факт 3 + качество 3 + скорость 2 (быстро, ≤45 с) = 8
         self.assertEqual(m.compute_stars(10), 8)
-        # факт 3 + качество 3 + скорость 0 (медленно) = 6
-        self.assertEqual(m.compute_stars(60), 6)
+        # факт 3 + качество 3 + скорость 0 (медленно, >90 с) = 6
+        self.assertEqual(m.compute_stars(120), 6)
         # без duration — без бонуса
         self.assertEqual(m.compute_stars(), 6)
 

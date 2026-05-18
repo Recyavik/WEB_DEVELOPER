@@ -399,22 +399,15 @@ class RobotCanvas {
       const c = this.worldToCanvas(a.x, a.y);
       const r = (a.r || 15) * this.scale;
       ctx.save();
-      ctx.beginPath();
-      ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
       ctx.strokeStyle = '#ffd700';
       ctx.lineWidth = 1.4;
       ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
       ctx.stroke();
       ctx.setLineDash([]);
       // Диагональная штриховка — «здесь нужно установить зону внимания».
-      ctx.clip();
-      ctx.lineWidth = 1;
-      for (let d = -2 * r; d < 2 * r; d += 7) {
-        ctx.beginPath();
-        ctx.moveTo(c.x + d, c.y - r);
-        ctx.lineTo(c.x + d + 2 * r, c.y + r);
-        ctx.stroke();
-      }
+      this._hatchCircle(c.x, c.y, r);
       ctx.restore();
     });
 
@@ -657,6 +650,29 @@ class RobotCanvas {
     ctx.fill();
   }
 
+  // Диагональная штриховка внутри круга радиуса r (контур рисует
+  // вызывающий). Цвет — текущий ctx.strokeStyle.
+  _hatchCircle(cx, cy, r) {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.lineWidth = 1;
+    ctx.globalAlpha = 0.28;        // полупрозрачно — штриховка не «кричит»
+    ctx.setLineDash([]);
+    // Линии под 45°; off — сдвиг диагонали. Диагональный размах круга
+    // — r·√2 ≈ 1.41r, берём ±1.5r с запасом, чтобы заштриховать его
+    // целиком (не «до половины»). Шаг 11 px — не слишком плотно.
+    for (let off = -1.5 * r; off <= 1.5 * r; off += 11) {
+      ctx.beginPath();
+      ctx.moveTo(cx - r + off, cy - r);
+      ctx.lineTo(cx + r + off, cy + r);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   // Опасная зона — задача «удалить» (есть парный remove_danger в миссии)?
   // Такие зоны не штрафуются: их рисуем штриховкой.
   _isRemovableZone(z) {
@@ -717,19 +733,8 @@ class RobotCanvas {
       // Зона-задача «удалить» — диагональная штриховка: визуально
       // отличает её от нетронутой зоны-препятствия (наезд не штрафуется).
       if (isRemovable) {
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
-        ctx.clip();
         ctx.strokeStyle = stroke;
-        ctx.lineWidth = 1;
-        for (let d = -2 * r; d < 2 * r; d += 7) {
-          ctx.beginPath();
-          ctx.moveTo(c.x + d, c.y - r);
-          ctx.lineTo(c.x + d + 2 * r, c.y + r);
-          ctx.stroke();
-        }
-        ctx.restore();
+        this._hatchCircle(c.x, c.y, r);
       }
 
       // ── Нумерация зоны: крупная цифра в центре, белая обводка ─────

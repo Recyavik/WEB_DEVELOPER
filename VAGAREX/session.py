@@ -458,7 +458,7 @@ class UserSession:
             self._mission.last_algo_duration_sec = round(cumulative, 2)
             wp_done = len(self._mission.waypoints_visited)
             wp_total = len(self._mission.waypoints)
-            qual = int(round(self._mission.quality * 100))
+            qual = int(round(self._mission.effective_quality() * 100))
             await self.push_message(
                 f"{out}\nТочки {wp_done}/{wp_total}, качество {qual}%, "
                 f"всего времени алгоритма {cumulative:.1f} с. "
@@ -498,7 +498,7 @@ class UserSession:
             self._mission.last_algo_duration_sec = round(cumulative, 2)
             wp_done = len(self._mission.waypoints_visited)
             wp_total = len(self._mission.waypoints)
-            qual = int(round(self._mission.quality * 100))
+            qual = int(round(self._mission.effective_quality() * 100))
             await self.push_message(
                 f"✓ Прогон завершён за {run_dur:.1f} с "
                 f"(всего {cumulative:.1f} с). "
@@ -582,7 +582,7 @@ class UserSession:
         track_stars = m.track_bonus_stars()
         time_stars  = m.time_bonus_stars(duration_sec) if success else 0
         stars = fact_stars + track_stars + time_stars
-        quality_pct = int(round(m.quality * 100))
+        quality_pct = int(round(m.effective_quality() * 100))
         precision_pct = int(round(m.coefficient * 100))   # точность ведения
         algo_duration = round(m.last_algo_duration_sec or 0.0, 2)
         if m.run_id is not None:
@@ -594,7 +594,7 @@ class UserSession:
                     run.stars             = stars
                     # Столбец coefficient хранит «Качество» (имя
                     # историческое) — /stats показывает именно его.
-                    run.coefficient       = round(m.quality, 4)
+                    run.coefficient       = round(m.effective_quality(), 4)
                     run.deviations        = m.deviations
                     run.duration_sec      = round(duration_sec, 2)
                     run.algo_duration_sec = algo_duration
@@ -620,7 +620,7 @@ class UserSession:
             "stars_fact":  fact_stars,
             "stars_track": track_stars,
             "stars_time":  time_stars,
-            "quality":     round(m.quality, 3),
+            "quality":     round(m.effective_quality(), 3),
             "quality_pct": quality_pct,
             "coefficient": round(m.coefficient, 3),
             "precision_pct": precision_pct,
@@ -641,7 +641,8 @@ class UserSession:
             f"+ скорость {time_stars}), "
             f"качество {quality_pct}%, точность ведения {precision_pct}%, "
             f"время задания {time_str}, "
-            f"время алгоритма {algo_str}, отклонений: {m.deviations}.",
+            f"время алгоритма {algo_str}, отклонений: {m.deviations}, "
+            f"подсказок: {m.hints_used}.",
             "success" if success else "warning")
         self._mission = None
 

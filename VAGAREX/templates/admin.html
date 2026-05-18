@@ -32,7 +32,8 @@
     <form method="POST" action="/admin/users/create" class="admin-create-form">
       <input type="text" name="username" class="settings-input"
              placeholder="логин" minlength="3" maxlength="64"
-             pattern="[A-Za-z0-9_\-\.]+" required>
+             pattern="[A-Za-z0-9_.@+\-]+" required
+             title="Латиница, цифры, _ - . @ + (можно e-mail)">
       <input type="text" name="password" class="settings-input"
              placeholder="пароль (пусто = сгенерировать)">
       <label class="toggle">

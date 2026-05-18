@@ -205,7 +205,9 @@ app.add_middleware(
 # Аутентификация
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_USERNAME_RE = re.compile(r"^[A-Za-z0-9_\-\.]{3,64}$")
+# Логин: латиница, цифры и _ - . @ + — последние два допускают e-mail
+# в качестве логина (user.name+tag@example.com).
+_USERNAME_RE = re.compile(r"^[A-Za-z0-9_.\-@+]{3,64}$")
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -268,7 +270,8 @@ async def register_submit(request: Request,
         }, status_code=403)
     error = None
     if not _USERNAME_RE.match(username):
-        error = "Логин: 3–64 символа, только латиница, цифры, _ - ."
+        error = ("Логин: 3–64 символа — латиница, цифры и символы "
+                 "_ - . @ + (можно указать e-mail).")
     elif len(password) < 4:
         error = "Пароль должен быть не короче 4 символов."
     elif password != password2:
@@ -362,6 +365,53 @@ def _generate_password(length: int = 8) -> str:
     """Удобочитаемый временный пароль (без неоднозначных 0/O/1/l)."""
     alphabet = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
     return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+def _build_user_rating(db: Session, users: list) -> list:
+    """Рейтинг пользователей по сводке прохождений миссий.
+
+    Сортировка (по убыванию приоритета критерия):
+      1. звёзды — сумма ЛУЧШЕГО результата по каждой миссии (↓);
+      2. доля успешных прохождений среди завершённых (↓);
+      3. среднее «Качество» успешных прохождений (↓);
+      4. суммарное время алгоритмов (↑ — быстрее лучше);
+      5. суммарное время заданий (↑)."""
+    def _fmt(sec):
+        sec = int(sec or 0)
+        return f"{sec // 60:02d}:{sec % 60:02d}"
+    rows = []
+    for u in users:
+        runs = (db.query(MissionRun)
+                  .filter(MissionRun.user_id == u.id)
+                  .filter(MissionRun.completed_at.isnot(None)).all())
+        total   = len(runs)
+        success = sum(1 for r in runs if r.success)
+        # Звёзды — сумма лучшего результата по каждой пройденной миссии.
+        best = {}
+        for r in runs:
+            best[r.mission_id] = max(best.get(r.mission_id, 0), r.stars or 0)
+        stars = sum(best.values())
+        # «Качество» (столбец coefficient) — среднее по успешным прогонам.
+        quals = [r.coefficient or 0.0 for r in runs if r.success]
+        avg_quality = (sum(quals) / len(quals)) if quals else 0.0
+        algo_total = sum(r.algo_duration_sec or 0.0 for r in runs)
+        task_total = sum(r.duration_sec or 0.0 for r in runs)
+        rows.append({
+            "username":    u.username,
+            "is_admin":    bool(u.is_admin),
+            "stars":       stars,
+            "success":     success,
+            "total":       total,
+            "ratio_pct":   int(round((success / total) * 100)) if total else 0,
+            "quality_pct": int(round(avg_quality * 100)),
+            "algo_total":  algo_total,
+            "task_total":  task_total,
+            "algo_str":    _fmt(algo_total),
+            "task_str":    _fmt(task_total),
+        })
+    rows.sort(key=lambda x: (-x["stars"], -x["ratio_pct"], -x["quality_pct"],
+                             x["algo_total"], x["task_total"]))
+    return rows
 
 
 @app.get("/admin", response_class=HTMLResponse)
@@ -806,12 +856,18 @@ async def missions_save_custom(request: Request,
 
     # Полная траектория для визуализации — сэмпл path_history с шагом 5 см.
     # Даёт плавную дашед-линию в превью миссии (в т. ч. для кривых).
+    #
+    # path[0] — ВСЕГДА настоящая стартовая точка (start_x, start_y), а НЕ
+    # path_history[0]. Первая запись path_history смещена на тик движения
+    # (первый манёвр сразу двигает робота), и если положить её в path[0],
+    # то start_mission поставит игрока не в ту точку, что у автора —
+    # одинаковая программа из разных стартов даёт разные траектории.
     raw_path = list(sess.world.path_history or [])
     path: list[list[float]] = []
     if raw_path:
-        path.append([round(raw_path[0][0], 1), round(raw_path[0][1], 1)])
-        last = raw_path[0]
-        for x, y in raw_path[1:]:
+        path.append([start_x, start_y])
+        last = (start_x, start_y)
+        for x, y in raw_path:
             if _math.hypot(x - last[0], y - last[1]) >= 5.0:
                 path.append([round(x, 1), round(y, 1)])
                 last = (x, y)
@@ -947,7 +1003,8 @@ async def missions_save_custom(request: Request,
         "⭐ Звёзды — за контрольные точки и действия с зонами. "
         "Качество прохождения растёт за каждую посещённую точку и "
         "выполненное действие, снижается за отклонение от траектории "
-        "(дальше габаритов робота) и наезд на опасную зону.")
+        "(дальше габаритов робота), наезд на опасную зону и за каждую "
+        "запрошенную подсказку.")
     description = "\n".join(desc_parts)
 
     for attempt in range(3):
@@ -1045,9 +1102,14 @@ async def missions_hint_active(current_user: User = Depends(require_user)):
     else:
         cmds = (f"«Вега развернись на {target_heading}», "
                 f"затем «Вега вперёд {dist_int}»")
+    # Подсказка штрафует «Качество» (как наезд на зону) — счётчик
+    # hints_used переживает перезапуск программы, штраф в effective_quality.
+    m.register_hint()
     await sess.push_message(
-        f"💡 Точка #{idx + 1} ({tx:.0f}, {ty:.0f}): {cmds}.",
+        f"💡 Точка #{idx + 1} ({tx:.0f}, {ty:.0f}): {cmds}. "
+        f"Подсказка — −5% к качеству.",
         "info")
+    await sess.push_state()
     return JSONResponse({
         "ok":           True,
         "target_index": idx,
@@ -1197,6 +1259,10 @@ async def stats_page(request: Request, db: Session = Depends(get_db),
             "runs_count":  r.runs_count or 0,
         })
     rows.sort(key=lambda x: (-x["best_stars"], -x["best_quality"]))
+    # Рейтинг пользователей — только для админа (раздел виден лишь ему).
+    rating = None
+    if current_user.is_admin:
+        rating = _build_user_rating(db, db.query(User).order_by(User.id).all())
     return templates.TemplateResponse(request, "stats.html", {
         "current_user":       current_user,
         "total_runs":         int(total_runs),
@@ -1206,20 +1272,48 @@ async def stats_page(request: Request, db: Session = Depends(get_db),
         "total_duration_sec":      float(total_duration_sec or 0.0),
         "total_algo_duration_sec": float(total_algo_duration_sec or 0.0),
         "rows":                    rows,
+        "rating":                  rating,
     })
 
 
+@app.post("/stats/reset_mine")
+async def stats_reset_mine(current_user: User = Depends(require_user),
+                           db: Session = Depends(get_db)):
+    """Сброс СВОЕЙ статистики: удаляются MissionRun только текущего
+    пользователя. Без пароля — каждый волен обнулить свой прогресс."""
+    deleted = (db.query(MissionRun)
+                 .filter(MissionRun.user_id == current_user.id).delete())
+    db.commit()
+    log.info("User %s reset own stats: %d MissionRun deleted",
+             current_user.username, deleted)
+    return RedirectResponse("/stats?reset=mine", status_code=303)
+
+
 @app.post("/stats/reset")
-async def stats_reset(admin: User = Depends(require_admin),
+async def stats_reset(request: Request,
+                      admin: User = Depends(require_admin),
                       db: Session = Depends(get_db)):
-    """Админ-сброс ВСЕЙ статистики: удаляются все MissionRun (всех
-    пользователей). Карточки «Набрано: N⭐» в каталоге миссий пропадут,
-    страница /stats обнулится. Сами миссии и их waypoints не трогаются."""
+    """Админ-сброс ВСЕЙ статистики (все пользователи). AJAX, два шага:
+      1) confirmed=false — проверяем пароль админа. Неверный → 403;
+         верный → {need_confirm: true} (клиент показывает предупреждение
+         о необратимости);
+      2) confirmed=true — пароль перепроверяется и статистика удаляется.
+    Сами миссии и их waypoints не трогаются."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    password  = str((body or {}).get("password", "") or "")
+    confirmed = bool((body or {}).get("confirmed"))
+    if not verify_password(password, admin.password_hash):
+        return JSONResponse({"error": "bad_password"}, status_code=403)
+    if not confirmed:
+        return JSONResponse({"need_confirm": True})
     deleted = db.query(MissionRun).delete()
     db.commit()
-    log.info("Admin %s reset stats: %d MissionRun records deleted",
+    log.info("Admin %s reset ALL stats: %d MissionRun records deleted",
              admin.username, deleted)
-    return RedirectResponse("/stats", status_code=303)
+    return JSONResponse({"ok": True, "deleted": deleted})
 
 
 @app.get("/missions", response_class=HTMLResponse)

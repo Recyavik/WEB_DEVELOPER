@@ -14,8 +14,8 @@
     <label class="settings-label">Логин</label>
     <input class="settings-input" type="text" name="username" required autofocus
            minlength="3" maxlength="64" value="{{ username or '' }}"
-           pattern="[A-Za-z0-9_\-\.]+"
-           title="Только латиница, цифры, _ - .">
+           pattern="[A-Za-z0-9_.@+\-]+"
+           title="Латиница, цифры, _ - . @ + — можно указать e-mail">
 
     <label class="settings-label">Пароль</label>
     <input class="settings-input" type="password" name="password" required minlength="4">
