@@ -35,7 +35,10 @@
       "Bash(node -c static/control.js)",
       "Bash(git tag *)",
       "Bash(git push *)",
-      "Bash(node -c static/canvas.js)"
+      "Bash(node -c static/canvas.js)",
+      "Bash(python -m pytest tests/ -q)",
+      "Bash(node --check static/canvas.js)",
+      "Bash(node --check static/control.js)"
     ]
   }
 }

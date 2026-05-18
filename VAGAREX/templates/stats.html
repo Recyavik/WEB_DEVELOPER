@@ -98,13 +98,27 @@
   <h2 class="card__title">🏆 Рейтинг пользователей</h2>
   <p class="hint">
     Сортировка: звёзды → доля успешных прохождений → среднее качество →
-    суммарное время алгоритмов → суммарное время заданий. Показан топ-10;
-    поиском можно найти любого пользователя.
+    суммарное время алгоритмов → суммарное время заданий. По умолчанию
+    топ-10; поиском можно найти любого, флажком — показать всех.
   </p>
-  <input type="search" id="rating-search" class="settings-input" name="rating_q"
-         placeholder="🔍 Поиск пользователя по логину…"
-         autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
-         style="margin-bottom:0.7rem; max-width:320px;">
+  {# readonly до фокуса: браузеры (Chrome/Edge) игнорируют autocomplete="off"
+     для полей, похожих на «логин», и при вводе пароля в модалке сброса
+     автозаполняли это поле логином — срабатывал фильтр, рейтинг «схлопывался».
+     readonly-поле автозаполнить нельзя; на фокусе снимаем, на blur — вернём. #}
+  <div style="display:flex; align-items:center; gap:0.9rem;
+              flex-wrap:wrap; margin-bottom:0.7rem;">
+    <input type="search" id="rating-search" class="settings-input" name="rating_q"
+           placeholder="🔍 Поиск пользователя по логину…"
+           autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+           readonly
+           onfocus="this.removeAttribute('readonly')"
+           onblur="this.setAttribute('readonly','')"
+           style="max-width:320px; margin:0;">
+    <label style="display:flex; align-items:center; gap:0.35rem; cursor:pointer;
+                  color:var(--text-dim); white-space:nowrap;">
+      <input type="checkbox" id="rating-show-all"> Показать всех
+    </label>
+  </div>
   <table class="stats-table" id="rating-table">
     <thead>
       <tr>
@@ -142,21 +156,26 @@
     var inp = document.getElementById('rating-search');
     var tbl = document.getElementById('rating-table');
     var empty = document.getElementById('rating-empty');
+    var chk = document.getElementById('rating-show-all');
     if (!inp || !tbl) return;
     var rows = Array.prototype.slice.call(tbl.querySelectorAll('tbody tr'));
     function apply() {
       var q = inp.value.trim().toLowerCase();
+      var showAll = chk && chk.checked;
       var shown = 0;
       rows.forEach(function (tr) {
-        // Без запроса — топ-10; с запросом — все совпадения по логину.
+        // Запрос — совпадения по логину; иначе флажок «Показать всех»
+        // показывает всех, без него — топ-10.
         var vis = q ? (tr.dataset.username.indexOf(q) !== -1)
-                    : (parseInt(tr.dataset.rank, 10) <= 10);
+                : showAll ? true
+                : (parseInt(tr.dataset.rank, 10) <= 10);
         tr.style.display = vis ? '' : 'none';
         if (vis) shown++;
       });
       if (empty) empty.hidden = !(q && shown === 0);
     }
     inp.addEventListener('input', apply);
+    if (chk) chk.addEventListener('change', apply);
     apply();
   })();
   </script>
@@ -192,10 +211,11 @@
   </div>
 </section>
 
-{# Модалка ввода пароля — поле type=password, ввод скрыт от посторонних глаз.
-   Видимость — через класс .is-open (специфичнее базового правила, поэтому
-   надёжно перекрывает display:none). Без атрибута hidden и без inline
-   display, чтобы не было конфликта приоритетов. #}
+{# Модалка ввода пароля. Видимость — через класс .is-open.
+   Поле пароля по умолчанию type="text" и становится type="password"
+   только когда модалка открыта: иначе скрытый <input type=password>
+   заставлял браузер считать /stats формой логина и подсовывать
+   выпадашку менеджера паролей в поле поиска рейтинга. #}
 <style>
   #reset-modal { display:none; position:fixed; inset:0; z-index:1000;
                  align-items:center; justify-content:center;
@@ -209,7 +229,7 @@
     <p class="hint" style="margin:0 0 0.7rem">
       Введите пароль администратора для подтверждения.
     </p>
-    <input type="password" id="reset-pwd" autocomplete="current-password"
+    <input type="text" id="reset-pwd" autocomplete="off"
            placeholder="Пароль администратора"
            style="width:100%; box-sizing:border-box; padding:0.5rem 0.7rem;
                   background:#0d1117; color:#c9d1d9;
@@ -235,9 +255,13 @@
   function showError(msg) { errEl.textContent = msg; errEl.hidden = false; }
   function open()  {
     pwd.value = ''; errEl.hidden = true;
+    pwd.type = 'password';            // маскируем ТОЛЬКО на время модалки
     modal.classList.add('is-open'); pwd.focus();
   }
-  function close() { modal.classList.remove('is-open'); }
+  function close() {
+    modal.classList.remove('is-open');
+    pwd.type = 'text';                // снова не «password» — нет формы логина
+  }
 
   openBtn.addEventListener('click', open);
   cancel.addEventListener('click', close);
