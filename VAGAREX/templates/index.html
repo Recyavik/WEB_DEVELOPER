@@ -109,8 +109,10 @@
       <section class="card card--ctrl">
         <div class="card__title-row">
           <h3 class="card__title">Пульт управления</h3>
-          <button id="btn-toggle-ctrl" class="btn btn--xs btn--info" type="button"
-                  title="Показать / скрыть команды пульта управления">🕹</button>
+          <button id="btn-toggle-ctrl" class="btn" type="button"
+                  style="background:#1a2f4a; border-color:#484f58;
+                         font-size:1.2rem; line-height:1; padding:0.24rem 0.6rem"
+                  title="Показать / скрыть команды пульта управления">🚘</button>
         </div>
         <div id="ctrl-body" style="display:none">
 
@@ -264,8 +266,8 @@
         <button id="btn-center-view" class="btn btn--sm" title="Центрировать вид на роботе (сбросить пан/зум)">⊙ Центрировать</button>
         <button id="btn-zone-mode"      class="btn btn--sm btn--danger" title="Обстановка — расстановка опасных зон на карте мышью: ЛКМ ставит, ПКМ удаляет (только опасные!), +/- меняет радиус, ESC или повторное нажатие — выход. Зоны внимания мышью не задеваются.">⛯ Обстановка</button>
         <button id="btn-autopilot"      class="btn btn--sm btn--autopilot" title="Автопилот: введите координаты цели — робот сам построит маршрут в обход препятствий (A*) и поедет. Объезжаются стены и те зоны, что отмечены в «Препятствиях». Пройденные участки вписываются в код.">🧭 Автопилот</button>
-        <button class="btn btn--sm btn--success" data-cmd="Вега зарядить" title="Полностью зарядить батарею робота">🔋 Зарядить</button>
-        <button id="btn-save-mission" class="btn btn--sm" title="Сохранить текущее состояние свободного режима как «кастомную» миссию для каталога">💾 Сохранить миссию</button>
+        <button id="btn-charge" class="btn btn--sm btn--success" data-cmd="Вега зарядить" title="Полностью зарядить батарею робота">🔋 Зарядить</button>
+        <button id="btn-save-mission" class="btn btn--sm" title="Сохранить текущее состояние свободного режима как «кастомную» миссию для каталога">✍️ Сохранить миссию</button>
         <button id="btn-reset-field" class="btn btn--sm btn--danger" data-cmd="Вега новое поле" title="Полный сброс: робот в стартовую точку, путь и зоны очищаются">↺ Поле</button>
       </div>
     </div>

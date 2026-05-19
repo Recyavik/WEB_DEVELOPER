@@ -2498,8 +2498,6 @@
       const CTRL_KEY = 'vegarex.ctrl_expanded';
       const applyCtrl = (expanded) => {
         ctrlBody.style.display = expanded ? '' : 'none';
-        // Кнопка-джойстик: подсвечена (is-active), когда команды раскрыты.
-        btnToggleCtrl.classList.toggle('is-active', expanded);
         btnToggleCtrl.title = expanded
           ? 'Скрыть команды пульта управления'
           : 'Показать команды пульта управления';

@@ -670,9 +670,10 @@ body { padding-bottom: 22px; }
   background: var(--bg-panel);
   border-radius: 5px;
 }
-.state-label { font-size: 0.62rem; color: var(--text-dim); min-width: 38px; }
-.state-value { font-size: 0.82rem; font-weight: 700; color: var(--accent); line-height: 1.1; }
-.state-unit  { font-size: 0.6rem; color: var(--text-dim); }
+/* Размеры увеличены на ~2пт (≈0.17rem) — крупнее значения и подписи. */
+.state-label { font-size: 0.79rem; color: var(--text-dim); min-width: 38px; }
+.state-value { font-size: 0.99rem; font-weight: 700; color: var(--accent); line-height: 1.1; }
+.state-unit  { font-size: 0.77rem; color: var(--text-dim); }
 
 /* ── Buttons ─────────────────────────────────────────────────────────────────── */
 .btn {
@@ -735,6 +736,10 @@ body { padding-bottom: 22px; }
 #btn-reset-field          { background: #241010; }
 #btn-zone-mode:hover,
 #btn-reset-field:hover    { background: #3a1818; }
+
+/* «Поле» и «Зарядить» — одинаковый размер (min-width на обе кнопки). */
+#btn-charge,
+#btn-reset-field          { min-width: 8rem; }
 #btn-zone-mode.is-active  {
   background: #7a2a2a;
   color: #fff;
