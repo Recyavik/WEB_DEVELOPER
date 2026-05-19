@@ -820,6 +820,21 @@ robot.kturn(4, -1)      <span class="c"># за 4 шага, разворот вл
     </div>
   </div>
 
+  <h4>Что под капотом</h4>
+  <p>Псевдокод <code>_run_arc</code> и примитива дуги <code>_arc_at_steer</code>:</p>
+<pre class="alg-code"><span class="k">def</span> run_arc(angle, direction):
+    steer = direction * TURN_ANGLE          <span class="c"># руль на максимум, знак — сторона дуги</span>
+    arc_at_steer(steer, abs(angle), speed)  <span class="c"># проехать дугу на |angle|° курса</span>
+
+<span class="k">def</span> arc_at_steer(steer, sweep, speed):     <span class="c"># дуга до изменения курса на sweep°</span>
+    <span class="c"># За один оборот колеса (WHEEL_CIRC см) курс меняется на</span>
+    <span class="c"># HEADING_PER_ROT * (руль/45) * turn_rate. Отсюда длина дуги:</span>
+    steer_ratio = abs(steer) / 45
+    dist = sweep * WHEEL_CIRC / (HEADING_PER_ROT * steer_ratio * turn_rate)
+    set_angle(steer); move(speed)           <span class="c"># руль + газ</span>
+    wait_until(driven &gt;= dist)              <span class="c"># едем, пока не набрали длину дуги</span>
+    stop(); servo_center()                  <span class="c"># прогресс — по пути, не по таймеру</span></pre>
+
   <h4 class="example-title">Пример вызова</h4>
 <pre class="alg-code">robot.arc(90)        <span class="c"># четверть круга против часовой</span>
 robot.arc(360)       <span class="c"># полный круг</span>
@@ -852,6 +867,12 @@ robot.arc(180, +1)   <span class="c"># полукруг по часовой</spa
       исходная позиция робота.</p>
     </div>
   </div>
+
+  <h4>Что под капотом</h4>
+<pre class="alg-code"><span class="k">def</span> run_figure_eight(direction):
+    <span class="c"># Восьмёрка = две дуги по 360° тем же примитивом arc_at_steer.</span>
+    arc_at_steer(direction * TURN_ANGLE,  360, speed)   <span class="c"># круг 1</span>
+    arc_at_steer(-direction * TURN_ANGLE, 360, speed)   <span class="c"># круг 2 — руль зеркально</span></pre>
 
   <h4 class="example-title">Пример вызова</h4>
 <pre class="alg-code">robot.figure_eight()      <span class="c"># первый круг против часовой, второй по часовой</span>
@@ -895,6 +916,22 @@ robot.figure_eight(+1)    <span class="c"># первый круг по часо�
     </div>
   </div>
 
+  <h4>Что под капотом</h4>
+  <p>Спираль — не набор дуг, а непрерывное движение с перекладкой руля
+  10 раз в секунду:</p>
+<pre class="alg-code"><span class="k">def</span> run_spiral(direction, outward):
+    steer_start, steer_end = (36, 24) <span class="k">if</span> outward <span class="k">else</span> (24, 36)
+    target_sweep = 2 * 360                   <span class="c"># два полных оборота</span>
+    set_angle(direction * steer_start); move(speed)   <span class="c"># старт</span>
+    sweep = 0
+    <span class="k">while</span> sweep &lt; target_sweep:
+        sleep(0.1)                           <span class="c"># 10 Гц обновления руля</span>
+        sweep += abs(heading - prev_heading) <span class="c"># накопить набранный курс</span>
+        t = sweep / target_sweep             <span class="c"># доля прогресса 0..1</span>
+        steer = steer_start + (steer_end - steer_start) * t   <span class="c"># линейная интерполяция</span>
+        set_angle(direction * steer)         <span class="c"># радиус ∝ 1/руль → меняется плавно</span>
+    stop()</pre>
+
   <h4 class="example-title">Пример вызова</h4>
 <pre class="alg-code">robot.spiral()                       <span class="c"># спираль наружу, против часовой</span>
 robot.spiral(+1)                     <span class="c"># спираль наружу, по часовой</span>
@@ -927,6 +964,15 @@ robot.spiral(-1, outward=False)      <span class="c"># спираль внутр
       <code>-1</code> — слева.</p>
     </div>
   </div>
+
+  <h4>Что под капотом</h4>
+<pre class="alg-code"><span class="k">def</span> run_bypass(start_dir):
+    swing = 30                               <span class="c"># ° курса на каждую четверть-дугу</span>
+    <span class="k">for</span> phase <span class="k">in</span> [0, 1, 2, 3]:
+        <span class="c"># Знак руля: четверти 1 и 4 — в сторону объезда, 2 и 3 — обратно.</span>
+        sign = start_dir <span class="k">if</span> phase <span class="k">in</span> [0, 3] <span class="k">else</span> -start_dir
+        arc_at_steer(sign * MAX_STEER, swing, speed)   <span class="c"># четверть-дуга</span>
+    <span class="c"># После 4 дуг курс и линия движения прежние — преграда обогнута.</span></pre>
 
   <h4 class="example-title">Пример вызова</h4>
 <pre class="alg-code">robot.bypass()      <span class="c"># объезд справа (по умолчанию)</span>
@@ -1087,6 +1133,34 @@ robot.goto(150, 200)    <span class="c"># перейти в точку (150, 200
     </div>
   </div>
 
+  <h4>Что под капотом — планировщик A*</h4>
+  <p>Псевдокод <code>plan_path</code> (модуль <code>path_planner</code>):</p>
+<pre class="alg-code"><span class="k">def</span> plan_path(start, goal, obstacles, world, robot):  <span class="c"># вход: старт, цель, зоны, размеры мира и робота</span>
+    <span class="c"># 1. Поле разбивается на сетку квадратных клеток (cell_size из настроек).</span>
+    grid = build_grid(world, cell_size)
+    <span class="c"># 2. Клетка непроходима, если ближе «раздутого» края препятствия.</span>
+    <span class="c">#    Раздутие = полгабарита робота + запас «толщина стены» —</span>
+    <span class="c">#    так корпус гарантированно не заденет край зоны или стену.</span>
+    inflation = max(robot_len, robot_width) / 2 + safety_margin
+    <span class="k">for</span> cell <span class="k">in</span> grid:                             <span class="c"># обходим все клетки сетки</span>
+        cell.blocked = near_wall(cell) <span class="k">or</span> any(   <span class="c"># помечаем непроходимые</span>
+            dist(cell, obs) &lt; obs.radius + inflation <span class="k">for</span> obs <span class="k">in</span> obstacles)
+    <span class="c"># 3. A* (8-связный — прямые соседи + диагонали) от старта к цели.</span>
+    open = heap([(heuristic(start), 0, start)])   <span class="c"># f = g + h; h — оценка до цели</span>
+    <span class="k">while</span> open:                                   <span class="c"># пока есть клетки-кандидаты</span>
+        f, g, cell = pop_min(open)                <span class="c"># берём клетку с наименьшим f</span>
+        <span class="k">if</span> cell == goal:                          <span class="c"># дошли до целевой клетки</span>
+            <span class="k">return</span> smooth(reconstruct_path())     <span class="c"># путь найден</span>
+        <span class="k">for</span> nb <span class="k">in</span> neighbors8(cell):              <span class="c"># 8 соседей</span>
+            <span class="k">if</span> nb.blocked: <span class="k">continue</span>              <span class="c"># сосед в препятствии — пропускаем</span>
+            <span class="c"># цена до соседа g + step, приоритет в очереди f = g + step + h</span>
+            push(open, (g + step + heuristic(nb), g + step, nb))
+    <span class="k">return</span> None                                  <span class="c"># прохода нет — цель недостижима</span>
+
+<span class="c"># smooth() — visibility-сглаживание: промежуточная вершина выкидывается,</span>
+<span class="c"># если между её соседями есть прямая видимость (отрезок свободен).</span>
+<span class="c"># Остаётся минимум опорных точек — чистый коридор между раздутыми зонами.</span></pre>
+
   <h3>6.1. Ломаная траектория (polyline)</h3>
   <p>Робот идёт от вершины к вершине ломаной A* <strong>замкнутым
   контуром</strong>: курс и остаток до каждой точки пересчитываются от
@@ -1197,18 +1271,18 @@ robot.remove_zone_here()        <span class="c"># снять зону, в кот
 
   <p>
     Раньше было два режима — «Инспектор» и «Опасно». Теперь это набор
-    <strong>галочек «Препятствия»</strong>: на какие объекты робот
+    галочек «Препятствия»: на какие объекты робот
     реагирует как на преграду.
   </p>
   <ul>
-    <li><strong>Стены</strong> — всегда препятствие, это не галочка.</li>
-    <li><strong>⛔ Опасные зоны</strong> — галочка.</li>
-    <li><strong>⚠ Зоны внимания</strong> — галочка.</li>
+    <li>Стены — всегда препятствие, это не галочка.</li>
+    <li>⛔ Опасные зоны — галочка.</li>
+    <li>⚠ Зоны внимания — галочка.</li>
   </ul>
   <p>
     Набор фиксируется в коде строкой-константой
-    <code>OBSTACLES = [...]</code> — <strong>код является источником
-    истины</strong>. Галочка в интерфейсе мгновенно переписывает эту
+    <code>OBSTACLES = [...]</code> — код является источником
+    истины. Галочка в интерфейсе мгновенно переписывает эту
     строку, и наоборот: правка строки в коде меняет галочки. Краткий
     код режима в шапке — <code>W</code> (только стены),
     <code>WD</code> (+ опасные зоны), <code>WDA</code> (+ и зоны внимания).
@@ -1216,20 +1290,20 @@ robot.remove_zone_here()        <span class="c"># снять зону, в кот
 
   <h4>Что зоны-препятствия дают манёврам</h4>
   <ul>
-    <li><strong>Тормозят как стены.</strong> Зона из набора
+    <li>Тормозят как стены. Зона из набора
         <code>OBSTACLES</code> для физики — такое же препятствие, как
         стена: робот останавливается перед ней на отступе «толщина стены».</li>
-    <li><strong>Авто-сокращение forward / back.</strong> Если впереди
+    <li>Авто-сокращение forward / back. Если впереди
         зона, команда <code>forward(N)</code> <em>заранее</em>
         укорачивается до безопасной дистанции — в коде сразу появляется
         исправленная длина (<code>forward(45)</code> вместо
         <code>forward(100)</code>). Не приблизиться совсем — команда
         отменяется и в код не попадает. <code>back(N)</code> — то же
         в направлении кормы.</li>
-    <li><strong>Учёт в авто-роутере.</strong> Свободное место для
+    <li>Учёт в авто-роутере. Свободное место для
         разворота (<a href="#a-router">§3.3</a>) считается с учётом
         зон-препятствий, а не только стен.</li>
-    <li><strong>Обход автопилотом.</strong> A* в
+    <li>Обход автопилотом. A* в
         <a href="#a-autopilot">автопилоте</a> огибает именно те типы
         зон, что включены в «Препятствиях».</li>
   </ul>

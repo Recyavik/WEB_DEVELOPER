@@ -253,7 +253,7 @@ body {
 .about-section__body {
   color: var(--text-dim);
   font-size: 0.92rem;
-  line-height: 1.65;
+  line-height: 1.3;
 }
 .about-section__body p + p { margin-top: 0.7rem; }
 .about-section__body strong { color: var(--text); font-weight: 600; }
@@ -276,8 +276,11 @@ body {
 /* Возможности — сетка плиток */
 .about-features {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  grid-template-columns: repeat(3, 1fr);
   gap: 1rem;
+}
+@media (max-width: 720px) {
+  .about-features { grid-template-columns: 1fr; }
 }
 .about-feature {
   background: var(--bg-panel);
@@ -397,9 +400,19 @@ body {
 }
 .about-author-line {
   margin: 0;
-  font-size: 0.95rem;
+  font-size: 0.85rem;
   font-weight: 400;
-  color: var(--text);
+  color: var(--text-dim);
+}
+.about-author__text {
+  display: flex; flex-direction: column; gap: 0.3rem;
+}
+.about-author-note {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--text-dim);
 }
 
 /* Подвал страницы (отдельно от глобального .appbar) */
@@ -556,6 +569,14 @@ body { padding-bottom: 22px; }
 .cmd-log::-webkit-scrollbar  { width: 0; height: 0; }
 .cmd-log:hover               { scrollbar-width: thin; }
 .cmd-log:hover::-webkit-scrollbar { width: 8px; }
+
+/* Скроллбары редактора кода — скрыты, пока не наведёшь курсор: так они
+   не перекрывают код при чтении. Вынести их ЗА рамку окна нельзя —
+   браузерный скроллбар принадлежит самому прокручиваемому элементу. */
+.program-code                     { scrollbar-width: none; }
+.program-code::-webkit-scrollbar  { width: 0; height: 0; }
+.program-code:hover               { scrollbar-width: thin; }
+.program-code:hover::-webkit-scrollbar { width: 9px; height: 9px; }
 
 .side-panel { max-width: 280px; }
 .log-panel { max-width: 384px; }
@@ -739,7 +760,7 @@ body { padding-bottom: 22px; }
 
 /* «Поле» и «Зарядить» — одинаковый размер (min-width на обе кнопки). */
 #btn-charge,
-#btn-reset-field          { min-width: 8rem; }
+#btn-reset-field          { min-width: 6.5rem; }
 #btn-zone-mode.is-active  {
   background: #7a2a2a;
   color: #fff;
@@ -980,6 +1001,9 @@ body { padding-bottom: 22px; }
 }
 .toggle { display: flex; align-items: center; gap: 0.3rem; font-size: 0.78rem; cursor: pointer; }
 .toggle input { accent-color: var(--accent); }
+/* Флажки в тулбаре (Сетка/Путь/Дальномер, Опасные зоны/Зоны внимания) —
+   тем же шрифтом, что и подпись «Препятствия:» (наследуют размер строки). */
+.viz-toolbar__row .toggle { font-size: inherit; }
 /* Цвет подписей галочек «Препятствия»: опасные — красным, внимания — жёлтым. */
 .obst-label--danger    { color: var(--danger); }
 .obst-label--attention { color: var(--warning); }
@@ -1160,7 +1184,8 @@ body { padding-bottom: 22px; }
   line-height: 1.35;
   border: 1px solid var(--border);
   border-radius: 4px;
-  padding: 0.5rem;
+  /* Доп. отступ снизу — чтобы последняя строка кода не липла к рамке. */
+  padding: 0.5rem 0.5rem 0.85rem;
   color: var(--text-dim);
   background: var(--bg-panel);
   min-height: 10rem;
@@ -1199,7 +1224,7 @@ body { padding-bottom: 22px; }
   font-family: 'Courier New', monospace;
   font-size: 0.78rem;          /* должно совпадать с .program-code */
   line-height: 1.35;
-  padding: 0.5rem;
+  padding: 0.5rem 0.5rem 0.85rem;   /* совпадает с .program-code */
   border: 1px solid transparent;
   border-radius: 4px;
   color: var(--text);
@@ -1514,8 +1539,15 @@ body { padding-bottom: 22px; }
 .empty-hint { color: var(--text-dim); font-size: 0.85rem; }
 
 /* ── Settings page ───────────────────────────────────────────────────────────── */
-.settings-layout { max-width: 640px; display: flex; flex-direction: column; gap: 1rem; padding: 1rem; }
-.settings-form   { display: flex; flex-direction: column; gap: 1rem; }
+.settings-layout { max-width: 1150px; display: flex; flex-direction: column; gap: 1rem; padding: 1rem; }
+/* Панели настроек — в 2 колонки (multi-column: карточки балансируются
+   по высоте). На узком экране columns сам схлопнется в одну. */
+.settings-form   { column-count: 2; column-gap: 1rem; }
+.settings-form > .card { break-inside: avoid; margin-bottom: 1rem; }
+.settings-form > .settings-actions { column-span: all; margin-bottom: 0; }
+@media (max-width: 760px) {
+  .settings-form { column-count: 1; }
+}
 
 .settings-grid {
   display: grid;
