@@ -478,37 +478,36 @@ class TestPathSelfClearance(unittest.TestCase):
 
 
 class TestLevel2Shape(unittest.TestCase):
-    """Структура сгенерированной миссии level 2.
+    """Структура сгенерированной миссии level 4.
 
-    По ТЗ: 4-5 waypoints, 1-2 опасные зоны. Никаких actions_required
-    (они появляются с уровня 3). Опасные зоны должны быть ВНЕ эталонной
-    траектории — иначе эталонное решение нельзя пройти без коллизий."""
+    По ТЗ: 5-6 waypoints, 4 опасные зоны разного радиуса. Никаких
+    actions_required (зоны только обходят). Опасные зоны должны быть ВНЕ
+    эталонной траектории — иначе эталонное решение нельзя пройти без
+    коллизий."""
 
-    def test_level_2_has_4_or_5_waypoints(self):
+    def test_level_4_has_5_or_6_waypoints(self):
         for seed in range(30):
             with self.subTest(seed=seed):
                 m = generate_mission(level=4, geom=_geom_default(), seed=seed)
                 wp = json.loads(m["waypoints"])
-                self.assertGreaterEqual(len(wp), 4,
-                                        f"seed={seed}: меньше 4 точек ({len(wp)})")
-                self.assertLessEqual(len(wp), 5,
-                                     f"seed={seed}: больше 5 точек ({len(wp)})")
+                self.assertGreaterEqual(len(wp), 5,
+                                        f"seed={seed}: меньше 5 точек ({len(wp)})")
+                self.assertLessEqual(len(wp), 6,
+                                     f"seed={seed}: больше 6 точек ({len(wp)})")
 
-    def test_level_2_has_2_danger_zones(self):
-        """Уровень 2 ВСЕГДА запрашивает ровно 2 зоны. На обычной геометрии
-        (500×500) обе должны разместиться на подавляющем большинстве
-        seed'ов; крайне редко на узком поле может получиться 1 зона —
-        это не критично, лимит сверху строго 2."""
+    def test_level_4_has_4_danger_zones(self):
+        """Уровень 4 запрашивает 4 зоны. На обычной геометрии (500×500)
+        почти все seed'ы дают ровно 4; лимит сверху строго 4."""
         zone_counts = []
         for seed in range(30):
             m = generate_mission(level=4, geom=_geom_default(), seed=seed)
             zones = json.loads(m["danger_zones"])
-            self.assertLessEqual(len(zones), 2,
-                                  f"seed={seed}: больше 2 зон")
+            self.assertLessEqual(len(zones), 4,
+                                  f"seed={seed}: больше 4 зон")
             zone_counts.append(len(zones))
-        n_with_two = sum(1 for c in zone_counts if c == 2)
-        self.assertGreaterEqual(n_with_two, 25,
-                                f"только {n_with_two}/30 seed'ов дали 2 зоны")
+        n_with_four = sum(1 for c in zone_counts if c == 4)
+        self.assertGreaterEqual(n_with_four, 24,
+                                f"только {n_with_four}/30 seed'ов дали 4 зоны")
 
     def test_level_2_no_actions_required(self):
         for seed in range(10):
@@ -516,19 +515,15 @@ class TestLevel2Shape(unittest.TestCase):
             self.assertEqual(json.loads(m["actions_required"]), [],
                               f"seed={seed}: actions_required не пуст")
 
-    def test_level_2_zones_use_settings_radius(self):
-        """Радиус зон берётся из geom.danger_zone_radius_cm."""
-        for r in (10.0, 15.0, 20.0):
-            g = WorldGeom(world_w_cm=500, world_h_cm=500,
-                          robot_w_cm=12, robot_l_cm=20,
-                          danger_zone_radius_cm=r)
-            for seed in range(5):
-                m = generate_mission(level=4, geom=g, seed=seed)
-                zones = json.loads(m["danger_zones"])
-                for z in zones:
-                    with self.subTest(seed=seed, radius_setting=r, zone=z):
-                        self.assertAlmostEqual(z[2], r, places=1,
-                                                msg=f"радиус зоны ≠ {r}: {z}")
+    def test_level_4_zone_radii_multiples_of_10(self):
+        """Радиусы зон L4 — кратны 10 (из набора 10/20/30)."""
+        for seed in range(20):
+            m = generate_mission(level=4, geom=_geom_default(), seed=seed)
+            zones = json.loads(m["danger_zones"])
+            for z in zones:
+                with self.subTest(seed=seed, zone=z):
+                    self.assertIn(round(z[2]), (10, 20, 30),
+                                  f"радиус зоны не кратен 10: {z}")
 
     def test_level_2_zones_close_to_trajectory(self):
         """Зоны должны угрожать роботу: расстояние от траектории до
@@ -538,21 +533,17 @@ class TestLevel2Shape(unittest.TestCase):
         g = _geom_default()
         half_robot = max(g.robot_w_cm, g.robot_l_cm) / 2.0
         clearance = g.safety_margin_cm + half_robot
-        # Алгоритм: required = zone_radius + clearance, extra ∈ [0, 25].
-        # После округления координаты до 5 см возможно смещение до ~3.5 см
-        # (диагональ от центра ячейки). v4.5: со случайным стартом
-        # margin'и стали чуть свободнее, разрешаем +15 см.
-        max_dist_from_path_to_center = (
-            g.danger_zone_radius_cm + clearance + 25.0 + 15.0
-        )
         for seed in range(30):
             m = generate_mission(level=4, geom=g, seed=seed)
             path = json.loads(m["path"])
             for (zx, zy, zr) in json.loads(m["danger_zones"]):
+                # required = zone_radius + clearance, extra ∈ [0, 25];
+                # округление координат до 5 см + случайный старт → +15 см.
+                max_dist = zr + clearance + 25.0 + 15.0
                 d = _min_dist_to_polyline(zx, zy, path)
                 with self.subTest(seed=seed, zone=(zx, zy, zr)):
                     self.assertLessEqual(
-                        d, max_dist_from_path_to_center,
+                        d, max_dist,
                         f"seed={seed}: зона ({zx},{zy}) слишком далеко от "
                         f"траектории ({d:.1f} см) — не угрожает прохождению")
 
@@ -581,8 +572,12 @@ class TestLevel2Shape(unittest.TestCase):
         for seed in range(20):
             g = _geom_default()
             m = generate_mission(level=4, geom=g, seed=seed)
+            # Старт миссии генерируется случайно — берём его из path[0],
+            # а не из geom (geom.start не отражает фактический старт).
+            path = json.loads(m["path"])
+            sx, sy = path[0]
             for (zx, zy, zr) in json.loads(m["danger_zones"]):
-                d = math.hypot(zx - g.start_x, zy - g.start_y)
+                d = math.hypot(zx - sx, zy - sy)
                 with self.subTest(seed=seed):
                     self.assertGreater(d, zr,
                                        f"стартовая точка внутри зоны ({zx},{zy},{zr})")
@@ -640,6 +635,53 @@ class TestLevel2Shape(unittest.TestCase):
         m = generate_mission(level=4, seed=1)
         self.assertEqual(m["title"], "")
         self.assertEqual(m["level"], 4)
+
+
+class TestLevel5Shape(unittest.TestCase):
+    """L5 «Продвинутый»: 5 точек, эталонная траектория, до 5 опасных
+    зон, 1 place_attention на финише + 2 remove_danger."""
+
+    def test_level_5_structure(self):
+        for seed in range(20):
+            m = generate_mission(level=5, geom=_geom_default(), seed=seed)
+            with self.subTest(seed=seed):
+                wp = json.loads(m["waypoints"])
+                self.assertEqual(len(wp), 5, "L5 — 5 контрольных точек")
+                self.assertLessEqual(len(json.loads(m["danger_zones"])), 5)
+                actions = json.loads(m["actions_required"])
+                place  = [a for a in actions if a["type"] == "place_attention"]
+                remove = [a for a in actions if a["type"] == "remove_danger"]
+                self.assertEqual(len(place), 1, "ровно 1 зона внимания")
+                self.assertLessEqual(len(remove), 2, "не больше 2 удаляемых")
+                # Зона внимания — на финишной (последней) точке.
+                self.assertEqual([place[0]["x"], place[0]["y"]],
+                                 list(wp[-1]))
+                # Эталонная траектория задана (≥2 точек).
+                self.assertGreaterEqual(len(json.loads(m["path"])), 2)
+
+    def test_level_5_remove_targets_are_zone_centres(self):
+        for seed in range(15):
+            m = generate_mission(level=5, geom=_geom_default(), seed=seed)
+            centres = {(round(z[0]), round(z[1]))
+                       for z in json.loads(m["danger_zones"])}
+            for a in json.loads(m["actions_required"]):
+                if a["type"] == "remove_danger":
+                    with self.subTest(seed=seed):
+                        self.assertIn((round(a["x"]), round(a["y"])), centres)
+
+    def test_level_5_zone_radii_multiples_of_10(self):
+        for seed in range(15):
+            m = generate_mission(level=5, geom=_geom_default(), seed=seed)
+            for z in json.loads(m["danger_zones"]):
+                with self.subTest(seed=seed, zone=z):
+                    self.assertIn(round(z[2]), (10, 20, 30))
+
+    def test_level_5_determinism(self):
+        a = generate_mission(level=5, seed=55)
+        b = generate_mission(level=5, seed=55)
+        self.assertEqual(a["waypoints"],        b["waypoints"])
+        self.assertEqual(a["danger_zones"],     b["danger_zones"])
+        self.assertEqual(a["actions_required"], b["actions_required"])
 
 
 class TestGeomHelpers(unittest.TestCase):

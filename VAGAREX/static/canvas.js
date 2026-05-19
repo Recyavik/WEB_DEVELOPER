@@ -457,7 +457,7 @@ class RobotCanvas {
       text += `  ·  установлено ${ac.place_done || 0}/${ac.place_total}`;
     if (ac.remove_total)
       text += `  ·  удалено ${ac.remove_done || 0}/${ac.remove_total}`;
-    text += `  ·  качество ${quality}%`;
+    text += `  ·  аккуратность ${quality}%`;
 
     ctx.save();
     ctx.font = 'bold 12px sans-serif';

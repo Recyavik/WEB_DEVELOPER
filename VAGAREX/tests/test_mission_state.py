@@ -68,11 +68,11 @@ class TestGeometry(unittest.TestCase):
 
 
 class TestQualityUpdate(unittest.TestCase):
-    """Качество: стартует с 0, растёт за посещённые точки/действия,
+    """Аккуратность: стартует с 0, растёт за посещённые точки/действия,
     убывает вне коридора траектории. В коридоре по позиции не меняется."""
 
     def test_quality_zero_when_nothing_done(self):
-        # Не делал ничего — качество 0%, а не «100% точности».
+        # Не делал ничего — аккуратность 0%, а не «100% точности».
         m = _mk_mission()
         self.assertEqual(m.quality, 0.0)
 
@@ -95,7 +95,7 @@ class TestQualityUpdate(unittest.TestCase):
         self.assertAlmostEqual(m.quality, 0.5, places=4)
 
     def test_quality_clamped_at_one(self):
-        # Качество не превышает 100%.
+        # Аккуратность не превышает 100%.
         m = _mk_mission(waypoints=[(100.0, 0.0)])
         m.mark_waypoint_visits(100.0, 0.0)
         self.assertAlmostEqual(m.quality, 1.0, places=4)
@@ -103,7 +103,7 @@ class TestQualityUpdate(unittest.TestCase):
     def test_in_corridor_keeps_quality(self):
         m = _mk_mission()
         m.quality = 0.5
-        # Робот ровно на траектории — ни качество, ни track_penalty не меняются.
+        # Робот ровно на траектории — ни аккуратность, ни track_penalty не меняются.
         m.update_quality(50, 0)
         self.assertEqual(m.quality, 0.5)
         for _ in range(1000):
@@ -140,14 +140,14 @@ class TestQualityUpdate(unittest.TestCase):
             m.update_quality(50, 30)            # вне коридора
         self.assertAlmostEqual(m.track_penalty, 10 * QUALITY_DRAIN_PER_TICK,
                                places=6)
-        # Позже игрок зарабатывает качество — штраф остаётся вычтенным.
+        # Позже игрок зарабатывает аккуратность — штраф остаётся вычтенным.
         m.quality = 0.50
         self.assertAlmostEqual(m.effective_quality(),
                                0.50 - 10 * QUALITY_DRAIN_PER_TICK, places=6)
 
     def test_no_path_means_no_deviation_check(self):
         # Миссия без эталонной траектории (path=[]) — уровень 1, «посети
-        # точки любым путём»: отклонение не штрафует ни качество, ни
+        # точки любым путём»: отклонение не штрафует ни аккуратность, ни
         # track_penalty.
         m = _mk_mission(path=[])
         m.quality = 1.0
@@ -163,7 +163,7 @@ class TestQualityUpdate(unittest.TestCase):
         m = _mk_mission(waypoints=[(100.0, 0.0)],
                         danger_zones=[(0.0, 0.0, 15.0)])
         m.quality = 1.0
-        m.mark_waypoint_visits(100.0, 0.0)        # +качество
+        m.mark_waypoint_visits(100.0, 0.0)        # +аккуратность
         m.update_quality(5, 5)                    # въезд в зону, в коридоре
         self.assertAlmostEqual(m.zone_penalty, 0.20, places=4)
         self.assertEqual(m.track_penalty, 0.0)    # траектория ни при чём
@@ -187,7 +187,7 @@ class TestQualityUpdate(unittest.TestCase):
         self.assertEqual(m.deviations, 2)
 
     def test_hint_penalizes_quality(self):
-        # Каждая подсказка — −20% к качеству; счётчик подсказок переживает
+        # Каждая подсказка — −20% к аккуратности; счётчик подсказок переживает
         # перезапуск прогона (reset_for_new_run сбрасывает quality, но не его).
         m = _mk_mission(waypoints=[(100.0, 0.0)])   # 1 точка → шаг 100%
         m.mark_waypoint_visits(100.0, 0.0)
@@ -204,7 +204,7 @@ class TestQualityUpdate(unittest.TestCase):
 
 
 class TestDangerZoneHits(unittest.TestCase):
-    """Наезд на опасную зону: −20% качества начисляется СРАЗУ при ВЪЕЗДЕ,
+    """Наезд на опасную зону: −20% аккуратности начисляется СРАЗУ при ВЪЕЗДЕ,
     один раз за зону. Действие (place_attention / remove_danger),
     выполненное внутри зоны, возвращает штраф (forgive).
     Тесты стартуют с quality=1.0, чтобы изолировать влияние зон."""
@@ -239,7 +239,7 @@ class TestDangerZoneHits(unittest.TestCase):
         m.quality = 0.0
         m.update_quality(5, 5)       # въезд
         self.assertAlmostEqual(m.zone_penalty, 0.20, places=4)
-        # Позже игрок зарабатывает качество — штраф остаётся вычтенным.
+        # Позже игрок зарабатывает аккуратность — штраф остаётся вычтенным.
         m.quality = 0.60
         self.assertAlmostEqual(m.effective_quality(), 0.40, places=4)
 
@@ -420,7 +420,7 @@ class TestActionMatching(unittest.TestCase):
         self.assertAlmostEqual(m.placed_attention[0]["r"], 14.0, places=4)
 
     def test_wrong_radius_penalizes_but_counts(self):
-        # Радиус вне допуска — действие засчитывается, но −5% качества.
+        # Радиус вне допуска — действие засчитывается, но −5% аккуратности.
         m = _mk_mission(actions_required=[
             {"type": "place_attention", "x": 50, "y": 50, "radius": 10.0},
         ])
@@ -486,6 +486,52 @@ class TestPlacedAttentionPenalty(unittest.TestCase):
         self.assertEqual(m.placed_attention, [])
 
 
+class TestFinishAndEarlyRemove(unittest.TestCase):
+    """Финиш (собраны все точки) и штраф за раннее снятие опасных зон (L5)."""
+
+    def test_finish_reached_when_all_waypoints_visited(self):
+        m = _mk_mission(waypoints=[(100.0, 0.0), (100.0, 100.0)])
+        self.assertFalse(m.finish_reached)
+        m.mark_waypoint_visits(100.0, 0.0)
+        self.assertFalse(m.finish_reached)
+        m.mark_waypoint_visits(100.0, 100.0)
+        self.assertTrue(m.finish_reached)
+
+    def test_track_penalty_frozen_after_finish(self):
+        # После финиша точность траектории не проверяется.
+        m = _mk_mission()
+        m.finish_reached = True
+        for _ in range(100):
+            m.update_quality(50, 30)            # вне коридора
+        self.assertEqual(m.track_penalty, 0.0)
+
+    def test_remove_before_finish_penalized(self):
+        # Миссия с траекторией (path≥2): снятие зоны до финиша → −20%.
+        m = _mk_mission(actions_required=[
+            {"type": "remove_danger", "x": 50, "y": 50}])
+        self.assertFalse(m.finish_reached)
+        idx = m.try_match_action("remove_danger", 50, 50)
+        self.assertEqual(idx, 0)
+        self.assertAlmostEqual(m.zone_penalty, 0.20, places=4)
+
+    def test_remove_after_finish_no_penalty(self):
+        m = _mk_mission(actions_required=[
+            {"type": "remove_danger", "x": 50, "y": 50}])
+        m.finish_reached = True
+        idx = m.try_match_action("remove_danger", 50, 50)
+        self.assertEqual(idx, 0)
+        self.assertEqual(m.zone_penalty, 0.0)
+
+    def test_remove_no_trajectory_no_penalty(self):
+        # Миссия без эталонной траектории (L2, path=[]) — гейт «после
+        # финиша» не применяется, раннее снятие не штрафуется.
+        m = _mk_mission(path=[], actions_required=[
+            {"type": "remove_danger", "x": 50, "y": 50}])
+        idx = m.try_match_action("remove_danger", 50, 50)
+        self.assertEqual(idx, 0)
+        self.assertEqual(m.zone_penalty, 0.0)
+
+
 class TestCompletionAndStars(unittest.TestCase):
     def test_complete_when_all_waypoints_and_actions(self):
         m = _mk_mission(waypoints=[(100, 0)],
@@ -504,39 +550,39 @@ class TestCompletionAndStars(unittest.TestCase):
 
     def test_fact_stars_one_per_visit_and_action(self):
         """1 звезда за каждую посещённую точку + 1 за каждое действие.
-        Не зависит от качества."""
+        Не зависит от аккуратности."""
         m = _mk_mission(waypoints=[(100, 0), (200, 0), (300, 0)],
                         actions_required=[{"type": "place_attention", "x": 0, "y": 0}])
         for i in range(3):
             m.waypoints_visited.add(i)
         m.actions_done.add(0)
-        m.quality = 0.0              # качество 0
+        m.quality = 0.0              # аккуратность 0
         self.assertEqual(m.fact_stars(), 4,
                          "Все 3 точки + 1 действие = 4 факт-звезды, "
-                         "независимо от качества")
+                         "независимо от аккуратности")
 
     def test_track_bonus_proportional_to_quality(self):
-        """Бонус = floor(база × качество). При 100% — удваивает базу."""
+        """Бонус = floor(база × аккуратность). При 100% — удваивает базу."""
         m = _mk_mission(waypoints=[(100, 0), (200, 0), (300, 0)])
         for i in range(3):
             m.waypoints_visited.add(i)
-        # качество 100% → бонус = 3, всего 6
+        # аккуратность 100% → бонус = 3, всего 6
         m.quality = 1.0
         self.assertEqual(m.fact_stars(), 3)
         self.assertEqual(m.track_bonus_stars(), 3)
         self.assertEqual(m.compute_stars(), 6)
-        # качество 70% → бонус = floor(3 * 0.7) = 2, всего 5
+        # аккуратность 70% → бонус = floor(3 * 0.7) = 2, всего 5
         m.quality = 0.7
         self.assertEqual(m.track_bonus_stars(), 2)
         self.assertEqual(m.compute_stars(), 5)
-        # качество 22% → бонус 0, всего только факт-звёзды
+        # аккуратность 22% → бонус 0, всего только факт-звёзды
         m.quality = 0.22
         self.assertEqual(m.track_bonus_stars(), 0)
         self.assertEqual(m.compute_stars(), 3)
 
     def test_partial_completion_still_gives_fact_stars(self):
         """Регрессия: звёзды за посещённые точки гарантированы даже при
-        низком качестве — факт-звёзды не режутся."""
+        низком аккуратности — факт-звёзды не режутся."""
         m = _mk_mission(waypoints=[(100, 0), (200, 0), (300, 0)])
         m.waypoints_visited.add(0)
         m.waypoints_visited.add(1)
@@ -544,10 +590,10 @@ class TestCompletionAndStars(unittest.TestCase):
         # 2 факт + floor(2 * 0.22)=0 бонус = 2 звезды
         self.assertEqual(m.compute_stars(), 2,
                          "При частичном прохождении звёзды за точки "
-                         "должны сохраняться, даже при низком качестве")
+                         "должны сохраняться, даже при низком аккуратности")
 
     def test_complete_mission_at_low_quality(self):
-        """Полное прохождение с минимальным качеством даёт ровно factual
+        """Полное прохождение с минимальным аккуратностью даёт ровно factual
         количество звёзд (бонус ~0). 'Хотя бы 1' больше не нужно —
         фактом это покрыто."""
         m = _mk_mission(waypoints=[(100, 0)])
@@ -559,25 +605,25 @@ class TestCompletionAndStars(unittest.TestCase):
 
     def test_time_bonus_fast_run_two_stars(self):
         """Скорость ≤ половины target — +2 звезды.
-        Target = 30 сек × N_waypoints. Для 3 точек target=90 сек, /2 = 45 сек."""
+        Target = 90 сек × N_waypoints. Для 3 точек target=270 сек, /2 = 135 сек."""
         m = _mk_mission(waypoints=[(100, 0), (200, 0), (300, 0)])
         for i in range(3): m.waypoints_visited.add(i)
-        self.assertEqual(m.time_bonus_stars(30), 2)
-        self.assertEqual(m.time_bonus_stars(45), 2)  # ровно на границе
+        self.assertEqual(m.time_bonus_stars(60), 2)
+        self.assertEqual(m.time_bonus_stars(135), 2)  # ровно на границе
 
     def test_time_bonus_normal_run_one_star(self):
-        """Скорость ≤ target — +1 звезда. Для 3 точек target=90 сек."""
+        """Скорость ≤ target — +1 звезда. Для 3 точек target=270 сек."""
         m = _mk_mission(waypoints=[(100, 0), (200, 0), (300, 0)])
         for i in range(3): m.waypoints_visited.add(i)
-        self.assertEqual(m.time_bonus_stars(60), 1)
-        self.assertEqual(m.time_bonus_stars(90), 1)  # ровно на границе
+        self.assertEqual(m.time_bonus_stars(200), 1)
+        self.assertEqual(m.time_bonus_stars(270), 1)  # ровно на границе
 
     def test_time_bonus_slow_run_zero(self):
         """Превышение target — 0 звёзд."""
         m = _mk_mission(waypoints=[(100, 0)])
         m.waypoints_visited.add(0)
-        # target = 30 сек × 1 = 30. 40 сек > 30 → 0
-        self.assertEqual(m.time_bonus_stars(40), 0)
+        # target = 90 сек × 1 = 90. 120 сек > 90 → 0
+        self.assertEqual(m.time_bonus_stars(120), 0)
 
     def test_time_bonus_zero_when_no_fact_stars(self):
         """Если ничего не пройдено — бонус 0, даже если робот был быстрый."""
@@ -592,14 +638,15 @@ class TestCompletionAndStars(unittest.TestCase):
         self.assertEqual(m.time_bonus_stars(-5), 0)
 
     def test_compute_stars_includes_time_bonus(self):
-        """compute_stars(duration) суммирует факт + качество + скорость."""
+        """compute_stars(duration) суммирует факт + аккуратность + скорость.
+        Для 3 точек target=270 с, половина=135 с."""
         m = _mk_mission(waypoints=[(100, 0), (200, 0), (300, 0)])
         for i in range(3): m.waypoints_visited.add(i)
         m.quality = 1.0
-        # факт 3 + качество 3 + скорость 2 (быстро, ≤45 с) = 8
+        # факт 3 + аккуратность 3 + скорость 2 (быстро, ≤135 с) = 8
         self.assertEqual(m.compute_stars(10), 8)
-        # факт 3 + качество 3 + скорость 0 (медленно, >90 с) = 6
-        self.assertEqual(m.compute_stars(120), 6)
+        # факт 3 + аккуратность 3 + скорость 0 (медленно, >270 с) = 6
+        self.assertEqual(m.compute_stars(300), 6)
         # без duration — без бонуса
         self.assertEqual(m.compute_stars(), 6)
 

@@ -282,7 +282,7 @@ class Mission(Base):
 
 class MissionRun(Base):
     """Один прогон миссии пользователем. Записывается при завершении или
-    отмене. Хранит набранные звёзды, итоговое «Качество прохождения»,
+    отмене. Хранит набранные звёзды, итоговое «Аккуратность прохождения»,
     выполненные действия и посещённые точки."""
     __tablename__ = "mission_runs"
 
@@ -297,7 +297,7 @@ class MissionRun(Base):
     completed_at  = Column(DateTime, nullable=True)
 
     stars             = Column(Integer, default=0, nullable=False)
-    # «Качество прохождения» 0..1. Имя столбца историческое (был
+    # «Аккуратность прохождения» 0..1. Имя столбца историческое (был
     # coefficient точности) — переименование потребовало бы миграции.
     coefficient       = Column(Float,   default=0.0, nullable=False)
     deviations        = Column(Integer, default=0, nullable=False)

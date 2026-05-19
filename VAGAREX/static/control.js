@@ -213,7 +213,7 @@
           // на всё время миссии. Сервер тоже не даст переключиться.
           // Во время ЛЮБОЙ миссии набор препятствий зафиксирован
           // (только стены — режим WM): зоны не тормозят робота, наезды
-          // на них штрафуют качество. Галочки «Препятствия» блокируем.
+          // на них штрафуют аккуратность. Галочки «Препятствия» блокируем.
           _setModeButtonsLocked(true,
             'Во время миссии препятствия зафиксированы (только стены). '
             + 'Завершите или остановите миссию, чтобы менять.');
@@ -507,7 +507,7 @@
 
   function updateMissionProgress(p) {
     // Передаём прогресс на canvas — там есть встроенная плашка
-    // «⭐ N · точки X/Y · установлено/удалено · качество %».
+    // «⭐ N · точки X/Y · установлено/удалено · аккуратность %».
     if (canvas && typeof canvas.updateMissionProgress === 'function') {
       canvas.updateMissionProgress(p);
     }
@@ -577,14 +577,14 @@
         `<div>⭐ Всего: <strong>${stars}</strong></div>` +
         `<div style="color:var(--text-dim); font-size:0.85rem; margin-top:0.3rem">` +
         `  За точки и действия: <strong>${factStars}</strong><br>` +
-        `  За качество прохождения: <strong>${trackStars}</strong>` +
+        `  За аккуратность: <strong>${trackStars}</strong>` +
         (timeStars != null ? `<br>  За скорость прохождения: <strong>${timeStars}</strong>` : '') +
         `</div>`;
     }
     modal.querySelector('.mission-result-body').innerHTML =
       `<div style="text-align:center; font-size:1.4rem; margin-bottom:0.6rem">${starsStr || '—'}</div>` +
       breakdown +
-      `<div style="margin-top:0.5rem">Качество прохождения: <strong>${quality}%</strong></div>` +
+      `<div style="margin-top:0.5rem">Аккуратность: <strong>${quality}%</strong></div>` +
       (timeStr ? `<div>Время задания: <strong>${timeStr}</strong></div>` : '') +
       (algoStr ? `<div>Время алгоритма: <strong>${algoStr}</strong></div>` : '');
     modal.hidden = false;
@@ -1140,9 +1140,16 @@
       const idx = parseInt(item.dataset.idx, 10);
       if (!isNaN(idx) && idx !== selIdx) setSel(idx);
     });
-    // Закрываем popup при resize/прокрутке страницы.
+    // Закрываем popup при resize/прокрутке СТРАНИЦЫ.
     window.addEventListener('resize', close);
-    window.addEventListener('scroll', close, true);
+    // capture=true ловит scroll любого элемента — но прокрутка ВНУТРИ
+    // самого popup'а (списка автодополнения при навигации стрелками)
+    // не должна его закрывать. Закрываем только при скролле страницы.
+    window.addEventListener('scroll', (e) => {
+      const t = e.target;
+      if (t && t.nodeType === 1 && (t === popup || popup.contains(t))) return;
+      close();
+    }, true);
   }
 
   // ── UI обновление ───────────────────────────────────────────────────────────
@@ -1188,7 +1195,7 @@
       // Идёт проверка миссии — препятствия только стены (W), миссия (M).
       modeText  = 'WM';
       modeTitle = 'Проверка миссии: препятствия — только стены, '
-                + 'зоны не тормозят робота (наезд — штраф качества).';
+                + 'зоны не тормозят робота (наезд — штраф аккуратности).';
     } else if (zoneMode) {
       modeText  = '⛯ Обстановка';
       modeTitle = 'Обстановка — расстановка зон мышью';

@@ -1,7 +1,7 @@
 """mission_state.py — runtime-состояние активной миссии в UserSession.
 
 Изолирует трекинг прохождения миссии (посещение точек, выполнение
-действий с зонами, отклонения от траектории, качество прохождения)
+действий с зонами, отклонения от траектории, аккуратность прохождения)
 от основной логики UserSession. Чистая структура данных + утилиты,
 без внешних зависимостей.
 
@@ -97,17 +97,17 @@ WAYPOINT_TOLERANCE_CM = 5.0
 # Радиус матчинга действия с зоной (для зон-действий).
 ACTION_TOLERANCE_CM = 15.0
 
-# Скорость убывания «Качества» за один tick (push_state), пока робот
+# Скорость убывания «Аккуратности» за один tick (push_state), пока робот
 # вне коридора траектории. ~10 push_state/с × 0.005 = 0.05/с → 10 секунд
-# отклонения стоят −0.5 качества.
+# отклонения стоят −0.5 аккуратности.
 QUALITY_DRAIN_PER_TICK = 0.005
 
-# Штраф к «Качеству» за каждую запрошенную подсказку. Считается
+# Штраф к «Аккуратности» за каждую запрошенную подсказку. Считается
 # отдельным счётчиком hints_used и вычитается в effective_quality() —
 # переживает перезапуск программы (▶).
 HINT_PENALTY = 0.20
 
-# Штраф к «Качеству» за каждый наезд на зону (опасную или свою зону
+# Штраф к «Аккуратности» за каждый наезд на зону (опасную или свою зону
 # внимания). Копится в zone_penalty, вычитается в effective_quality().
 ZONE_HIT_PENALTY = 0.20
 
@@ -145,7 +145,7 @@ class ActiveMission:
     # Динамическое состояние трекинга
     waypoints_visited: set[int] = field(default_factory=set)
     actions_done:      set[int] = field(default_factory=set)
-    # «Качество прохождения» 0..1: стартует с 0, растёт за посещённые
+    # «Аккуратность прохождения» 0..1: стартует с 0, растёт за посещённые
     # точки и выполненные действия, убывает за отклонение от траектории
     # и наезды на опасные зоны. Зажато в [0, 1]. Идёт в звёзды-бонус.
     quality:           float    = 0.0
@@ -161,6 +161,10 @@ class ActiveMission:
     # в начале прогона (quality ещё ~0) не должен «съедаться» границей 0.
     track_penalty:     float    = 0.0
     deviations:        int      = 0
+    # Финиш достигнут — посещены ВСЕ контрольные точки. После финиша
+    # точность траектории больше не проверяется (track_penalty не растёт),
+    # а снятие опасных зон не штрафуется. Ставится в mark_waypoint_visits.
+    finish_reached:    bool     = False
     # Сколько подсказок запросил игрок за всю миссию. НЕ сбрасывается
     # прогоном ▶ — штраф за подсказку должен пережить перезапуск кода.
     hints_used:        int      = 0
@@ -187,7 +191,7 @@ class ActiveMission:
     # зоны-препятствия. Заполняется в __post_init__.
     removable_zone_idx: set[int] = field(default_factory=set)
     # Вклад одной проверочной позиции (точка / действие с зоной) в
-    # «Качество» = 1 / (точки + действия). Заполняется в __post_init__.
+    # «Аккуратность» = 1 / (точки + действия). Заполняется в __post_init__.
     quality_step: float = 0.0
     # Установленные игроком зоны внимания. Каждая: {x, y, r, armed,
     # inside, finalized}. Установка и нахождение внутри при установке —
@@ -199,7 +203,7 @@ class ActiveMission:
         """Вычисляет производные поля:
           • removable_zone_idx — danger-зоны с парным remove_danger
             (наезд на них не штрафуется — заехать нужно по заданию);
-          • quality_step — вклад одной проверочной позиции в «Качество»."""
+          • quality_step — вклад одной проверочной позиции в «Аккуратность»."""
         for i, (zx, zy, zr) in enumerate(self.danger_zones):
             for a in self.actions_required:
                 if a.get("type") != "remove_danger":
@@ -211,12 +215,12 @@ class ActiveMission:
         n_positions = len(self.waypoints) + len(self.actions_required)
         self.quality_step = (1.0 / n_positions) if n_positions else 0.0
 
-    # ── Трекинг отклонения и обновление качества ─────────────────────────
+    # ── Трекинг отклонения и обновление аккуратности ─────────────────────────
 
     def update_quality(self, robot_x: float, robot_y: float) -> bool:
-        """Обновить «Качество прохождения» по текущей позиции робота.
+        """Обновить «Аккуратность прохождения» по текущей позиции робота.
 
-        «Качество» РАСТЁТ за посещённые точки и выполненные действия
+        «Аккуратность» РАСТЁТ за посещённые точки и выполненные действия
         (mark_waypoint_visits / try_match_action). Штрафы копятся
         ОТДЕЛЬНЫМИ аккумуляторами и вычитаются в effective_quality():
           • робот вне коридора эталонной траектории `path` → track_penalty
@@ -228,7 +232,7 @@ class ActiveMission:
 
         Если у миссии НЕТ эталонной траектории (`path` короче 2 точек —
         напр. уровень 1 «посети точки любым путём»), точность траектории
-        НЕ проверяется: качество складывается только из посещённых точек
+        НЕ проверяется: аккуратность складывается только из посещённых точек
         и наездов на зоны.
         Возвращает True при переходе «в коридор / вне»."""
         self._mark_danger_zone_hits(robot_x, robot_y)
@@ -236,6 +240,11 @@ class ActiveMission:
 
         # Нет эталонной траектории — отклонение не штрафуем.
         if len(self.path) < 2:
+            return False
+
+        # После финиша точность траектории не проверяется — игрок может
+        # свободно съехать с эталона (напр. чтобы доснять опасные зоны).
+        if self.finish_reached:
             return False
 
         d = dist_to_path(robot_x, robot_y, self.path)
@@ -290,7 +299,7 @@ class ActiveMission:
         В момент установки робот стоит внутри зоны — это НЕ штраф.
         Первый выезд из зоны «взводит» её (armed) — тоже без штрафа.
         Дальше зона ведёт себя как опасная: повторный ВЪЕЗД в неё →
-        −20% качества сразу (один раз, затем finalized).
+        −20% аккуратности сразу (один раз, затем finalized).
 
         Возвращает число штрафных наездов в этом тике."""
         if not self.placed_attention:
@@ -332,6 +341,7 @@ class ActiveMission:
         self.zone_penalty   = 0.0
         self.track_penalty  = 0.0
         self.deviations     = 0
+        self.finish_reached = False
         self.last_in_margin = True
         self.last_robot_pos = None
         self.danger_zones_inside.clear()
@@ -392,10 +402,13 @@ class ActiveMission:
             if d <= tolerance:
                 self.waypoints_visited.add(i)
                 new.append(i)
-        # Каждая новая посещённая точка поднимает «Качество».
+        # Каждая новая посещённая точка поднимает «Аккуратность».
         if new:
             self.quality = min(1.0, self.quality
                                + self.quality_step * len(new))
+            # Финиш = посещены ВСЕ контрольные точки.
+            if len(self.waypoints_visited) == len(self.waypoints):
+                self.finish_reached = True
         return new
 
     def try_match_action(self, action_type: str,
@@ -422,7 +435,7 @@ class ActiveMission:
             ay = float(action.get("y", 0))
             if math.hypot(x - ax, y - ay) <= ACTION_TOLERANCE_CM:
                 self.actions_done.add(i)
-                # Выполненное действие с зоной поднимает «Качество».
+                # Выполненное действие с зоной поднимает «Аккуратность».
                 self.quality = min(1.0, self.quality + self.quality_step)
                 if action_type == "place_attention":
                     req_r = float(action.get("radius",
@@ -438,6 +451,12 @@ class ActiveMission:
                         "x": ax, "y": ay, "r": actual_r,
                         "armed": False, "inside": True, "finalized": False,
                     })
+                elif action_type == "remove_danger":
+                    # На миссиях с эталонной траекторией (L5) опасные зоны
+                    # снимают ПОСЛЕ финиша. Снятие до финиша засчитывается,
+                    # но штрафует аккуратность на ZONE_HIT_PENALTY (−20%).
+                    if len(self.path) >= 2 and not self.finish_reached:
+                        self.zone_penalty += ZONE_HIT_PENALTY
                 return i
         return None
 
@@ -450,14 +469,14 @@ class ActiveMission:
         return all_waypoints and all_actions
 
     def compute_stars(self, duration_sec: Optional[float] = None) -> int:
-        """Финальное количество звёзд = факт + бонус_качества + бонус_скорости.
+        """Финальное количество звёзд = факт + бонус_аккуратности + бонус_скорости.
 
         Факт: 1 звезда за каждую посещённую точку + 1 за каждое
               выполненное действие. Не зависит от траектории — если робот
               физически попал на точку, звезда гарантирована.
 
-        Бонус качества: floor(база × качество). При качестве 100%
-              удваивает базу. При качестве 0% бонуса нет.
+        Бонус аккуратности: floor(база × аккуратность). При аккуратности 100%
+              удваивает базу. При аккуратности 0% бонуса нет.
 
         Бонус скорости (если duration_sec задан): до +2 звёзд за быстрое
               прохождение, см. time_bonus_stars."""
@@ -471,11 +490,11 @@ class ActiveMission:
 
     def register_hint(self) -> None:
         """Игрок запросил подсказку — увеличиваем счётчик. Сам штраф
-        к качеству вычисляется в effective_quality()."""
+        к аккуратности вычисляется в effective_quality()."""
         self.hints_used += 1
 
     def effective_quality(self) -> float:
-        """«Качество» с учётом штрафов. Поле quality — run-аккумулятор
+        """«Аккуратность» с учётом штрафов. Поле quality — run-аккумулятор
         (растёт за точки/действия). Поверх него вычитаем:
           • zone_penalty — наезды на зоны (по 20% за наезд, копится за
             прогон);
@@ -490,14 +509,14 @@ class ActiveMission:
                    - self.hints_used * HINT_PENALTY)
 
     def track_bonus_stars(self) -> int:
-        """Бонусные звёзды за качество прохождения: floor(факт × качество)."""
+        """Бонусные звёзды за аккуратность прохождения: floor(факт × аккуратность)."""
         return int(math.floor(self.fact_stars() * self.effective_quality()))
 
     def time_bonus_stars(self, duration_sec: Optional[float]) -> int:
         """Бонусные звёзды за скорость прохождения.
 
         Шкала привязана к количеству waypoints в миссии:
-            target = 30 секунд × n_waypoints
+            target = 90 секунд × n_waypoints
             ≤ target/2 → 2⭐
             ≤ target   → 1⭐
             > target   → 0
@@ -508,7 +527,7 @@ class ActiveMission:
         if self.fact_stars() == 0:
             return 0
         n = max(1, len(self.waypoints))
-        target_sec = 30.0 * n
+        target_sec = 90.0 * n
         if duration_sec <= target_sec / 2.0:
             return 2
         if duration_sec <= target_sec:

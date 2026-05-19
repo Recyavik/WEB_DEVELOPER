@@ -373,7 +373,7 @@ def _build_user_rating(db: Session, users: list) -> list:
     Сортировка (по убыванию приоритета критерия):
       1. звёзды — сумма ЛУЧШЕГО результата по каждой миссии (↓);
       2. доля успешных прохождений среди завершённых (↓);
-      3. среднее «Качество» успешных прохождений (↓);
+      3. среднее «Аккуратность» успешных прохождений (↓);
       4. суммарное время алгоритмов (↑ — быстрее лучше);
       5. суммарное время заданий (↑)."""
     def _fmt(sec):
@@ -391,7 +391,7 @@ def _build_user_rating(db: Session, users: list) -> list:
         for r in runs:
             best[r.mission_id] = max(best.get(r.mission_id, 0), r.stars or 0)
         stars = sum(best.values())
-        # «Качество» (столбец coefficient) — среднее по успешным прогонам.
+        # «Аккуратность» (столбец coefficient) — среднее по успешным прогонам.
         quals = [r.coefficient or 0.0 for r in runs if r.success]
         avg_quality = (sum(quals) / len(quals)) if quals else 0.0
         algo_total = sum(r.algo_duration_sec or 0.0 for r in runs)
@@ -1001,7 +1001,7 @@ async def missions_save_custom(request: Request,
         "🚧 Препятствия — не переставляйте галочки опасных зон.")
     desc_parts.append(
         "⭐ Звёзды — за контрольные точки и действия с зонами. "
-        "Качество прохождения растёт за каждую посещённую точку и "
+        "Аккуратность растёт за каждую посещённую точку и "
         "выполненное действие, снижается за отклонение от траектории "
         "(дальше габаритов робота), наезд на опасную зону и за каждую "
         "запрошенную подсказку.")
@@ -1102,12 +1102,12 @@ async def missions_hint_active(current_user: User = Depends(require_user)):
     else:
         cmds = (f"«Вега развернись на {target_heading}», "
                 f"затем «Вега вперёд {dist_int}»")
-    # Подсказка штрафует «Качество» (как наезд на зону) — счётчик
+    # Подсказка штрафует «Аккуратность» (как наезд на зону) — счётчик
     # hints_used переживает перезапуск программы, штраф в effective_quality.
     m.register_hint()
     await sess.push_message(
         f"💡 Точка #{idx + 1} ({tx:.0f}, {ty:.0f}): {cmds}. "
-        f"Подсказка — −20% к качеству.",
+        f"Подсказка — −20% к аккуратности.",
         "info")
     await sess.push_state()
     return JSONResponse({
@@ -1206,9 +1206,9 @@ async def stats_page(request: Request, db: Session = Depends(get_db),
 
     Общий блок:
       - сколько прохождений / сколько успешных
-      - всего звёзд, среднее качество, общее время в миссиях
+      - всего звёзд, среднее аккуратность, общее время в миссиях
     По миссиям (агрегат лучших):
-      - название миссии, лучшие звёзды, лучшее качество, лучшее время.
+      - название миссии, лучшие звёзды, лучшее аккуратность, лучшее время.
     """
     from sqlalchemy import func
     # Общие счётчики.
@@ -1218,7 +1218,7 @@ async def stats_page(request: Request, db: Session = Depends(get_db),
     success_runs = (db.query(func.count(MissionRun.id))
                     .filter(MissionRun.user_id == current_user.id)
                     .filter(MissionRun.success == True).scalar() or 0)
-    # MissionRun.coefficient — историческое имя столбца, хранит «Качество».
+    # MissionRun.coefficient — историческое имя столбца, хранит «Аккуратность».
     avg_quality = (db.query(func.avg(MissionRun.coefficient))
                     .filter(MissionRun.user_id == current_user.id)
                     .filter(MissionRun.success == True).scalar() or 0.0)

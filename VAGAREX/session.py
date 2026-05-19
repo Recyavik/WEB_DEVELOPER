@@ -380,13 +380,16 @@ class UserSession:
             await self._run_reset(db, keep_mode=True, clear_zones=True)
             run = MissionRun(mission_id=row.id, user_id=self.user_id)
             db.add(run); db.commit(); db.refresh(run)
+            # Допуск точности маршрута = габарит робота max(длина, ширина),
+            # ≈20 см. Уровень 5 «Продвинутый» — узкий коридор 10 см: на нём
+            # кривые глубокие, и срезка по прямой должна штрафовать.
+            base_tol = max(self.cfg.robot_length_cm, self.cfg.robot_width_cm)
+            track_tol = 10.0 if row.level == 5 else base_tol
             self._mission = from_mission_row(
                 row, user_id=self.user_id,
                 start_x=self.robot_state.x, start_y=self.robot_state.y,
                 run_id=run.id,
-                # Допуск точности маршрута = габарит робота max(длина, ширина).
-                track_tolerance_cm=max(self.cfg.robot_length_cm,
-                                       self.cfg.robot_width_cm),
+                track_tolerance_cm=track_tol,
             )
             # Опасные зоны миссии — это ОБСТАНОВКА: ставятся СРАЗУ в
             # world + DB (а не в код программы). Программа их не создаёт
@@ -410,14 +413,14 @@ class UserSession:
             db.close()
         # Режим WM: проверка миссии идёт «как будто препятствие — только
         # стены». Робот должен СМОЧЬ проехать сквозь зоны (наезд — штраф
-        # качества, а не авто-стоп), поэтому на время миссии набор
+        # аккуратности, а не авто-стоп), поэтому на время миссии набор
         # препятствий принудительно пуст. Галочки заблокированы (UI +
         # сервер), вернуть danger/attention нельзя до stop/finalize.
         if self.robot_state.obstacles:
             self._apply_obstacles(set())
         await self.push_message(
             "🎯 Режим WM: препятствия — только стены. Зоны не тормозят "
-            "робота, но наезды снижают качество миссии.", "info")
+            "робота, но наезды снижают аккуратность прохождения.", "info")
         await self.push_message(
             f"🎯 Миссия «{self._mission.title}» активирована. "
             f"Точек: {len(self._mission.waypoints)}, "
@@ -481,7 +484,7 @@ class UserSession:
             tail = (" Жми 🏁 Проверка задания для финала."
                     if finalize_hint else "")
             await self.push_message(
-                f"{out}\nТочки {wp_done}/{wp_total}, качество {qual}%, "
+                f"{out}\nТочки {wp_done}/{wp_total}, аккуратность {qual}%, "
                 f"всего времени алгоритма {cumulative:.1f} с.{tail}",
                 "info")
         return True
@@ -490,7 +493,7 @@ class UserSession:
         """Прогон программы для активной миссии — без автозавершения.
 
         Сбрасываем счётчики прохождения (каждый прогон оценивает только
-        ПОСЛЕДНЕЕ исполнение по точкам и качеству — иначе старый успех
+        ПОСЛЕДНЕЕ исполнение по точкам и аккуратности — иначе старый успех
         даёт звёзды даже если код испортили), запускаем _program через
         очередь, ждём опустошения, замеряем время и НАКАПЛИВАЕМ его в
         last_algo_duration_sec — суммарное время алгоритма по всем
@@ -522,7 +525,7 @@ class UserSession:
             await self.push_message(
                 f"✓ Прогон завершён за {run_dur:.1f} с "
                 f"(всего {cumulative:.1f} с). "
-                f"Точки {wp_done}/{wp_total}, качество {qual}%. "
+                f"Точки {wp_done}/{wp_total}, аккуратность {qual}%. "
                 f"Жми 🏁 Проверка задания для финала.",
                 "info")
         return True
@@ -569,11 +572,11 @@ class UserSession:
                     f"{cnt['place_done']}/{cnt['place_total']}, "
                     f"удалено {cnt['remove_done']}/{cnt['remove_total']}.",
                     "success")
-                # HUD миссии (счётчики зон + «Качество») обновляется только
+                # HUD миссии (счётчики зон + «Аккуратность») обновляется только
                 # по `state`-сообщению. Робот при установке/удалении зоны
                 # стоит на месте — без push_state чип ожил бы лишь со
                 # следующим кадром физики (после посещения точки). Толкаем
-                # state сразу, чтобы счётчик и качество среагировали тут же.
+                # state сразу, чтобы счётчик и аккуратность среагировали тут же.
                 await self.push_state()
 
             # _mission_check_action вызывается и из главного цикла
@@ -600,7 +603,7 @@ class UserSession:
         m = self._mission
         # Робот мог финишировать внутри опасной зоны — exit-only машина
         # её не закрыла. Добиваем учёт зон ДО подсчёта звёзд: эти штрафы
-        # должны попасть в финальное качество.
+        # должны попасть в финальное аккуратность.
         m.finalize_remaining_zones()
         if success is None:
             success = m.is_complete()
@@ -611,7 +614,7 @@ class UserSession:
         #     ВСЕГДА засчитывается; обучающийся честно довёл робота до
         #     точки, эту звезду нельзя отнять только потому, что миссию
         #     не закрыли целиком.
-        #   • бонус качества — тоже всегда (начисляется по пройденному
+        #   • бонус аккуратности — тоже всегда (начисляется по пройденному
         #     пути и не зависит от полноты завершения).
         #   • скорость прохождения — только при success: премия за
         #     полностью законченную миссию в срок.
@@ -628,7 +631,7 @@ class UserSession:
                 if run:
                     run.completed_at      = ended_at
                     run.stars             = stars
-                    # Столбец coefficient хранит «Качество» (имя
+                    # Столбец coefficient хранит «Аккуратность» (имя
                     # историческое) — /stats показывает именно его.
                     run.coefficient       = round(m.effective_quality(), 4)
                     run.deviations        = m.deviations
@@ -670,9 +673,9 @@ class UserSession:
         await self.push_message(
             f"🏁 Задание {mission_label} завершено: "
             f"{'✓ успех' if success else '✗ не выполнено'}. "
-            f"⭐ {stars} (точки {fact_stars} + качество {track_stars} "
+            f"⭐ {stars} (точки {fact_stars} + аккуратность {track_stars} "
             f"+ скорость {time_stars}), "
-            f"качество {quality_pct}%, "
+            f"аккуратность {quality_pct}%, "
             f"время задания {time_str}, "
             f"время алгоритма {algo_str}, "
             f"подсказок: {m.hints_used}.",
@@ -3146,6 +3149,12 @@ class UserSession:
         if code_text is not None:
             self._last_python_code = code_text
         code_x, code_y, code_h = self._parse_start_from_python(self._last_python_code)
+        if clear_zones:
+            # Активация миссии: робот ОБЯЗАН встать в стартовую точку
+            # миссии. start_mission уже записал её в cfg.start_*; а
+            # _last_python_code здесь ещё содержит код ПРЕДЫДУЩЕЙ миссии,
+            # парсить его START_X нельзя — иначе робот встанет не туда.
+            code_x = code_y = code_h = None
         eff_x = float(code_x) if code_x is not None else float(self.cfg.start_x_cm)
         eff_y = float(code_y) if code_y is not None else float(self.cfg.start_y_cm)
         eff_h = (float(code_h) if code_h is not None
@@ -3561,7 +3570,7 @@ class UserSession:
             lines.append("DANGER_ZONES = [          # (x, y, radius)")
             for z in danger:
                 no = z.display_no or 0
-                no_tag = f"  # #{no}" if no else ""
+                no_tag = f"  #{no}" if no else ""
                 lines.append(
                     f"    ({z.x:.1f}, {z.y:.1f}, {z.radius:.1f}),{no_tag}")
             lines.append("]")
