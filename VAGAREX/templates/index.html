@@ -107,7 +107,12 @@
       </section>
 
       <section class="card card--ctrl">
-        <h3 class="card__title">Управление и маневры</h3>
+        <div class="card__title-row">
+          <h3 class="card__title">Пульт управления</h3>
+          <button id="btn-toggle-ctrl" class="btn btn--xs btn--info" type="button"
+                  title="Показать / скрыть команды пульта управления">🕹</button>
+        </div>
+        <div id="ctrl-body" style="display:none">
 
         <!-- Руль -->
         <details class="ctrl-group" open>
@@ -214,6 +219,7 @@
           </div>
         </details>
 
+        </div><!-- /ctrl-body -->
       </section>
 
     </div>
@@ -260,7 +266,7 @@
         <button id="btn-autopilot"      class="btn btn--sm btn--autopilot" title="Автопилот: введите координаты цели — робот сам построит маршрут в обход препятствий (A*) и поедет. Объезжаются стены и те зоны, что отмечены в «Препятствиях». Пройденные участки вписываются в код.">🧭 Автопилот</button>
         <button class="btn btn--sm btn--success" data-cmd="Вега зарядить" title="Полностью зарядить батарею робота">🔋 Зарядить</button>
         <button id="btn-save-mission" class="btn btn--sm" title="Сохранить текущее состояние свободного режима как «кастомную» миссию для каталога">💾 Сохранить миссию</button>
-        <button class="btn btn--sm btn--danger" data-cmd="Вега новое поле" title="Полный сброс: робот в стартовую точку, путь и зоны очищаются">↺ Поле</button>
+        <button id="btn-reset-field" class="btn btn--sm btn--danger" data-cmd="Вега новое поле" title="Полный сброс: робот в стартовую точку, путь и зоны очищаются">↺ Поле</button>
       </div>
     </div>
     <canvas id="robot-canvas"></canvas>
@@ -316,6 +322,9 @@
         <h3 class="code-modal__title">Python код</h3>
         <div class="program-actions">
           <button id="btn-modal-copy"  class="btn btn--xs" title="Скопировать">⎘</button>
+          <a href="/library/save/new"  class="btn btn--xs" title="Сохранить код в Хранилище (личное)">💾</a>
+          <button id="btn-modal-load-route" class="btn btn--xs" type="button"
+                  title="Загрузить маршрут из Хранилища (свой или опубликованный)">📂</button>
           <button id="btn-modal-tidy"  class="btn btn--xs"
                   title="Упорядочить код: константы → функции (без дублей) → вызовы">🧹</button>
           <button id="btn-modal-clear" class="btn btn--xs" title="Очистить код">✕</button>

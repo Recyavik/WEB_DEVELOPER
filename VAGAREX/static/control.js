@@ -615,15 +615,19 @@
         return;
       }
       const data = await r.json();
-      const ta = document.getElementById('python-code');
-      if (ta && typeof data.code === 'string') {
-        ta.value = data.code;
+      if (typeof data.code === 'string') {
+        // Кладём код во все редакторы: боковой и развёрнутый (fallback).
         // input → подсветка + сохранение черновика в localStorage.
-        ta.dispatchEvent(new Event('input', { bubbles: true }));
-      }
-      if (window.cmEditor && window.cmEditor.isReady()
-          && typeof data.code === 'string') {
-        window.cmEditor.setValue(data.code);
+        ['python-code', 'python-code-modal-area'].forEach(eid => {
+          const ta = document.getElementById(eid);
+          if (ta) {
+            ta.value = data.code;
+            ta.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+        });
+        if (window.cmEditor && window.cmEditor.isReady()) {
+          window.cmEditor.setValue(data.code);
+        }
       }
       const m = document.getElementById('load-route-modal');
       if (m) m.hidden = true;
@@ -645,8 +649,9 @@
       return '<button type="button" class="btn load-route-item" '
            + 'data-kind="' + kind + '" data-id="' + it.id + '" '
            + 'data-title="' + _escHtml(it.title) + '" '
-           + 'style="display:block;width:100%;text-align:left;margin:.25rem 0">'
-           + '<strong>' + _escHtml(it.title) + '</strong>'
+           + 'style="display:block;width:100%;text-align:left;margin:.25rem 0;'
+           + 'font-weight:400">'
+           + _escHtml(it.title)
            + '<span class="hint" style="margin-left:.5rem">' + meta + '</span>'
            + '</button>';
     }).join('');
@@ -689,11 +694,17 @@
         _loadRoute(item.dataset.kind, item.dataset.id, item.dataset.title);
       });
     }
+    // Две панельки, у каждой свой скролл — длинные списки не растягивают
+    // модалку и не наезжают друг на друга.
+    const saved = data.saved || [];
+    const pub   = data.published || [];
+    const panel = 'max-height:30vh;overflow-y:auto;padding:.3rem;'
+                + 'border:1px solid var(--border);border-radius:6px';
     modal.querySelector('.load-route-body').innerHTML =
-        '<h4 style="margin:.2rem 0 .3rem">💾 Мои сохранения</h4>'
-      + _renderRouteList(data.saved || [], 'saved')
-      + '<h4 style="margin:.9rem 0 .3rem">🌐 Опубликованные</h4>'
-      + _renderRouteList(data.published || [], 'published');
+        '<h4 style="margin:.2rem 0 .3rem">💾 Мои сохранения (' + saved.length + ')</h4>'
+      + '<div style="' + panel + '">' + _renderRouteList(saved, 'saved') + '</div>'
+      + '<h4 style="margin:.9rem 0 .3rem">🌐 Опубликованные (' + pub.length + ')</h4>'
+      + '<div style="' + panel + '">' + _renderRouteList(pub, 'published') + '</div>';
     modal.hidden = false;
   }
 
@@ -2473,9 +2484,36 @@
     }
 
     // «📂 Загрузить» — пикер маршрутов из Хранилища (свои + опубликованные).
-    const btnLoadRoute = document.getElementById('btn-load-route');
-    if (btnLoadRoute) {
-      btnLoadRoute.addEventListener('click', _openLoadRouteModal);
+    // Кнопка есть и в боковой панели, и в развёрнутом редакторе кода.
+    ['btn-load-route', 'btn-modal-load-route'].forEach(id => {
+      const b = document.getElementById(id);
+      if (b) b.addEventListener('click', _openLoadRouteModal);
+    });
+
+    // «Пульт управления» — кнопка показывает/скрывает команды. По
+    // умолчанию свёрнут; состояние запоминается в localStorage.
+    const btnToggleCtrl = document.getElementById('btn-toggle-ctrl');
+    const ctrlBody      = document.getElementById('ctrl-body');
+    if (btnToggleCtrl && ctrlBody) {
+      const CTRL_KEY = 'vegarex.ctrl_expanded';
+      const applyCtrl = (expanded) => {
+        ctrlBody.style.display = expanded ? '' : 'none';
+        // Кнопка-джойстик: подсвечена (is-active), когда команды раскрыты.
+        btnToggleCtrl.classList.toggle('is-active', expanded);
+        btnToggleCtrl.title = expanded
+          ? 'Скрыть команды пульта управления'
+          : 'Показать команды пульта управления';
+      };
+      let ctrlExpanded = false;   // по умолчанию — свёрнут
+      try { ctrlExpanded = localStorage.getItem(CTRL_KEY) === '1'; }
+      catch (e) {}
+      applyCtrl(ctrlExpanded);
+      btnToggleCtrl.addEventListener('click', () => {
+        ctrlExpanded = ctrlBody.style.display === 'none';
+        applyCtrl(ctrlExpanded);
+        try { localStorage.setItem(CTRL_KEY, ctrlExpanded ? '1' : '0'); }
+        catch (e) {}
+      });
     }
 
     // Голосовое управление
