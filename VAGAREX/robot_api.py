@@ -389,22 +389,21 @@ class RobotProxy:
         # Переносим робота? Нет — просто ставим зону в (x, y) без движения.
         # Используем внутренний world API, миссию чекаем по (x, y).
         self._run(self._add_attention_at(float(x), float(y), r))
-        self._session._mission_check_action("place_attention", float(x), float(y))
+        self._session._mission_check_action("place_attention", float(x), float(y), r)
 
     def attention_here(self, radius: Optional[float] = None):
         """Поставить жёлтую зону внимания в текущей позиции робота."""
         s = self._session.robot_state
         r = float(radius) if radius is not None else None
         self._run(self._session._run_place_attention_here(r, None))
-        self._session._mission_check_action("place_attention", s.x, s.y)
+        self._session._mission_check_action("place_attention", s.x, s.y, r)
 
     def remove_zone_here(self):
         """Убрать зону (опасную или внимания) под текущей позицией робота."""
+        # Mission tracking делает сам _run_remove_zone — матчит по центру
+        # каждой удалённой зоны (позиция робота у кромки зоны может выйти
+        # за ACTION_TOLERANCE_CM от центра обязательного действия).
         self._run(self._session._run_remove_zone(None, None, None))
-        s = self._session.robot_state
-        # Пробуем матч на оба типа — try_match_action игнорит несовпавшие.
-        self._session._mission_check_action("remove_danger", s.x, s.y)
-        self._session._mission_check_action("remove_attention", s.x, s.y)
 
     # ── Вспомогательные внутренние корутины ─────────────────────────────────
 

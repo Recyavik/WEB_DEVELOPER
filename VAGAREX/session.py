@@ -431,11 +431,30 @@ class UserSession:
         await self.push_state()
         return True
 
-    async def run_check_python(self, code: str) -> bool:
+    async def control_check_and_finalize(self, code: str) -> bool:
+        """Кнопка «Проверка»: контрольный проход всего алгоритма + финал.
+
+        Делает чистый прогон программы (run_check_python обнуляет счётчики
+        прохождения), а затем сразу фиксирует результат (finalize_mission).
+        Пользователю не нужно отдельно жать ▶ и потом 🏁 — «Проверка»
+        прогоняет алгоритм автоматически и выносит вердикт."""
+        if self._mission is None:
+            return False
+        ok = await self.run_check_python(code, finalize_hint=False)
+        if not ok or self._mission is None:
+            return False
+        await self.finalize_mission()
+        return True
+
+    async def run_check_python(self, code: str,
+                               finalize_hint: bool = True) -> bool:
         """Прогон Python-кода (`robot.X(...)`) для активной миссии.
         Параллель run_check для нового API. Сбрасывает счётчики, запускает
         пользовательский код через robot_api.run_user_python, замеряет время
-        и накапливает в last_algo_duration_sec."""
+        и накапливает в last_algo_duration_sec.
+
+        finalize_hint=False — не дописывать «Жми 🏁» (прогон уже идёт в
+        составе кнопки «Проверка», финал последует автоматически)."""
         import time as _time
         from robot_api import run_user_python
         if self._mission is None:
@@ -459,10 +478,11 @@ class UserSession:
             wp_done = len(self._mission.waypoints_visited)
             wp_total = len(self._mission.waypoints)
             qual = int(round(self._mission.effective_quality() * 100))
+            tail = (" Жми 🏁 Проверка задания для финала."
+                    if finalize_hint else "")
             await self.push_message(
                 f"{out}\nТочки {wp_done}/{wp_total}, качество {qual}%, "
-                f"всего времени алгоритма {cumulative:.1f} с. "
-                f"Жми 🏁 Проверка задания для финала.",
+                f"всего времени алгоритма {cumulative:.1f} с.{tail}",
                 "info")
         return True
 
@@ -517,35 +537,52 @@ class UserSession:
         return True
 
     def _mission_check_action(self, action_type: str,
-                              x: float, y: float) -> None:
+                              x: float, y: float,
+                              radius: Optional[float] = None) -> None:
         """Если идёт миссия — проверить, не удовлетворяет ли это действие
         одному из обязательных actions_required (place/remove зон).
         No-op если миссии нет.
 
+        Для place_attention `radius` — радиус поставленной зоны (None →
+        дефолт danger_zone_radius); миссия проверяет его на совпадение с
+        требуемым (мягкий штраф за неверный радиус).
+
         Любое action прощает наезд на ту опасную зону, внутри которой
         сейчас находится робот. Без этого игрок, который остановился
         внутри опасной зоны чтобы её убрать (или поставить attention
-        рядом), получал бы −5% при выезде — что неверно, действие как
-        раз и нейтрализует наезд. Работает во всех режимах миссии."""
+        рядом), получал бы −20% — что неверно, действие как раз и
+        нейтрализует наезд. Работает во всех режимах миссии."""
         if self._mission is None:
             return
         s = self.robot_state
         self._mission.forgive_current_zone_hits(s.x, s.y)
-        idx = self._mission.try_match_action(action_type, x, y)
+        eff_radius = (radius if radius is not None
+                      else self.cfg.danger_zone_radius)
+        idx = self._mission.try_match_action(action_type, x, y, eff_radius)
         if idx is not None:
             # Уведомим пользователя — раздельно по установке и удалению.
             cnt = self._mission.action_counts()
-            coro = self.push_message(
-                f"✓ Действие засчитано. Установлено зон "
-                f"{cnt['place_done']}/{cnt['place_total']}, "
-                f"удалено {cnt['remove_done']}/{cnt['remove_total']}.",
-                "success")
+
+            async def _notify():
+                await self.push_message(
+                    f"✓ Действие засчитано. Установлено зон "
+                    f"{cnt['place_done']}/{cnt['place_total']}, "
+                    f"удалено {cnt['remove_done']}/{cnt['remove_total']}.",
+                    "success")
+                # HUD миссии (счётчики зон + «Качество») обновляется только
+                # по `state`-сообщению. Робот при установке/удалении зоны
+                # стоит на месте — без push_state чип ожил бы лишь со
+                # следующим кадром физики (после посещения точки). Толкаем
+                # state сразу, чтобы счётчик и качество среагировали тут же.
+                await self.push_state()
+
             # _mission_check_action вызывается и из главного цикла
             # (_dispatch), и из потока exec() пользовательской программы
             # (RobotProxy.remove_zone/…). В потоке exec нет running loop —
             # asyncio.create_task бросил бы RuntimeError «no running event
             # loop». Планируем на loop сессии потокобезопасно (без .result()
             # — fire-and-forget, безопасно и из самого loop-потока).
+            coro = _notify()
             loop = getattr(self, "_loop", None)
             if loop is not None:
                 asyncio.run_coroutine_threadsafe(coro, loop)
@@ -583,7 +620,6 @@ class UserSession:
         time_stars  = m.time_bonus_stars(duration_sec) if success else 0
         stars = fact_stars + track_stars + time_stars
         quality_pct = int(round(m.effective_quality() * 100))
-        precision_pct = int(round(m.coefficient * 100))   # точность ведения
         algo_duration = round(m.last_algo_duration_sec or 0.0, 2)
         if m.run_id is not None:
             db = SessionLocal()
@@ -622,9 +658,6 @@ class UserSession:
             "stars_time":  time_stars,
             "quality":     round(m.effective_quality(), 3),
             "quality_pct": quality_pct,
-            "coefficient": round(m.coefficient, 3),
-            "precision_pct": precision_pct,
-            "deviations":  m.deviations,
             "duration_sec": round(duration_sec, 1),
             "algo_duration_sec": algo_duration,
         })
@@ -639,9 +672,9 @@ class UserSession:
             f"{'✓ успех' if success else '✗ не выполнено'}. "
             f"⭐ {stars} (точки {fact_stars} + качество {track_stars} "
             f"+ скорость {time_stars}), "
-            f"качество {quality_pct}%, точность ведения {precision_pct}%, "
+            f"качество {quality_pct}%, "
             f"время задания {time_str}, "
-            f"время алгоритма {algo_str}, отклонений: {m.deviations}, "
+            f"время алгоритма {algo_str}, "
             f"подсказок: {m.hints_used}.",
             "success" if success else "warning")
         self._mission = None
@@ -2757,6 +2790,15 @@ class UserSession:
             if getattr(z, "kind", "danger") == "danger":
                 self._removed_zones_run.append(
                     (round(z.x, 1), round(z.y, 1), round(z.radius, 1)))
+            # Mission tracking: матчим по ЦЕНТРУ удалённой зоны, а не по
+            # позиции робота. Робот может стоять у кромки зоны (радиус до
+            # 30 см) — это вне ACTION_TOLERANCE_CM (15) от центра, и матч
+            # бы не сработал. Центр зоны всегда совпадает с координатой
+            # обязательного действия remove_danger/remove_attention.
+            zkind = getattr(z, "kind", "danger")
+            self._mission_check_action(
+                "remove_danger" if zkind == "danger" else "remove_attention",
+                z.x, z.y)
         if db:
             ids = [z.db_id for z in removed if z.db_id is not None]
             if ids:
@@ -2904,6 +2946,9 @@ class UserSession:
                 await self.push_message(
                     f"✕ Опасная #{z.display_no} снята с карты "
                     f"в ({z.x:.0f}, {z.y:.0f}).", "info")
+            # Mission tracking: матч по ЦЕНТРУ зоны (клик мог попасть в
+            # край зоны, вне ACTION_TOLERANCE_CM от центра действия).
+            self._mission_check_action("remove_danger", z.x, z.y)
         # Перенумеровываем оставшиеся красные зоны компактно.
         self._renumber_zones("danger", db)
         await self.push_world()
@@ -4083,7 +4128,8 @@ class UserSession:
                 msg = (f"Алгоритмическая зона установлена в ({tx:.0f}, {ty:.0f})"
                        + (f", радиус {r:.0f}." if r is not None else "."))
             # Mission tracking: матч с обязательным place_attention
-            self._mission_check_action("place_attention", tx, ty)
+            # (r=None → _mission_check_action подставит дефолтный радиус).
+            self._mission_check_action("place_attention", tx, ty, r)
         elif intent == "remove_danger_zone":
             # UI-удаление ОПАСНОЙ зоны мышью (⛯ Режим зон + ПКМ).
             # Не записывается в Python-код программы (это pre-flight чистка
@@ -4099,8 +4145,8 @@ class UserSession:
                     # В любом случае remove_danger_zone не записывается в код:
                     # это UI-команда, а не runtime-действие алгоритма.
                     cmd.skip_record = True
-                    # Mission tracking: матч с обязательным remove_danger
-                    self._mission_check_action("remove_danger", tx, ty)
+                    # Mission tracking делает сам _run_remove_danger_zone_at_point
+                    # (матч по центру удалённой зоны).
                 else:
                     msg, ok = (f"В точке ({tx:.0f}, {ty:.0f}) опасных зон "
                                f"не найдено."), False
@@ -4112,11 +4158,8 @@ class UserSession:
             if n_removed > 0:
                 msg = (f"Удалено зон: {n_removed} "
                        f"в точке ({tx:.0f}, {ty:.0f}).")
-                # Mission: можем удалять и опасные, и зоны внимания.
-                # Пробуем оба типа — try_match_action ничего не сделает,
-                # если такого action нет в required.
-                self._mission_check_action("remove_danger", tx, ty)
-                self._mission_check_action("remove_attention", tx, ty)
+                # Mission tracking делает сам _run_remove_zone (матч по
+                # центру каждой удалённой зоны).
             else:
                 # _run_remove_zone уже отправил конкретную причину
                 # (нет зон / робот не внутри) — здесь msg оставляем пустым.

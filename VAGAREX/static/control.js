@@ -347,10 +347,18 @@
   }
 
   async function _finalizeMission() {
-    if (!confirm('Зафиксировать результат миссии?\n\n'
-        + 'Звёзды считаются по ПОСЛЕДНЕМУ прогону программы.\n'
+    if (!confirm('Запустить контрольную проверку задания?\n\n'
+        + 'Алгоритм будет прогнан целиком автоматически, затем\n'
+        + 'зафиксирован результат и начислены звёзды.\n'
         + 'После этого миссию можно будет запустить заново через каталог.')) return;
-    await fetch('/missions/active/finalize', {method: 'POST'});
+    const textareaEl = document.getElementById('python-code');
+    const codeText = textareaEl ? textareaEl.value : '';
+    logMsg('🧪 Контрольный проход алгоритма…', 'info');
+    await fetch('/missions/active/finalize', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({code: codeText}),
+    });
   }
 
   function showMissionButton(mission) {
@@ -499,7 +507,7 @@
 
   function updateMissionProgress(p) {
     // Передаём прогресс на canvas — там есть встроенная плашка
-    // «⭐ N · точки X/Y · действия A/B · коэф %» с подсветкой отклонений.
+    // «⭐ N · точки X/Y · установлено/удалено · качество %».
     if (canvas && typeof canvas.updateMissionProgress === 'function') {
       canvas.updateMissionProgress(p);
     }
@@ -558,9 +566,6 @@
     const quality    = (msg.quality_pct != null)
                        ? msg.quality_pct
                        : Math.round((msg.quality || 0) * 100);
-    const precision  = (msg.precision_pct != null)
-                       ? msg.precision_pct
-                       : Math.round((msg.coefficient || 0) * 100);
     const duration   = (msg.duration_sec != null) ? msg.duration_sec : null;
     const algoDur    = (msg.algo_duration_sec != null) ? msg.algo_duration_sec : null;
     const _fmt = sec => `${String(Math.floor(sec/60)).padStart(2,'0')}:${String(Math.floor(sec%60)).padStart(2,'0')}`;
@@ -580,10 +585,8 @@
       `<div style="text-align:center; font-size:1.4rem; margin-bottom:0.6rem">${starsStr || '—'}</div>` +
       breakdown +
       `<div style="margin-top:0.5rem">Качество прохождения: <strong>${quality}%</strong></div>` +
-      `<div>Точность ведения: <strong>${precision}%</strong></div>` +
       (timeStr ? `<div>Время задания: <strong>${timeStr}</strong></div>` : '') +
-      (algoStr ? `<div>Время алгоритма: <strong>${algoStr}</strong></div>` : '') +
-      `<div>Отклонений: <strong>${msg.deviations || 0}</strong></div>`;
+      (algoStr ? `<div>Время алгоритма: <strong>${algoStr}</strong></div>` : '');
     modal.hidden = false;
   }
 

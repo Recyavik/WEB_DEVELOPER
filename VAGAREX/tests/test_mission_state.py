@@ -23,10 +23,13 @@ from mission_state import (
 
 def _mk_mission(**overrides) -> ActiveMission:
     """Конструктор тестового ActiveMission с разумными дефолтами.
-    track_tolerance_cm по умолчанию 20 см (габарит робота)."""
+    track_tolerance_cm по умолчанию 20 см (габарит робота).
+    path по умолчанию задан (старт→waypoints) — проверка отклонения
+    активна; для миссий «без траектории» (уровень 1) передать path=[]."""
     defaults = dict(
         mission_id=1, run_id=None, user_id=1,
         waypoints=[(100.0, 0.0), (100.0, 100.0)],
+        path=[(0.0, 0.0), (100.0, 0.0), (100.0, 100.0)],
         danger_zones=[],
         actions_required=[],
         safety_margin_cm=5.0,
@@ -100,50 +103,70 @@ class TestQualityUpdate(unittest.TestCase):
     def test_in_corridor_keeps_quality(self):
         m = _mk_mission()
         m.quality = 0.5
-        # Робот ровно на траектории — качество по позиции не меняется.
+        # Робот ровно на траектории — ни качество, ни track_penalty не меняются.
         m.update_quality(50, 0)
         self.assertEqual(m.quality, 0.5)
         for _ in range(1000):
             m.update_quality(50, 0)
         self.assertEqual(m.quality, 0.5)
+        self.assertEqual(m.track_penalty, 0.0)
 
-    def test_out_of_corridor_drains_to_zero(self):
+    def test_out_of_corridor_drains_effective_quality_to_zero(self):
         m = _mk_mission()
         m.quality = 1.0
-        # 30 см от траектории — вне коридора (20 см) → плавно убывает к 0.
+        # 30 см от траектории — вне коридора (20 см): track_penalty копится,
+        # сам quality не трогается, effective_quality уходит в 0.
         for _ in range(1000):
             m.update_quality(50, 30)
-        self.assertEqual(m.quality, 0.0)
+        self.assertEqual(m.quality, 1.0)
+        self.assertEqual(m.effective_quality(), 0.0)
 
-    def test_out_of_corridor_drains_one_step_per_tick(self):
-        # Один тик вне коридора убавляет качество ровно на шаг убывания.
+    def test_out_of_corridor_one_step_per_tick(self):
+        # Один тик вне коридора добавляет ровно шаг к track_penalty.
         m = _mk_mission()
         m.quality = 1.0
         m.update_quality(50, 30)
-        self.assertAlmostEqual(m.quality, 1.0 - QUALITY_DRAIN_PER_TICK,
+        self.assertAlmostEqual(m.track_penalty, QUALITY_DRAIN_PER_TICK,
                                places=6)
+        self.assertAlmostEqual(m.effective_quality(),
+                               1.0 - QUALITY_DRAIN_PER_TICK, places=6)
 
-    def test_coefficient_pure_ratchet_on_deviation(self):
-        # «Точность ведения» — старт 1.0, падает за отклонение, не растёт.
+    def test_track_penalty_counts_even_when_quality_is_zero(self):
+        # Регрессия floor-absorption: отклонение в начале прогона
+        # (quality ещё 0) раньше «съедалось» нижней границей 0.
         m = _mk_mission()
-        self.assertEqual(m.coefficient, 1.0)
-        m.update_quality(50, 0)        # в коридоре — без изменений
-        self.assertEqual(m.coefficient, 1.0)
-        m.update_quality(50, 30)       # вне коридора — −шаг
-        self.assertAlmostEqual(m.coefficient, 1.0 - QUALITY_DRAIN_PER_TICK,
+        m.quality = 0.0
+        for _ in range(10):
+            m.update_quality(50, 30)            # вне коридора
+        self.assertAlmostEqual(m.track_penalty, 10 * QUALITY_DRAIN_PER_TICK,
                                places=6)
+        # Позже игрок зарабатывает качество — штраф остаётся вычтенным.
+        m.quality = 0.50
+        self.assertAlmostEqual(m.effective_quality(),
+                               0.50 - 10 * QUALITY_DRAIN_PER_TICK, places=6)
 
-    def test_coefficient_ignores_visits_and_zone_hits(self):
-        # Посещение точки и наезд на зону штрафуют/растят качество,
-        # но «точность ведения» не трогают — она про отклонение.
+    def test_no_path_means_no_deviation_check(self):
+        # Миссия без эталонной траектории (path=[]) — уровень 1, «посети
+        # точки любым путём»: отклонение не штрафует ни качество, ни
+        # track_penalty.
+        m = _mk_mission(path=[])
+        m.quality = 1.0
+        for _ in range(1000):
+            m.update_quality(50, 30)
+        self.assertEqual(m.quality, 1.0)
+        self.assertEqual(m.track_penalty, 0.0)
+        self.assertEqual(m.deviations, 0)
+
+    def test_visits_and_zone_hits_do_not_touch_track_penalty(self):
+        # Посещение точки и наезд на зону влияют на quality/zone_penalty,
+        # но track_penalty (точность траектории) не трогают.
         m = _mk_mission(waypoints=[(100.0, 0.0)],
                         danger_zones=[(0.0, 0.0, 15.0)])
         m.quality = 1.0
         m.mark_waypoint_visits(100.0, 0.0)        # +качество
-        m.update_quality(5, 5)                    # в зоне, в коридоре
-        m.update_quality(50, 0)                   # выехал из зоны — −5% качества
-        self.assertAlmostEqual(m.quality, 0.95, places=4)
-        self.assertEqual(m.coefficient, 1.0)      # точность ведения цела
+        m.update_quality(5, 5)                    # въезд в зону, в коридоре
+        self.assertAlmostEqual(m.zone_penalty, 0.20, places=4)
+        self.assertEqual(m.track_penalty, 0.0)    # траектория ни при чём
 
     def test_deviation_counted_once_per_excursion(self):
         m = _mk_mission()
@@ -164,26 +187,26 @@ class TestQualityUpdate(unittest.TestCase):
         self.assertEqual(m.deviations, 2)
 
     def test_hint_penalizes_quality(self):
-        # Каждая подсказка — −5% к качеству; счётчик подсказок переживает
+        # Каждая подсказка — −20% к качеству; счётчик подсказок переживает
         # перезапуск прогона (reset_for_new_run сбрасывает quality, но не его).
         m = _mk_mission(waypoints=[(100.0, 0.0)])   # 1 точка → шаг 100%
         m.mark_waypoint_visits(100.0, 0.0)
         self.assertAlmostEqual(m.effective_quality(), 1.0, places=4)
         m.register_hint()
-        self.assertAlmostEqual(m.effective_quality(), 0.95, places=4)
+        self.assertAlmostEqual(m.effective_quality(), 0.80, places=4)
         m.register_hint()
-        self.assertAlmostEqual(m.effective_quality(), 0.90, places=4)
+        self.assertAlmostEqual(m.effective_quality(), 0.60, places=4)
         # Перезапуск: quality обнуляется, hints_used — нет.
         m.reset_for_new_run()
         self.assertEqual(m.hints_used, 2)
         m.mark_waypoint_visits(100.0, 0.0)
-        self.assertAlmostEqual(m.effective_quality(), 0.90, places=4)
+        self.assertAlmostEqual(m.effective_quality(), 0.60, places=4)
 
 
 class TestDangerZoneHits(unittest.TestCase):
-    """Наезд на опасную зону: −5% качества начисляется только когда робот
-    ВЫЕХАЛ из зоны без действия внутри. Действие (place_attention или
-    remove_danger), выполненное пока робот внутри зоны, прощает наезд.
+    """Наезд на опасную зону: −20% качества начисляется СРАЗУ при ВЪЕЗДЕ,
+    один раз за зону. Действие (place_attention / remove_danger),
+    выполненное внутри зоны, возвращает штраф (forgive).
     Тесты стартуют с quality=1.0, чтобы изолировать влияние зон."""
 
     def _with_zones(self, danger_zones, actions=None):
@@ -192,87 +215,78 @@ class TestDangerZoneHits(unittest.TestCase):
         m.quality = 1.0
         return m
 
-    def test_no_hit_while_only_inside(self):
-        # Заехали в зону → качество не падает, finalize ещё нет
+    def test_hit_fires_on_entry(self):
+        # Заехал в зону → −20% СРАЗУ, не дожидаясь выезда.
         m = self._with_zones([(0.0, 0.0, 15.0)])
-        m.update_quality(5, 5)
+        m.update_quality(5, 5)       # въезд — штраф здесь же
         self.assertEqual(m.quality, 1.0)
-        self.assertIn(0, m.danger_zones_inside)
-        self.assertEqual(m.danger_zones_finalized, set())
-
-    def test_hit_fires_on_exit(self):
-        # Заехали → выехали → −5%
-        m = self._with_zones([(0.0, 0.0, 15.0)])
-        m.update_quality(5, 5)       # внутри
-        m.update_quality(50, 0)      # выехали
-        self.assertAlmostEqual(m.quality, 0.95, places=4)
+        self.assertAlmostEqual(m.zone_penalty, 0.20, places=4)
+        self.assertAlmostEqual(m.effective_quality(), 0.80, places=4)
         self.assertIn(0, m.danger_zones_finalized)
 
-    def test_hit_forgiven_when_action_performed_inside(self):
-        # Заехали → выполнили действие → выехали → штрафа НЕТ
+    def test_hit_counted_once_per_zone(self):
+        # Повторные въезды/выезды в ту же зону больше не штрафуют.
         m = self._with_zones([(0.0, 0.0, 15.0)])
-        m.update_quality(5, 5)            # внутри
-        m.forgive_current_zone_hits(5, 5) # выполнил remove/place внутри
-        m.update_quality(50, 0)           # выехали
-        self.assertAlmostEqual(m.quality, 1.0, places=4)
-        self.assertIn(0, m.danger_zones_finalized)
+        m.update_quality(5, 5)       # въезд — штраф
+        m.update_quality(50, 0)      # выезд
+        m.update_quality(5, 5)       # повторный въезд — бесплатно
+        self.assertAlmostEqual(m.zone_penalty, 0.20, places=4)
+
+    def test_hit_penalizes_even_when_quality_is_zero(self):
+        # Регрессия: наезд на зону в начале прогона (quality ещё 0) раньше
+        # «съедался» нижней границей 0. Теперь штраф копится отдельно.
+        m = self._with_zones([(0.0, 0.0, 15.0)])
+        m.quality = 0.0
+        m.update_quality(5, 5)       # въезд
+        self.assertAlmostEqual(m.zone_penalty, 0.20, places=4)
+        # Позже игрок зарабатывает качество — штраф остаётся вычтенным.
+        m.quality = 0.60
+        self.assertAlmostEqual(m.effective_quality(), 0.40, places=4)
+
+    def test_hit_refunded_when_action_performed_inside(self):
+        # Заехал (−20%) → выполнил действие внутри → штраф возвращён.
+        m = self._with_zones([(0.0, 0.0, 15.0)])
+        m.update_quality(5, 5)            # въезд — штраф
+        self.assertAlmostEqual(m.zone_penalty, 0.20, places=4)
+        m.forgive_current_zone_hits(5, 5) # действие внутри → refund
+        self.assertAlmostEqual(m.zone_penalty, 0.0, places=4)
+        self.assertAlmostEqual(m.effective_quality(), 1.0, places=4)
+
+    def test_forgive_before_entry_prevents_penalty(self):
+        # Действие сработало раньше тика _mark_danger_zone_hits: зона
+        # помечена forgiven → последующий въезд не штрафуется.
+        m = self._with_zones([(0.0, 0.0, 15.0)])
+        m.forgive_current_zone_hits(5, 5)  # робот уже у зоны, действие
+        m.update_quality(5, 5)             # въезд — без штрафа
+        self.assertAlmostEqual(m.zone_penalty, 0.0, places=4)
 
     def test_forgive_outside_zone_no_effect(self):
-        # forgive вызван снаружи зоны → ничего не прощается
+        # forgive вызван снаружи зоны → ничего не прощается.
         m = self._with_zones([(0.0, 0.0, 15.0)])
         m.forgive_current_zone_hits(100, 100)   # робот далеко от зоны
-        m.update_quality(5, 5)                   # внутри
-        m.update_quality(50, 0)                  # выехали — штраф
-        self.assertAlmostEqual(m.quality, 0.95, places=4)
-
-    def test_finalize_remaining_zones_penalizes_stuck_inside(self):
-        # Робот завершил миссию, ОСТАВШИСЬ внутри зоны → −5% на финале.
-        m = self._with_zones([(0.0, 0.0, 15.0)])
-        m.update_quality(5, 5)                   # внутри, выхода не было
-        hits = m.finalize_remaining_zones()
-        self.assertEqual(hits, 1)
-        self.assertAlmostEqual(m.quality, 0.95, places=4)
-
-    def test_finalize_remaining_zones_forgives_action_inside(self):
-        # Остался внутри, но выполнил действие → финал без штрафа.
-        m = self._with_zones([(0.0, 0.0, 15.0)])
-        m.update_quality(5, 5)
-        m.forgive_current_zone_hits(5, 5)
-        hits = m.finalize_remaining_zones()
-        self.assertEqual(hits, 0)
-        self.assertAlmostEqual(m.quality, 1.0, places=4)
-
-    def test_finalize_ignores_untouched_zones(self):
-        # Зону, которой робот не касался, финал не штрафует.
-        m = self._with_zones([(200.0, 200.0, 15.0)])
-        m.update_quality(5, 5)                   # далеко от зоны
-        hits = m.finalize_remaining_zones()
-        self.assertEqual(hits, 0)
-        self.assertAlmostEqual(m.quality, 1.0, places=4)
+        m.update_quality(5, 5)                   # въезд — штраф
+        self.assertAlmostEqual(m.effective_quality(), 0.80, places=4)
 
     def test_removable_zone_never_penalized(self):
         # Зона с парным remove_danger — задача «удалить»: заехать в неё
-        # нужно по заданию, наезд НЕ штрафуется ни при выходе, ни на финале.
+        # нужно по заданию, наезд НЕ штрафуется.
         m = self._with_zones(
             [(0.0, 0.0, 15.0)],
             actions=[{"type": "remove_danger", "x": 0.0, "y": 0.0}])
         self.assertIn(0, m.removable_zone_idx)
         m.update_quality(5, 5)                   # заехали внутрь
         m.update_quality(50, 0)                  # выехали
-        self.assertEqual(m.quality, 1.0)
-        self.assertEqual(m.finalize_remaining_zones(), 0)
-        self.assertEqual(m.quality, 1.0)
+        self.assertEqual(m.zone_penalty, 0.0)
 
     def test_untouched_zone_still_penalized_with_removable_present(self):
-        # Среди зон есть и «удалить» (0,0), и нетронутая-препятствие (50,0)
-        # на линии маршрута. Штрафуется только вторая.
+        # Среди зон есть и «удалить» (0,0), и зона-препятствие (50,0).
+        # Штрафуется только вторая — сразу при въезде.
         m = self._with_zones(
             [(0.0, 0.0, 15.0), (50.0, 0.0, 15.0)],
             actions=[{"type": "remove_danger", "x": 0.0, "y": 0.0}])
         self.assertEqual(m.removable_zone_idx, {0})
-        m.update_quality(50, 5)                  # заехали во вторую (на маршруте)
-        m.update_quality(90, 0)                  # выехали — штраф −5%
-        self.assertAlmostEqual(m.quality, 0.95, places=4)
+        m.update_quality(50, 5)                  # въезд во вторую → −20%
+        self.assertAlmostEqual(m.effective_quality(), 0.80, places=4)
 
 
 class TestActionCounts(unittest.TestCase):
@@ -394,6 +408,82 @@ class TestActionMatching(unittest.TestCase):
         # Повторно зону НЕ матчим под уже выполненный action
         idx = m.try_match_action("place_attention", 50, 50)
         self.assertEqual(idx, 1, "должен сматчиться второй (ещё не done) action")
+
+    def test_correct_radius_no_penalty(self):
+        # Радиус в пределах допуска ±5 см — штрафа нет.
+        m = _mk_mission(actions_required=[
+            {"type": "place_attention", "x": 50, "y": 50, "radius": 10.0},
+        ])
+        idx = m.try_match_action("place_attention", 50, 50, radius=14.0)
+        self.assertEqual(idx, 0)
+        self.assertEqual(m.zone_penalty, 0.0)
+        self.assertAlmostEqual(m.placed_attention[0]["r"], 14.0, places=4)
+
+    def test_wrong_radius_penalizes_but_counts(self):
+        # Радиус вне допуска — действие засчитывается, но −5% качества.
+        m = _mk_mission(actions_required=[
+            {"type": "place_attention", "x": 50, "y": 50, "radius": 10.0},
+        ])
+        idx = m.try_match_action("place_attention", 50, 50, radius=20.0)
+        self.assertEqual(idx, 0)
+        self.assertIn(0, m.actions_done)            # действие засчитано
+        self.assertAlmostEqual(m.zone_penalty, 0.05, places=4)
+
+    def test_radius_at_tolerance_edge_no_penalty(self):
+        # Ровно на границе допуска (|разница| == 5) — без штрафа.
+        m = _mk_mission(actions_required=[
+            {"type": "place_attention", "x": 50, "y": 50, "radius": 10.0},
+        ])
+        m.try_match_action("place_attention", 50, 50, radius=15.0)
+        self.assertEqual(m.zone_penalty, 0.0)
+
+
+class TestPlacedAttentionPenalty(unittest.TestCase):
+    """Зона внимания, поставленная игроком: установка и первый выезд —
+    без штрафа; повторный заезд+выезд → −20% (как опасная зона)."""
+
+    def _mission(self):
+        # path=[] — пропускаем проверку коридора, изолируем штраф зоны.
+        return _mk_mission(path=[],
+                           actions_required=[{"type": "place_attention",
+                                              "x": 50, "y": 50,
+                                              "radius": 15.0}])
+
+    def test_place_records_zone_without_penalty(self):
+        m = self._mission()
+        m.try_match_action("place_attention", 50, 50)
+        self.assertEqual(len(m.placed_attention), 1)
+        z = m.placed_attention[0]
+        self.assertEqual((z["armed"], z["inside"], z["finalized"]),
+                         (False, True, False))
+
+    def test_first_exit_arms_without_penalty(self):
+        m = self._mission()
+        m.try_match_action("place_attention", 50, 50)
+        m.quality = 0.5
+        m.update_quality(200, 200)            # выезд — взвели зону
+        self.assertTrue(m.placed_attention[0]["armed"])
+        self.assertEqual(m.zone_penalty, 0.0)  # штрафа нет
+
+    def test_reentry_penalizes_once(self):
+        m = self._mission()
+        m.try_match_action("place_attention", 50, 50)
+        m.quality = 0.5
+        m.update_quality(200, 200)            # выезд — взвели
+        m.update_quality(50, 50)              # повторный ВЪЕЗД → −20% сразу
+        self.assertAlmostEqual(m.zone_penalty, 0.20, places=6)
+        self.assertAlmostEqual(m.effective_quality(), 0.30, places=6)
+        self.assertTrue(m.placed_attention[0]["finalized"])
+        # Дальнейшие заезды/выезды больше не штрафуют.
+        m.update_quality(200, 200)
+        m.update_quality(50, 50)
+        self.assertAlmostEqual(m.zone_penalty, 0.20, places=6)
+
+    def test_reset_clears_placed_attention(self):
+        m = self._mission()
+        m.try_match_action("place_attention", 50, 50)
+        m.reset_for_new_run()
+        self.assertEqual(m.placed_attention, [])
 
 
 class TestCompletionAndStars(unittest.TestCase):
@@ -526,12 +616,17 @@ class TestClientSerialization(unittest.TestCase):
         m = _mk_mission(waypoints=[(100, 0), (200, 0)])
         m.waypoints_visited.add(0)
         m.quality = 0.85
-        m.deviations = 3
         p = m.progress_dict()
         self.assertEqual(p["waypoints_visited"], [0])
         self.assertEqual(p["quality"], 0.85)
-        self.assertEqual(p["deviations"], 3)
         self.assertFalse(p["complete"])
+
+    def test_progress_dict_quality_reflects_zone_penalty(self):
+        # progress_dict.quality = effective_quality() — с вычетом штрафов.
+        m = _mk_mission()
+        m.quality = 0.80
+        m.zone_penalty = 0.10
+        self.assertAlmostEqual(m.progress_dict()["quality"], 0.70, places=4)
 
 
 if __name__ == "__main__":

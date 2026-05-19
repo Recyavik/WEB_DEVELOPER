@@ -397,7 +397,8 @@ class RobotCanvas {
       if (a.type !== 'place_attention') return;
       if ((p.actions_done || []).includes(idx)) return;   // установлено — цель убрана
       const c = this.worldToCanvas(a.x, a.y);
-      const r = (a.r || 15) * this.scale;
+      // Сгенерированные миссии кладут радиус в `radius`, кастомные — в `r`.
+      const r = (a.radius ?? a.r ?? 10) * this.scale;
       ctx.save();
       ctx.strokeStyle = '#ffd700';
       ctx.lineWidth = 1.4;
@@ -451,14 +452,12 @@ class RobotCanvas {
     const wpTotal = (m.waypoints || []).length;
     const ac = p.action_counts || {};
     const quality = Math.round((p.quality ?? 0) * 100);
-    const precision = Math.round((p.coefficient ?? 1) * 100);
     let text = `⭐ ${stars}  ·  точки ${wpDone}/${wpTotal}`;
     if (ac.place_total)
       text += `  ·  установлено ${ac.place_done || 0}/${ac.place_total}`;
     if (ac.remove_total)
       text += `  ·  удалено ${ac.remove_done || 0}/${ac.remove_total}`;
-    text += `  ·  качество ${quality}%  ·  точность ${precision}%`;
-    if (!p.in_margin && p.in_margin !== undefined) text += '  ·  ⚠ отклонение';
+    text += `  ·  качество ${quality}%`;
 
     ctx.save();
     ctx.font = 'bold 12px sans-serif';

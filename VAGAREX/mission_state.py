@@ -102,10 +102,20 @@ ACTION_TOLERANCE_CM = 15.0
 # отклонения стоят −0.5 качества.
 QUALITY_DRAIN_PER_TICK = 0.005
 
-# Штраф к «Качеству» за каждую запрошенную подсказку (как за наезд
-# на зону). Считается отдельным счётчиком hints_used и вычитается в
-# effective_quality() — переживает перезапуск программы (▶).
-HINT_PENALTY = 0.05
+# Штраф к «Качеству» за каждую запрошенную подсказку. Считается
+# отдельным счётчиком hints_used и вычитается в effective_quality() —
+# переживает перезапуск программы (▶).
+HINT_PENALTY = 0.20
+
+# Штраф к «Качеству» за каждый наезд на зону (опасную или свою зону
+# внимания). Копится в zone_penalty, вычитается в effective_quality().
+ZONE_HIT_PENALTY = 0.20
+
+# Зона внимания установлена с неверным радиусом: если радиус отличается
+# от требуемого больше чем на RADIUS_TOLERANCE_CM — мягкий штраф
+# RADIUS_PENALTY (действие при этом засчитывается, важна позиция).
+RADIUS_TOLERANCE_CM = 5.0
+RADIUS_PENALTY      = 0.05
 
 
 @dataclass
@@ -139,11 +149,17 @@ class ActiveMission:
     # точки и выполненные действия, убывает за отклонение от траектории
     # и наезды на опасные зоны. Зажато в [0, 1]. Идёт в звёзды-бонус.
     quality:           float    = 0.0
-    # «Точность ведения» 0..1: чистый храповик следования траектории —
-    # старт 1.0, падает ТОЛЬКО за выход из коридора, не зависит от
-    # посещения точек и наездов на зоны. Справочная метрика рядом с
-    # «Качеством»; в звёзды НЕ идёт (бонус считается от качества).
-    coefficient:       float    = 1.0
+    # Накопленный штраф за наезды на зоны (опасные + свои зоны внимания).
+    # Каждый наезд → +ZONE_HIT_PENALTY. Хранится ОТДЕЛЬНО от quality, потому что
+    # quality — растущий аккумулятор: наезд в начале прогона (когда
+    # quality ещё ~0) при прямом вычитании «съелся» бы нижней границей 0
+    # и штраф пропал. effective_quality() вычитает zone_penalty поверх.
+    zone_penalty:      float    = 0.0
+    # Накопленный штраф за выход из коридора эталонной траектории
+    # (QUALITY_DRAIN_PER_TICK за каждый тик вне коридора). Хранится
+    # ОТДЕЛЬНО от quality по той же причине, что и zone_penalty: дрейф
+    # в начале прогона (quality ещё ~0) не должен «съедаться» границей 0.
+    track_penalty:     float    = 0.0
     deviations:        int      = 0
     # Сколько подсказок запросил игрок за всю миссию. НЕ сбрасывается
     # прогоном ▶ — штраф за подсказку должен пережить перезапуск кода.
@@ -152,19 +168,19 @@ class ActiveMission:
     last_robot_pos:    Optional[tuple[float, float]] = None
     started_at:        datetime = field(default_factory=datetime.utcnow)
     last_algo_duration_sec: Optional[float] = None
-    # Учёт наездов на опасные зоны. Используется
-    # state-машина «exit-only counting»:
-    #   inside       — робот ВПРЯМО СЕЙЧАС внутри этой зоны
-    #   forgiven     — игрок выполнил действие (remove_danger/place_attention)
-    #                  пока находился внутри → при выходе наезд не штрафуется
-    #   finalized    — финальное решение принято (либо −5%, либо прощено),
-    #                  больше эту зону не учитываем
-    # Логика: −5% начисляется только когда робот ПОКИДАЕТ зону, в которой
-    # не было действия. Это даёт игроку возможность сначала зайти в зону
-    # и убрать/установить, а потом выйти без штрафа.
+    # Учёт наездов на опасные зоны:
+    #   inside       — индексы зон, которых робот уже касался
+    #   finalized    — зона уже учтена (повторные въезды бесплатны)
+    #   penalized    — за зону начислен −20% (можно вернуть через forgive)
+    #   forgiven     — игрок выполнил действие внутри зоны → въезд не
+    #                  штрафуется (или штраф возвращается)
+    # Логика: −20% начисляется СРАЗУ при ВЪЕЗДЕ в зону, один раз за зону.
+    # Если игрок выполнил действие (remove_danger/place_attention) внутри
+    # зоны — forgive_current_zone_hits возвращает штраф.
     danger_zones_inside:    set[int] = field(default_factory=set)
     danger_zones_forgiven:  set[int] = field(default_factory=set)
     danger_zones_finalized: set[int] = field(default_factory=set)
+    danger_zones_penalized: set[int] = field(default_factory=set)
     # Индексы danger_zones, которые являются задачей «удалить зону»
     # (есть парный remove_danger action). Наезд на них НЕ штрафуется —
     # заехать внутрь нужно по заданию. Штрафуются только нетронутые
@@ -173,6 +189,11 @@ class ActiveMission:
     # Вклад одной проверочной позиции (точка / действие с зоной) в
     # «Качество» = 1 / (точки + действия). Заполняется в __post_init__.
     quality_step: float = 0.0
+    # Установленные игроком зоны внимания. Каждая: {x, y, r, armed,
+    # inside, finalized}. Установка и нахождение внутри при установке —
+    # без штрафа; первый выезд «взводит» зону (armed), дальше она ведёт
+    # себя как опасная: повторный заезд+выезд → −20% (один раз).
+    placed_attention: list[dict] = field(default_factory=list)
 
     def __post_init__(self):
         """Вычисляет производные поля:
@@ -192,34 +213,37 @@ class ActiveMission:
 
     # ── Трекинг отклонения и обновление качества ─────────────────────────
 
-    def full_path(self) -> list[tuple[float, float]]:
-        """Эталонная траектория: старт → waypoint_1 → waypoint_2 → …"""
-        return [(self.start_x, self.start_y), *self.waypoints]
-
     def update_quality(self, robot_x: float, robot_y: float) -> bool:
         """Обновить «Качество прохождения» по текущей позиции робота.
 
-        Качество РАСТЁТ за посещённые точки и выполненные действия —
-        это делают mark_waypoint_visits / try_match_action. Здесь оно
-        только УБЫВАЕТ:
-          • робот вне коридора траектории → качество плавно падает,
-            пока он не вернётся. Эталон — плотная траектория `path`
-            (если задана), иначе ломаная старт→waypoints; ширина
-            коридора — `track_tolerance_cm` (габарит робота);
-          • наезд на нетронутую опасную зону → −5% (_mark_danger_zone_hits).
-        Параллельно ведётся `coefficient` («точность ведения») — чистый
-        храповик следования траектории: падает за то же отклонение, но
-        не реагирует на точки/зоны и не растёт обратно.
-        Зажато в [0, 1]. Возвращает True при переходе «в коридор / вне»."""
-        self._mark_danger_zone_hits(robot_x, robot_y)
+        «Качество» РАСТЁТ за посещённые точки и выполненные действия
+        (mark_waypoint_visits / try_match_action). Штрафы копятся
+        ОТДЕЛЬНЫМИ аккумуляторами и вычитаются в effective_quality():
+          • робот вне коридора эталонной траектории `path` → track_penalty
+            растёт на QUALITY_DRAIN_PER_TICK за тик; ширина коридора —
+            `track_tolerance_cm`;
+          • въезд в опасную зону → zone_penalty +20% (_mark_danger_zone_hits);
+          • повторный въезд в свою зону внимания → +20%
+            (_mark_placed_attention_hits).
 
-        ref = self.path if len(self.path) >= 2 else self.full_path()
-        d = dist_to_path(robot_x, robot_y, ref)
+        Если у миссии НЕТ эталонной траектории (`path` короче 2 точек —
+        напр. уровень 1 «посети точки любым путём»), точность траектории
+        НЕ проверяется: качество складывается только из посещённых точек
+        и наездов на зоны.
+        Возвращает True при переходе «в коридор / вне»."""
+        self._mark_danger_zone_hits(robot_x, robot_y)
+        self._mark_placed_attention_hits(robot_x, robot_y)
+
+        # Нет эталонной траектории — отклонение не штрафуем.
+        if len(self.path) < 2:
+            return False
+
+        d = dist_to_path(robot_x, robot_y, self.path)
         in_margin = d <= self.track_tolerance_cm
         if not in_margin:
-            self.quality = max(0.0, self.quality - QUALITY_DRAIN_PER_TICK)
-            self.coefficient = max(0.0,
-                                   self.coefficient - QUALITY_DRAIN_PER_TICK)
+            # Штраф копим отдельно: прямое вычитание из quality (растущего
+            # с 0) «съело» бы дрейф в начале прогона нижней границей 0.
+            self.track_penalty += QUALITY_DRAIN_PER_TICK
 
         transitioned = (in_margin != self.last_in_margin)
         if transitioned and not in_margin:
@@ -228,19 +252,15 @@ class ActiveMission:
         return transitioned
 
     def _mark_danger_zone_hits(self, robot_x: float, robot_y: float) -> int:
-        """Exit-only state-машина:
-          • Робот ВНУТРИ зоны i, ранее не был → добавляем i в inside.
-          • Робот ВЫШЕЛ из зоны i:
-              если зона в forgiven → finalize без штрафа (игрок выполнил
-                действие внутри);
-              иначе → finalize со штрафом −5%.
+        """Штраф за наезд на опасную зону начисляется СРАЗУ при ВЪЕЗДЕ:
+          • Робот впервые коснулся зоны i → −20% немедленно, зона
+            finalized (повторные въезды бесплатны — «один наезд = один
+            минус»).
+          • Если зона уже в forgiven (игрок выполнил действие внутри —
+            см. forgive_current_zone_hits) → въезд без штрафа.
 
         Зоны-задачи «удалить» (removable_zone_idx) НЕ штрафуются вовсе —
-        заехать в них нужно по заданию. Штрафуются только нетронутые
-        зоны-препятствия.
-
-        Зоны в finalized больше не учитываются (повторные заезды бесплатны
-        — у нас «один наезд = один минус», как и раньше).
+        заехать в них нужно по заданию.
 
         Возвращает число штрафных наездов в этом тике."""
         if not self.danger_zones:
@@ -251,44 +271,53 @@ class ActiveMission:
                 continue
             if i in self.removable_zone_idx:
                 continue   # зона-задача «удалить» — наезд не штрафуется
-            inside_now = math.hypot(robot_x - zx, robot_y - zy) <= zr
-            was_inside = i in self.danger_zones_inside
-            if inside_now and not was_inside:
-                self.danger_zones_inside.add(i)
-            elif was_inside and not inside_now:
-                # Вышел из зоны — момент решения.
-                self.danger_zones_inside.discard(i)
-                self.danger_zones_finalized.add(i)
-                if i in self.danger_zones_forgiven:
-                    self.danger_zones_forgiven.discard(i)
-                else:
-                    self.quality = max(0.0, self.quality - 0.05)
-                    new_hits += 1
-        return new_hits
-
-    def finalize_remaining_zones(self) -> int:
-        """Закрыть учёт зон в конце миссии (вызывается из stop_mission).
-
-        Робот мог завершить прогон, ОСТАВШИСЬ внутри опасной зоны —
-        выхода не было, exit-only машина `_mark_danger_zone_hits` такую
-        зону не финализировала. Здесь добиваем только такие зоны:
-        прощена (действие выполнено внутри) → бесплатно, иначе −5%.
-
-        Зоны, которых робот вообще не касался, тут НЕ трогаются — они
-        не в `danger_zones_inside`, наездом не считаются.
-        Возвращает число штрафных зон."""
-        new_hits = 0
-        for i in list(self.danger_zones_inside):
-            if i in self.danger_zones_finalized:
-                continue
-            self.danger_zones_inside.discard(i)
+            if math.hypot(robot_x - zx, robot_y - zy) > zr:
+                continue   # робот ещё не коснулся зоны
+            # Въезд в зону — штраф сразу, зона закрыта.
+            self.danger_zones_inside.add(i)
             self.danger_zones_finalized.add(i)
             if i in self.danger_zones_forgiven:
                 self.danger_zones_forgiven.discard(i)
             else:
-                self.quality = max(0.0, self.quality - 0.05)
+                self.zone_penalty += ZONE_HIT_PENALTY
+                self.danger_zones_penalized.add(i)
                 new_hits += 1
         return new_hits
+
+    def _mark_placed_attention_hits(self, robot_x: float, robot_y: float) -> int:
+        """Зоны внимания, установленные самим игроком (place_attention).
+
+        В момент установки робот стоит внутри зоны — это НЕ штраф.
+        Первый выезд из зоны «взводит» её (armed) — тоже без штрафа.
+        Дальше зона ведёт себя как опасная: повторный ВЪЕЗД в неё →
+        −20% качества сразу (один раз, затем finalized).
+
+        Возвращает число штрафных наездов в этом тике."""
+        if not self.placed_attention:
+            return 0
+        new_hits = 0
+        for z in self.placed_attention:
+            if z["finalized"]:
+                continue
+            inside_now = math.hypot(robot_x - z["x"], robot_y - z["y"]) <= z["r"]
+            if inside_now and not z["inside"]:
+                z["inside"] = True
+                if z["armed"]:
+                    # Повторный въезд после взвода — штраф сразу.
+                    self.zone_penalty += ZONE_HIT_PENALTY
+                    z["finalized"] = True
+                    new_hits += 1
+            elif z["inside"] and not inside_now:
+                z["inside"] = False
+                z["armed"] = True   # выезд — взвели зону, без штрафа
+        return new_hits
+
+    def finalize_remaining_zones(self) -> int:
+        """Раньше закрывала зоны, в которых робот «застрял» на финише
+        (exit-only учёт). Теперь штраф начисляется при ВЪЕЗДЕ в зону, так
+        что к финалу все задетые зоны уже учтены. Метод оставлен no-op'ом
+        для совместимости с вызовом из stop_mission."""
+        return 0
 
     def reset_for_new_run(self) -> None:
         """Сброс динамики трекинга перед новым прогоном (▶ Проверка кода).
@@ -300,24 +329,37 @@ class ActiveMission:
         self.waypoints_visited.clear()
         self.actions_done.clear()
         self.quality        = 0.0
-        self.coefficient    = 1.0
+        self.zone_penalty   = 0.0
+        self.track_penalty  = 0.0
         self.deviations     = 0
         self.last_in_margin = True
         self.last_robot_pos = None
         self.danger_zones_inside.clear()
         self.danger_zones_forgiven.clear()
         self.danger_zones_finalized.clear()
+        self.danger_zones_penalized.clear()
+        self.placed_attention.clear()
 
     def forgive_current_zone_hits(self, robot_x: float, robot_y: float) -> None:
-        """Помечает все опасные зоны, в которых сейчас находится робот,
-        как «прощённые» — при выходе из них штраф −5% не начисляется.
-        Вызывается ровно в момент выполнения действия (remove_danger /
-        place_attention), чтобы наезд во время действия не учитывался."""
+        """Игрок выполнил действие (remove_danger / place_attention)
+        внутри опасной зоны → наезд на эту зону прощается. Вызывается
+        ровно в момент выполнения действия.
+
+        Два случая:
+          • штраф за въезд уже начислен → возвращаем его (refund);
+          • робот ещё не въехал (действие сработало раньше тика
+            _mark_danger_zone_hits) → помечаем зону forgiven, чтобы
+            будущий въезд не штрафовался."""
         for i, (zx, zy, zr) in enumerate(self.danger_zones):
-            if i in self.danger_zones_finalized:
+            if math.hypot(robot_x - zx, robot_y - zy) > zr:
                 continue
-            if math.hypot(robot_x - zx, robot_y - zy) <= zr:
-                self.danger_zones_forgiven.add(i)
+            if i in self.danger_zones_penalized:
+                # Штраф уже был начислен при въезде — возвращаем.
+                self.zone_penalty = max(0.0,
+                                        self.zone_penalty - ZONE_HIT_PENALTY)
+                self.danger_zones_penalized.discard(i)
+            # И на будущее: если въезд ещё впереди — не штрафовать.
+            self.danger_zones_forgiven.add(i)
 
     # ── Чекпоинты и действия ─────────────────────────────────────────────
 
@@ -357,14 +399,20 @@ class ActiveMission:
         return new
 
     def try_match_action(self, action_type: str,
-                         x: float, y: float) -> Optional[int]:
+                         x: float, y: float,
+                         radius: Optional[float] = None) -> Optional[int]:
         """Попытаться сматчить выполненное пользователем действие
         с обязательным action из списка. Возвращает индекс матча или None.
 
         Используется из диспетчера: когда юзер ставит/удаляет зону,
-        вызываем try_match_action("place_attention", x, y) — если в
-        actions_required есть такая (в радиусе ACTION_TOLERANCE_CM от
-        указанной координаты), помечаем выполненной."""
+        вызываем try_match_action("place_attention", x, y, radius) — если
+        в actions_required есть такая (в радиусе ACTION_TOLERANCE_CM от
+        указанной координаты), помечаем выполненной.
+
+        Для place_attention `radius` — фактический радиус поставленной
+        зоны. Если он отличается от требуемого больше чем на
+        RADIUS_TOLERANCE_CM — мягкий штраф RADIUS_PENALTY (действие всё
+        равно засчитывается: важна позиция, радиус — точность исполнения)."""
         for i, action in enumerate(self.actions_required):
             if i in self.actions_done:
                 continue
@@ -376,6 +424,20 @@ class ActiveMission:
                 self.actions_done.add(i)
                 # Выполненное действие с зоной поднимает «Качество».
                 self.quality = min(1.0, self.quality + self.quality_step)
+                if action_type == "place_attention":
+                    req_r = float(action.get("radius",
+                                             action.get("r", 15.0)))
+                    actual_r = float(radius) if radius is not None else req_r
+                    # Неверный радиус — мягкий штраф −5%.
+                    if abs(actual_r - req_r) > RADIUS_TOLERANCE_CM:
+                        self.zone_penalty += RADIUS_PENALTY
+                    # Робот сейчас стоит внутри только что поставленной
+                    # зоны — учитываем её как «свою» (с фактическим
+                    # радиусом). Первый выезд взведёт, повторный въезд → −20%.
+                    self.placed_attention.append({
+                        "x": ax, "y": ay, "r": actual_r,
+                        "armed": False, "inside": True, "finalized": False,
+                    })
                 return i
         return None
 
@@ -413,11 +475,19 @@ class ActiveMission:
         self.hints_used += 1
 
     def effective_quality(self) -> float:
-        """«Качество» с учётом штрафа за подсказки. Поле quality —
-        run-аккумулятор, сбрасывается каждым прогоном ▶; hints_used
-        живёт всю миссию. Поэтому штраф за подсказки вычитаем здесь,
-        поверх аккумулятора. Зажато в [0, 1]."""
-        return max(0.0, self.quality - self.hints_used * HINT_PENALTY)
+        """«Качество» с учётом штрафов. Поле quality — run-аккумулятор
+        (растёт за точки/действия). Поверх него вычитаем:
+          • zone_penalty — наезды на зоны (по 20% за наезд, копится за
+            прогон);
+          • track_penalty — выход из коридора эталонной траектории
+            (копится по QUALITY_DRAIN_PER_TICK за тик вне коридора);
+          • hints_used × 20% — подсказки (счётчик живёт всю миссию).
+        Штрафы хранятся отдельными аккумуляторами, чтобы штраф в начале
+        прогона не «съелся» нижней границей quality=0. Зажато в [0, 1]."""
+        return max(0.0, self.quality
+                   - self.zone_penalty
+                   - self.track_penalty
+                   - self.hints_used * HINT_PENALTY)
 
     def track_bonus_stars(self) -> int:
         """Бонусные звёзды за качество прохождения: floor(факт × качество)."""
@@ -491,9 +561,6 @@ class ActiveMission:
             "actions_done":      sorted(self.actions_done),
             "action_counts":     self.action_counts(),
             "quality":           round(self.effective_quality(), 3),
-            "coefficient":       round(self.coefficient, 3),
-            "deviations":        self.deviations,
-            "in_margin":         self.last_in_margin,
             "stars_now":         self.compute_stars(),
             "stars_fact":        self.fact_stars(),
             "stars_track":       self.track_bonus_stars(),

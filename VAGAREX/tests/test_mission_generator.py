@@ -54,15 +54,14 @@ def _geom_default() -> WorldGeom:
 class TestLevel1Shape(unittest.TestCase):
     """Структура сгенерированной миссии level 1."""
 
-    def test_level_1_has_2_or_3_waypoints(self):
-        # v4.5+: L3 «Базовый» (бывший L1) генерирует ровно 3 точки на
-        # сетке 50×50.
+    def test_level_3_has_4_waypoints(self):
+        # L3 «Базовый» генерирует ровно 4 точки на сетке 50×50.
         for seed in range(20):
             with self.subTest(seed=seed):
                 m = generate_mission(level=3, geom=_geom_default(), seed=seed)
                 wp = json.loads(m["waypoints"])
-                self.assertEqual(len(wp), 3,
-                                  f"seed={seed}: L3 должен генерировать 3 точки")
+                self.assertEqual(len(wp), 4,
+                                  f"seed={seed}: L3 должен генерировать 4 точки")
 
     def test_level_1_no_zones(self):
         for seed in range(10):
@@ -267,27 +266,28 @@ class TestDescriptionFormat(unittest.TestCase):
         self.assertNotIn("Удалите", d)
 
     def test_remove_actions_produce_separate_lines(self):
-        """remove_danger и remove_attention идут двумя отдельными строками
-        с правильными счётчиками."""
+        """remove_danger описывается строкой «Удалите опасные зоны»
+        (по парным danger_zones), remove_attention — отдельной строкой."""
         d = _format_description(level=4, waypoints=[],
                                 actions=[
                                     {"type": "remove_danger",    "x": 0, "y": 0},
                                     {"type": "remove_danger",    "x": 1, "y": 1},
                                     {"type": "remove_attention", "x": 2, "y": 2},
                                 ],
+                                danger_zones=[[0, 0, 15], [1, 1, 20]],
                                 start_x=0, start_y=0)
-        self.assertIn("Удалите все опасные зоны (2 шт)", d)
+        self.assertIn("Удалите опасные зоны", d)
         self.assertIn("Удалите зоны внимания (1 шт)", d)
 
-    def test_danger_zones_block_with_count(self):
+    def test_avoid_zones_block(self):
+        """Опасные зоны без парного remove_danger — блок «Не задевайте»."""
         d = _format_description(level=5, waypoints=[],
                                 actions=[],
                                 danger_zones=[[100, 0, 20], [-50, 80, 15]],
                                 start_x=0, start_y=0)
-        self.assertIn("Опасные зоны на карте (2 шт.)", d)
+        self.assertIn("Не задевайте опасные зоны", d)
         self.assertIn("(100, 0)", d)
         self.assertIn("(-50, 80)", d)
-        self.assertIn("Не задевайте", d)
 
     def test_block_order_is_start_waypoints_actions_zones_stars(self):
         """Стабильный порядок блоков (на нём держится UI-парсинг описания)."""
@@ -298,7 +298,7 @@ class TestDescriptionFormat(unittest.TestCase):
         i_start = d.index("Начало маршрута")
         i_wp    = d.index("Контрольные точки")
         i_pin   = d.index("Установите зоны")
-        i_dz    = d.index("Опасные зоны на карте")
+        i_dz    = d.index("Не задевайте опасные зоны")
         i_star  = d.index("⭐")
         self.assertLess(i_start, i_wp)
         self.assertLess(i_wp,    i_pin)
@@ -616,14 +616,14 @@ class TestLevel2Shape(unittest.TestCase):
                                            f"зоны пересекаются: {zones[i]} vs {zones[j]}")
 
     def test_level_2_description_includes_danger_block(self):
-        """Описание уровня 2, в котором есть зоны, должно содержать строку
-        «Опасные зоны на карте»."""
+        """Описание миссии с зонами должно содержать блок про опасные зоны
+        (удалить / не задевать) и координаты всех зон."""
         for seed in range(20):
             m = generate_mission(level=4, geom=_geom_default(), seed=seed)
             zones = json.loads(m["danger_zones"])
             if not zones:
                 continue
-            self.assertIn("Опасные зоны на карте", m["description"],
+            self.assertIn("опасные зоны", m["description"].lower(),
                            f"seed={seed}: блок с зонами отсутствует в описании")
             for (zx, zy, _r) in zones:
                 self.assertIn(f"({int(zx)}, {int(zy)})", m["description"],

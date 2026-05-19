@@ -1107,7 +1107,7 @@ async def missions_hint_active(current_user: User = Depends(require_user)):
     m.register_hint()
     await sess.push_message(
         f"💡 Точка #{idx + 1} ({tx:.0f}, {ty:.0f}): {cmds}. "
-        f"Подсказка — −5% к качеству.",
+        f"Подсказка — −20% к качеству.",
         "info")
     await sess.push_state()
     return JSONResponse({
@@ -1156,16 +1156,33 @@ async def missions_check_active(request: Request,
 
 
 @app.post("/missions/active/finalize")
-async def missions_finalize_active(current_user: User = Depends(require_user)):
-    """Финальная проверка задания — фиксирует результат и завершает миссию.
-    Звёзды считаются по результату ПОСЛЕДНЕГО прогона + суммарному
-    времени алгоритма по всем прогонам."""
+async def missions_finalize_active(request: Request,
+                                   current_user: User = Depends(require_user)):
+    """Кнопка «Проверка» — контрольный проход всего алгоритма + финал.
+
+    Прогоняет программу из textarea (чистый контрольный проход), затем
+    сразу фиксирует результат. Текст кода — источник истины (как в
+    /missions/active/check). Если код не передан — финал по последнему
+    прогону (обратная совместимость)."""
+    import asyncio as _aio
     sess = get_session(current_user.id)
     if sess is None:
         return JSONResponse({"error": "no active session"}, status_code=400)
     if sess._mission is None:
         return JSONResponse({"error": "no active mission"}, status_code=400)
-    await sess.finalize_mission()
+    code_text = ""
+    try:
+        body = await request.json()
+        code_text = (body or {}).get("code", "") or ""
+    except Exception:
+        code_text = ""
+    if code_text.strip():
+        # Контрольный проход + финал. Запускаем в фоне — клиент узнает
+        # результат по mission_finished через WebSocket.
+        _aio.create_task(sess.control_check_and_finalize(code_text))
+    else:
+        # Кода нет — финал по последнему прогону (старое поведение).
+        await sess.finalize_mission()
     return JSONResponse({"ok": True})
 
 

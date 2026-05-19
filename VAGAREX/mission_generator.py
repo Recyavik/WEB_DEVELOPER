@@ -114,7 +114,7 @@ _CARDINAL_HEADINGS = (0, 45, 90, 135, 180, 225, 270, 315)
 _HEADINGS_15_DEG   = tuple(range(0, 360, 15))   # 0, 15, 30, ..., 345
 
 # Шаги по уровням (передаются в _generate_trajectory).
-# После перетряхивания v4.5: L1/L2 — инспектор (без траектории),
+# После перетряхивания v4.5: L1/L2 — без эталонной траектории,
 # L3 = бывший L1 (сетка 45°), L4 = бывший L2 (15°), L5 = бывший L3 (45° + кривые).
 _LEVEL_HEADING_STEP_DEG = {3: 45, 4: 15, 5: 45}
 
@@ -959,7 +959,9 @@ def _place_danger_zones(n_zones: int, full_path: list[list[float]],
                          geom: WorldGeom, rng: random.Random, *,
                          zone_radius_cm: float,
                          clearance_cm: float,
-                         max_extra_cm: float = 25.0) -> list[list[float]]:
+                         max_extra_cm: float = 25.0,
+                         existing: Optional[list[list[float]]] = None
+                         ) -> list[list[float]]:
     """Расставить n_zones опасных зон ВДОЛЬ эталонной траектории.
 
     Стратегия: выбираем случайную точку на ломаной (равномерно по длине),
@@ -977,10 +979,13 @@ def _place_danger_zones(n_zones: int, full_path: list[list[float]],
         сегменты могут оказаться ближе — отбраковываем),
       • расстояние до старта ≥ required,
       • расстояние до уже размещённой зоны ≥ сумма радиусов + 20 см
-        (визуальный разнос).
+        (визуальный разнос) — учитываются и зоны из этого вызова, и
+        переданные в `existing` (зоны, размещённые прошлыми вызовами:
+        на L2/L5 функция зовётся по разу на радиус, и без `existing`
+        зоны разных вызовов могли бы пересекаться).
 
-    Все радиусы зон одинаковые (zone_radius_cm). На уровнях 4-5 будет
-    другая логика с переменным радиусом.
+    Все радиусы зон в одном вызове одинаковые (zone_radius_cm) —
+    переменный радиус набирается несколькими вызовами через `existing`.
 
     Возвращает [[x, y, r], ...]. Если места не хватило — может вернуть
     меньше n_zones (или пустой список); вызывающий должен это учитывать."""
@@ -1046,7 +1051,7 @@ def _place_danger_zones(n_zones: int, full_path: list[list[float]],
         if math.hypot(zx - geom.start_x, zy - geom.start_y) < required:
             continue
         ok = True
-        for (ox, oy, orad) in placed:
+        for (ox, oy, orad) in placed + list(existing or []):
             if math.hypot(zx - ox, zy - oy) < zone_radius_cm + orad + 20:
                 ok = False
                 break
@@ -1115,7 +1120,7 @@ def _generate_trajectory_best_of(n_waypoints: int, geom: WorldGeom,
     return best_traj
 
 
-# ── Новые уровни 1-2 (режим «инспектор» — без эталонной траектории) ───────
+# ── Уровни 1-2 — без эталонной траектории ────────────────────────────────
 
 def _random_start_xy(rng: random.Random) -> tuple[float, float]:
     """Случайная стартовая точка миссии (общая для всех уровней): кратна
@@ -1155,7 +1160,7 @@ def _scatter_points(n: int, geom: WorldGeom, rng: random.Random,
 
 
 def _generate_level_1(geom: WorldGeom, rng: random.Random) -> dict:
-    """Уровень 1 «Ознакомительный» — режим инспектор.
+    """Уровень 1 «Ознакомительный».
     3 точки разбросаны на сетке 50×50; обучающийся посещает их любой
     траекторией (траектория НЕ генерится и НЕ проверяется).
 
@@ -1174,10 +1179,10 @@ def _generate_level_1(geom: WorldGeom, rng: random.Random) -> dict:
                                 start_x=start_x, start_y=start_y,
                                 danger_zones=[]),
         "waypoints":        json.dumps(waypoints),
-        # Маркер «инспектор» в коде клиента — m.level === 1 || 2.
-        # path передаём как [старт] (одна точка) — этого достаточно
-        # canvas.js, чтобы взять старт в worldToCanvas, и тогда полилайна
-        # не будет (длина < 2).
+        # path = [старт] (одна точка): эталонной траектории нет. Этого
+        # достаточно canvas.js, чтобы взять старт в worldToCanvas, и
+        # полилайна не рисуется (длина < 2). Проверка тоже не штрафует
+        # отклонение, когда path короче 2 точек (см. update_quality).
         "path":             json.dumps([[start_x, start_y]]),
         "danger_zones":     json.dumps([]),
         "actions_required": json.dumps([]),
@@ -1188,11 +1193,12 @@ def _generate_level_1(geom: WorldGeom, rng: random.Random) -> dict:
 
 
 def _generate_level_2(geom: WorldGeom, rng: random.Random) -> dict:
-    """Уровень 2 «Начальный» — инспектор с зонами.
+    """Уровень 2 «Начальный» — с зонами.
     4 точки + 3 опасные зоны (радиусы 10/20/30 см) на «прямых
     направлениях» к точкам — мешают идти по прямой, нужно обходить.
-    Дополнительно: установить 2 зоны внимания + удалить все опасные.
-    Оценка по точкам и действиям; за каждый наезд на danger −5%.
+    Дополнительно: установить 2 зоны внимания + удалить ОДНУ из 3
+    опасных зон. В зону-задачу «удалить» заезжать можно (штрафа нет),
+    наезд на 2 остальные опасные зоны — −20% качества.
 
     Стартовая точка генерируется случайно (см. _random_start_xy)."""
     start_x, start_y = _random_start_xy(rng)
@@ -1217,7 +1223,8 @@ def _generate_level_2(geom: WorldGeom, rng: random.Random) -> dict:
             zs = _place_danger_zones(
                 1, fake_path, geom, rng,
                 zone_radius_cm=r, clearance_cm=clearance,
-                max_extra_cm=5.0)   # ближе к прямой, реально мешали
+                max_extra_cm=5.0,            # ближе к прямой, реально мешали
+                existing=danger_zones)      # не пересекаться с уже стоящими
             danger_zones.extend(zs)
 
     # 2 зоны внимания — конкретные координаты, которые надо разместить
@@ -1232,12 +1239,17 @@ def _generate_level_2(geom: WorldGeom, rng: random.Random) -> dict:
         min_dist_cm=80.0, grid_step_cm=50,
         start_xy=(start_x, start_y),
         prior_points=attention_prior)
+    # Радиус зоны внимания — фиксированный 20 см (один параметр на все
+    # зоны, чтобы не перегружать задание). Допуск ±5 см, иначе −5%.
     actions: list[dict] = [
-        {"type": "place_attention", "x": p[0], "y": p[1], "radius": 15.0}
+        {"type": "place_attention", "x": p[0], "y": p[1], "radius": 20.0}
         for p in attention_points
     ]
-    # Удаление всех опасных зон — одна action-команда на каждую зону
-    for z in danger_zones:
+    # Ровно ОДНУ из 3 опасных зон нужно удалить (remove_danger): её
+    # можно задевать без штрафа, она рисуется штриховкой. Остальные 2 —
+    # обычные препятствия: наезд на них штрафует −20% качества.
+    if danger_zones:
+        z = rng.choice(danger_zones)
         actions.append({"type": "remove_danger", "x": z[0], "y": z[1]})
 
     return {
@@ -1262,10 +1274,10 @@ def _generate_level_2(geom: WorldGeom, rng: random.Random) -> dict:
 # ── Генератор уровня 3 (бывший L1 «Ознакомительный») ──────────────────────
 
 def _generate_level_3(geom: WorldGeom, rng: random.Random) -> dict:
-    """3 waypoints на сетке 50×50, курсы кратны 45°. Эталонная траектория
+    """4 waypoints на сетке 50×50, курсы кратны 45°. Эталонная траектория
     из прямых движений и поворотов на месте — отклонение учитывается
     в точности. Старт генерируется случайно (_random_start_xy)."""
-    n_waypoints = 3
+    n_waypoints = 4
     s_x, s_y = _random_start_xy(rng)
     geom = dataclasses.replace(geom, start_x=s_x, start_y=s_y)
     desc_start_x = _snap_to_grid(geom.start_x)
@@ -1363,33 +1375,34 @@ def _generate_level_5(geom: WorldGeom, rng: random.Random) -> dict:
     # Опасные зоны: 2 «основных» (10 и 20 см) + 4 «фланговых»
     # слева/справа траектории (10-20 см). Итого 6 зон.
     clearance = geom.safety_margin_cm + max(geom.robot_w_cm, geom.robot_l_cm) / 2.0
-    zones_r10 = _place_danger_zones(
+    # Каждый вызов получает уже размещённые зоны в `existing` — иначе
+    # зоны разных вызовов могли бы пересекаться друг с другом.
+    zones: list[list[float]] = []
+    zones += _place_danger_zones(
         1, traj["full_path"], geom, rng,
-        zone_radius_cm=10.0, clearance_cm=clearance)
-    zones_r20 = _place_danger_zones(
+        zone_radius_cm=10.0, clearance_cm=clearance, existing=zones)
+    zones += _place_danger_zones(
         1, traj["full_path"], geom, rng,
-        zone_radius_cm=20.0, clearance_cm=clearance)
+        zone_radius_cm=20.0, clearance_cm=clearance, existing=zones)
     # 4 фланговых: каждая ставится случайно вдоль траектории; функция
     # _place_danger_zones отступает перпендикулярно от ломаной, отбраковывая
     # позиции, нарушающие safety_margin. На дефолте получаем 2 слева
     # и 2 справа (направление перпендикуляра выбирается случайно внутри
-    # функции). Радиусы — рандомные из 10/15/20.
-    flank_zones: list[list[float]] = []
-    for r in (10.0, 15.0, 15.0, 20.0):
-        zs = _place_danger_zones(
+    # функции). Радиусы кратны 10: 10/20/20/30.
+    for r in (10.0, 20.0, 20.0, 30.0):
+        zones += _place_danger_zones(
             1, traj["full_path"], geom, rng,
             zone_radius_cm=r, clearance_cm=clearance,
-            max_extra_cm=15.0)
-        flank_zones.extend(zs)
-    zones = zones_r10 + zones_r20 + flank_zones
+            max_extra_cm=15.0, existing=zones)
 
     # Действие «установить зону внимания» — ровно одна, и ставится на
     # ФИНАЛЬНУЮ waypoint-точку маршрута (как завершение задания L3).
     actions: list[dict] = []
     if traj["waypoints"]:
         ax, ay = traj["waypoints"][-1]
+        # Радиус — фиксированный 20 см (см. L2).
         actions.append({"type": "place_attention",
-                         "x": float(ax), "y": float(ay), "radius": 15.0})
+                         "x": float(ax), "y": float(ay), "radius": 20.0})
 
     return {
         "level":            5,
@@ -1415,10 +1428,10 @@ def _format_description(level: int, waypoints: list[list[float]],
                         actions: list[dict],
                         start_x: float = 0.0, start_y: float = 0.0,
                         danger_zones: list = None) -> str:
-    """Описание миссии. Для L1 (инспектор) — компактный шаблон без
-    счётчика «N шт.» и с упором на «прохождение контрольных точек»
-    (траектория не оценивается). Для L2-5 — обычный шаблон с числом
-    точек/зон и «прохождением траектории»."""
+    """Описание миссии. Для L1 — компактный шаблон без счётчика «N шт.»
+    и с упором на «прохождение контрольных точек» (траектория не
+    оценивается). Для L2-5 — обычный шаблон с числом точек/зон и
+    «прохождением траектории»."""
     # Чистый шаблон без счётчиков «(N шт.)» используется на L1, L3, L4.
     # L2 и L5 — с количеством (для них actions/зон много, count помогает).
     clean = level in (1, 3, 4)
@@ -1435,36 +1448,51 @@ def _format_description(level: int, waypoints: list[list[float]],
     remove_actions = [a for a in actions
                       if a.get("type") in ("remove_danger", "remove_attention")]
     if place_actions:
+        # Радиус у всех зон внимания одинаковый (20 см) — показываем один
+        # раз. Допуск ±5 см именно по радиусу, вне его — штраф −5%.
         zs = ", ".join(f"({int(round(a['x']))}, {int(round(a['y']))})"
                        for a in place_actions)
-        parts.append(f"📌 Установите зоны внимания: {zs}.")
-    if remove_actions:
-        d_count = sum(1 for a in remove_actions if a["type"] == "remove_danger")
-        a_count = sum(1 for a in remove_actions if a["type"] == "remove_attention")
-        if d_count:
-            parts.append(f"❌ Удалите все опасные зоны ({d_count} шт).")
-        if a_count:
-            parts.append(f"❌ Удалите зоны внимания ({a_count} шт).")
+        req_r = int(round(place_actions[0].get("radius", 20)))
+        parts.append(
+            f"📌 Установите зоны внимания: {zs}. "
+            f"Радиус — {req_r} см ±5 см, иначе −5% качества.")
+    # Опасные зоны делим на две группы: те, что нужно УДАЛИТЬ (есть
+    # парный remove_danger — задевать можно, штрафа нет) и те, что нужно
+    # ОБХОДИТЬ (наезд −20% качества).
+    remove_danger_xy = {(int(round(a["x"])), int(round(a["y"])))
+                        for a in remove_actions if a["type"] == "remove_danger"}
     if danger_zones:
-        zs = ", ".join(f"({int(round(z[0]))}, {int(round(z[1]))})" for z in danger_zones)
-        if clean:
-            parts.append(f"⚠ Опасные зоны на карте: {zs}. Не задевайте.")
-        else:
+        to_remove = [z for z in danger_zones
+                     if (int(round(z[0])), int(round(z[1]))) in remove_danger_xy]
+        to_avoid = [z for z in danger_zones
+                    if (int(round(z[0])), int(round(z[1]))) not in remove_danger_xy]
+        if to_remove:
+            zs = ", ".join(f"({int(round(z[0]))}, {int(round(z[1]))})"
+                           for z in to_remove)
             parts.append(
-                f"⚠ Опасные зоны на карте ({len(danger_zones)} шт.): {zs}. "
-                f"Не задевайте.")
+                f"❌ Удалите опасные зоны: {zs}. Заезжайте внутрь и снимайте.")
+        if to_avoid:
+            zs = ", ".join(f"({int(round(z[0]))}, {int(round(z[1]))})"
+                           for z in to_avoid)
+            parts.append(f"⚠ Не задевайте опасные зоны: {zs}.")
+    a_count = sum(1 for a in remove_actions if a["type"] == "remove_attention")
+    if a_count:
+        parts.append(f"❌ Удалите зоны внимания ({a_count} шт).")
     # ⭐-строка зависит от уровня: чётко формулируем что оценивается.
     if level == 1:
-        # L1 (инспектор): только посещение точек, путь свободный.
+        # L1: только посещение точек, путь свободный.
         parts.append(
             "⭐ За правильное прохождение контрольных точек вы получите звёзды.")
     elif level == 2:
-        # L2 (инспектор): точки + установка attention + удаление опасных.
-        # Путь свободный, но каждый наезд на опасную зону −5% точности.
+        # L2: точки + установка attention + удаление ОДНОЙ опасной зоны.
+        # Путь свободный; наезд на опасную зону, которую удалять не нужно,
+        # снижает качество на 20%.
         parts.append(
-            "⭐ За правильное прохождение контрольных точек, установку зон "
-            "внимания и удаление всех опасных зон вы получите звёзды. "
-            "Каждый наезд на опасную зону снижает точность на 5%.")
+            "⭐ Звёзды — за контрольные точки, установку зон внимания и "
+            "удаление нужной опасной зоны. В опасную зону, которую нужно "
+            "удалить, заезжать можно — за это штрафа нет. Наезд на опасную "
+            "зону, которую удалять не нужно, снижает качество на 20%. "
+            "Повторный наезд на свою установленную зону внимания — тоже −20%.")
     elif level == 3:
         # L3 (базовый): базовые звёзды за точки, бонус за точность траектории.
         parts.append(
@@ -1489,6 +1517,8 @@ def _format_description(level: int, waypoints: list[list[float]],
         parts.append(
             "⭐ За правильно выполненное задание и прохождение траектории "
             "вы получите звёзды.")
+    # Универсальное предупреждение для всех уровней: подсказка штрафует.
+    parts.append("💡 Каждая использованная подсказка снижает качество на 20%.")
     return "\n".join(parts)
 
 
