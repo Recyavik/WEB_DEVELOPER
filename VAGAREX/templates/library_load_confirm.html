@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 
-{% block title %}VEGAREX — Загрузка маршрута{% endblock %}
+{% block title %}VEGAREX — Восстановление маршрута{% endblock %}
 
 {% block content %}
 <div class="library-layout">
 
   <section class="card">
     <div class="card__title-row">
-      <h3 class="card__title">📥 Загрузка маршрута</h3>
+      <h3 class="card__title">↻ Восстановление маршрута</h3>
       <a href="/library" class="btn btn--xs">← к списку</a>
     </div>
 
@@ -42,11 +42,11 @@
 
       <div class="settings-actions" style="margin-top:1rem">
         <button type="submit" class="btn btn--primary"
-                title="Сохранить текущий код и загрузить выбранный маршрут">📥 Загрузить</button>
+                title="Сохранить текущий код и восстановить выбранный маршрут">↻ Восстановить</button>
         <button type="submit" class="btn btn--sm"
                 onclick="document.querySelector('input[name=save_title]').value=''"
-                title="Загрузить выбранный маршрут БЕЗ сохранения текущего кода (текущее будет потеряно)">
-          Загрузить БЕЗ сохранения
+                title="Восстановить выбранный маршрут БЕЗ сохранения текущего кода (текущее будет потеряно)">
+          Восстановить БЕЗ сохранения
         </button>
         <a href="/library" class="btn btn--sm">Отмена</a>
       </div>
@@ -56,7 +56,7 @@
       <input type="hidden" name="current_code" value="">
       <div class="settings-actions" style="margin-top:1rem">
         <button type="submit" class="btn btn--primary"
-                title="Загрузить выбранный маршрут в редактор кода">📥 Загрузить</button>
+                title="Восстановить выбранный маршрут — код в редактор, обстановка на поле">↻ Восстановить</button>
         <a href="/library" class="btn btn--sm">Отмена</a>
       </div>
       {% endif %}

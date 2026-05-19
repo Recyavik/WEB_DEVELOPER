@@ -1860,6 +1860,9 @@ body { padding-bottom: 22px; }
 .level-card__desc { font-size: 0.75rem; color: var(--text-dim);
                     line-height: 1.4; margin: 0; }
 
+.level-card__criteria { font-size: 0.75rem; color: var(--text-dim);
+                    line-height: 1.4; margin: 0.45rem 0 0; }
+
 .generate-actions {
   margin-top: 0.6rem; padding-top: 0.5rem;
   border-top: 1px solid var(--border);

@@ -31,14 +31,17 @@
     {% endif %}
 
     <div class="library-detail__actions">
-      <a href="/library/{{ kind }}/{{ route.id }}/load" class="btn btn--primary">📥 Загрузить себе</a>
-      {% if kind == "published" %}
-      <a href="/library/publish/new?from={{ route.id }}" class="btn">↗ Создать форк</a>
+      <p class="hint" style="margin:0 0 .4rem">
+        Загрузить маршрут в редактор можно на странице «Управление» —
+        кнопка 📂 у редактора кода.
+      </p>
+      {% if kind == "saved" %}
+      <a href="/library/publish/new?from_saved={{ route.id }}" class="btn btn--primary">📤 Опубликовать</a>
       {% endif %}
       {% if is_owner %}
       <form method="POST" action="/library/{{ kind }}/{{ route.id }}/delete" style="display:inline"
             onsubmit="return confirm('Удалить «{{ route.title|e }}»?')">
-        <button type="submit" class="btn btn--danger" title="Удалить этот маршрут из библиотеки">✕ Удалить</button>
+        <button type="submit" class="btn btn--danger" title="Удалить этот маршрут из хранилища">✕ Удалить</button>
       </form>
       {% endif %}
     </div>

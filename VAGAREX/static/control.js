@@ -590,6 +590,113 @@
     modal.hidden = false;
   }
 
+  // ── Пикер «📂 Загрузить» — маршруты из Хранилища ──────────────────────────
+  function _escHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  // Загрузка выбранного маршрута в живое окно: сервер применяет обстановку
+  // и возвращает код, клиент кладёт его в редактор (и в localStorage-черновик
+  // через событие input — код переживёт перезагрузку страницы).
+  async function _loadRoute(kind, id, title) {
+    if (!confirm('Загрузить «' + title + '»?\n\n'
+        + 'Текущий код в редакторе будет заменён. Если он нужен — '
+        + 'сначала сохраните его кнопкой 💾.')) return;
+    try {
+      const r = await fetch('/library/' + kind + '/' + id + '/load_inplace',
+                            { method: 'POST' });
+      if (!r.ok) {
+        const e = await r.json().catch(() => ({}));
+        if (e.error === 'mission_active')
+          logMsg('Нельзя загружать маршрут во время прохождения миссии.', 'warning');
+        else
+          logMsg('Не удалось загрузить маршрут.', 'error');
+        return;
+      }
+      const data = await r.json();
+      const ta = document.getElementById('python-code');
+      if (ta && typeof data.code === 'string') {
+        ta.value = data.code;
+        // input → подсветка + сохранение черновика в localStorage.
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      if (window.cmEditor && window.cmEditor.isReady()
+          && typeof data.code === 'string') {
+        window.cmEditor.setValue(data.code);
+      }
+      const m = document.getElementById('load-route-modal');
+      if (m) m.hidden = true;
+      logMsg('📂 Загружено: «' + title + '». Код в редакторе, '
+           + 'обстановка (старт и зоны) на поле.', 'success');
+    } catch (e) {
+      logMsg('Не удалось загрузить маршрут.', 'error');
+    }
+  }
+
+  function _renderRouteList(items, kind) {
+    if (!items.length) {
+      return '<p class="hint" style="padding:.6rem 0">Пусто.</p>';
+    }
+    return items.map(it => {
+      const meta = (kind === 'published')
+        ? ('👤 ' + _escHtml(it.author) + ' · 🧩 ' + it.cmd_count)
+        : ('🧩 ' + it.cmd_count + ' · 🕒 ' + _escHtml(it.when));
+      return '<button type="button" class="btn load-route-item" '
+           + 'data-kind="' + kind + '" data-id="' + it.id + '" '
+           + 'data-title="' + _escHtml(it.title) + '" '
+           + 'style="display:block;width:100%;text-align:left;margin:.25rem 0">'
+           + '<strong>' + _escHtml(it.title) + '</strong>'
+           + '<span class="hint" style="margin-left:.5rem">' + meta + '</span>'
+           + '</button>';
+    }).join('');
+  }
+
+  async function _openLoadRouteModal() {
+    let data;
+    try {
+      const r = await fetch('/library/routes.json');
+      data = await r.json();
+    } catch (e) {
+      logMsg('Не удалось получить список Хранилища.', 'error');
+      return;
+    }
+    let modal = document.getElementById('load-route-modal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'load-route-modal';
+      modal.className = 'warn-modal';
+      modal.innerHTML =
+        '<div class="warn-modal__panel" style="max-width:560px">'
+        + '<div class="warn-modal__header">'
+        +   '<span class="warn-modal__icon">📂</span>'
+        +   '<h3 class="warn-modal__title">Загрузить маршрут из Хранилища</h3>'
+        + '</div>'
+        + '<div class="warn-modal__body load-route-body"></div>'
+        + '<div class="warn-modal__footer">'
+        +   '<button type="button" class="btn warn-modal__close">Отмена</button>'
+        + '</div></div>';
+      document.body.appendChild(modal);
+      modal.querySelector('.warn-modal__close')
+           .addEventListener('click', () => { modal.hidden = true; });
+      modal.addEventListener('mousedown', (e) => {
+        if (e.target === modal) modal.hidden = true;
+      });
+      // Делегирование клика по строке маршрута.
+      modal.querySelector('.load-route-body').addEventListener('click', (e) => {
+        const item = e.target.closest('.load-route-item');
+        if (!item) return;
+        _loadRoute(item.dataset.kind, item.dataset.id, item.dataset.title);
+      });
+    }
+    modal.querySelector('.load-route-body').innerHTML =
+        '<h4 style="margin:.2rem 0 .3rem">💾 Мои сохранения</h4>'
+      + _renderRouteList(data.saved || [], 'saved')
+      + '<h4 style="margin:.9rem 0 .3rem">🌐 Опубликованные</h4>'
+      + _renderRouteList(data.published || [], 'published');
+    modal.hidden = false;
+  }
+
   // ── Подсветка Python-кода (комментарии — зеленым) ─────────────────────────
   function escHtmlCode(s) {
     return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -2363,6 +2470,12 @@
     const btnFinalize = document.getElementById('btn-mission-finalize');
     if (btnFinalize) {
       btnFinalize.addEventListener('click', _finalizeMission);
+    }
+
+    // «📂 Загрузить» — пикер маршрутов из Хранилища (свои + опубликованные).
+    const btnLoadRoute = document.getElementById('btn-load-route');
+    if (btnLoadRoute) {
+      btnLoadRoute.addEventListener('click', _openLoadRouteModal);
     }
 
     // Голосовое управление

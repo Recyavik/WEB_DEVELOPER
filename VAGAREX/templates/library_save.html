@@ -12,15 +12,14 @@
     </div>
     <p class="hint">
       Это личный маршрут — видите только вы. Можно потом загрузить
-      обратно или опубликовать в общую библиотеку.
+      обратно или опубликовать в общее хранилище.
     </p>
 
-    {% if cmd_count == 0 %}
-    <div class="auth-error" style="margin-top:1rem">
+    <div id="save-empty-error" class="auth-error" style="margin-top:1rem;
+         {% if cmd_count != 0 %}display:none{% endif %}">
       В вашей программе нет ни одной команды. Сначала наберите программу
       на главной кнопками управления.
     </div>
-    {% endif %}
 
     <form method="POST" action="/library/save" class="settings-form" style="margin-top:1rem">
       <div class="settings-grid">
@@ -37,10 +36,10 @@
       <input type="hidden" name="code" id="save-code">
 
       <div class="settings-actions">
-        <button type="submit" class="btn btn--primary"
+        <button type="submit" class="btn btn--primary" id="save-submit-btn"
                 {% if cmd_count == 0 %}disabled{% endif %}
-                title="Сохранить текущий маршрут в личной библиотеке">
-          💾 Сохранить ({{ cmd_count }} команд)
+                title="Сохранить текущий маршрут в личном хранилище">
+          💾 Сохранить (<span id="save-cmd-count">{{ cmd_count }}</span> команд)
         </button>
         <a href="/" class="btn btn--sm">Отмена</a>
       </div>
@@ -55,10 +54,46 @@
 </div>
 
 <script>
-  document.querySelector('form[action="/library/save"]').addEventListener('submit', () => {
+  (function () {
     const preview = document.getElementById('save-code-preview');
     const hidden  = document.getElementById('save-code');
-    if (preview && hidden) hidden.value = preview.value;
-  });
+    const btn     = document.getElementById('save-submit-btn');
+    const countEl = document.getElementById('save-cmd-count');
+    const errBox  = document.getElementById('save-empty-error');
+    const form    = document.querySelector('form[action="/library/save"]');
+
+    // Несохранённые правки кода живут в localStorage редактора. Серверный
+    // _program_text() их не знает — программу могли набрать, но не
+    // применить (▶). Берём черновик как источник истины для сохранения.
+    let draft = '';
+    try { draft = localStorage.getItem('vegarex.code_draft') || ''; } catch (e) {}
+    if (preview && draft.trim()
+        && draft.trim() !== (preview.value || '').trim()) {
+      preview.value = draft;
+    }
+
+    // Счёт команд робота (robot.X(...)), служебный load_danger_zones — не команда.
+    const CALL_RE = /^\s*robot\.(\w+)\s*\(/;
+    function countCmds(text) {
+      let n = 0;
+      for (const line of (text || '').split('\n')) {
+        const m = CALL_RE.exec(line);
+        if (m && m[1] !== 'load_danger_zones') n++;
+      }
+      return n;
+    }
+    function refresh() {
+      const n = preview ? countCmds(preview.value) : 0;
+      if (countEl) countEl.textContent = n;
+      if (btn)     btn.disabled = (n === 0);
+      if (errBox)  errBox.style.display = (n === 0) ? '' : 'none';
+    }
+    if (preview) preview.addEventListener('input', refresh);
+    refresh();
+
+    if (form) form.addEventListener('submit', () => {
+      if (preview && hidden) hidden.value = preview.value;
+    });
+  })();
 </script>
 {% endblock %}

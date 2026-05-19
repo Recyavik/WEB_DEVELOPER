@@ -11,38 +11,43 @@
       <a href="/library" class="btn btn--xs">← к списку</a>
     </div>
     <p class="hint">
-      Сейчас вы публикуете программу, которая лежит у вас в текстовом поле «Python код» на главной.
-      Дайте ей короткое название и опишите что робот делает.
+      {% if from_saved %}
+      Вы публикуете сохранённый маршрут. Другие пользователи смогут
+      загрузить его себе. Уточните название и описание.
+      {% else %}
+      Вы публикуете программу из редактора кода. Дайте ей короткое
+      название и опишите, что робот делает.
+      {% endif %}
     </p>
 
-    {% if cmd_count == 0 %}
-    <div class="auth-error" style="margin-top:1rem">
+    <div id="publish-empty-error" class="auth-error" style="margin-top:1rem;
+         {% if cmd_count != 0 %}display:none{% endif %}">
       В вашей программе сейчас нет ни одной команды. Сначала наберите программу
       кнопками управления на главной странице, потом возвращайтесь сюда.
     </div>
-    {% endif %}
 
     <form method="POST" action="/library/publish" class="settings-form" style="margin-top:1rem">
       <div class="settings-grid">
         <label class="settings-label">Название</label>
         <input class="settings-input" type="text" name="title"
                maxlength="120" required minlength="3"
+               value="{{ pref_title|default('', true) }}"
                placeholder="Например: Объезд квадрата">
 
         <label class="settings-label">Описание</label>
         <textarea class="settings-input" name="description" rows="4"
                   maxlength="2000"
-                  placeholder="Что делает робот, какие настройки нужны..."></textarea>
+                  placeholder="Что делает робот, какие настройки нужны...">{{ pref_desc|default('', true) }}</textarea>
       </div>
 
       <input type="hidden" name="parent_id" value="{{ parent_id }}">
       <input type="hidden" name="code" id="publish-code">
 
       <div class="settings-actions">
-        <button type="submit" class="btn btn--primary"
+        <button type="submit" class="btn btn--primary" id="publish-submit-btn"
                 {% if cmd_count == 0 %}disabled{% endif %}
                 title="Опубликовать текущий маршрут — другие пользователи смогут его загрузить">
-          📤 Опубликовать ({{ cmd_count }} команд)
+          📤 Опубликовать (<span id="publish-cmd-count">{{ cmd_count }}</span> команд)
         </button>
         <a href="/" class="btn btn--sm">Отмена</a>
       </div>
@@ -58,11 +63,48 @@
 </div>
 
 <script>
-  // Перед отправкой формы — копируем содержимое preview-textarea в hidden input
-  document.querySelector('form[action="/library/publish"]').addEventListener('submit', (e) => {
+  (function () {
     const preview = document.getElementById('publish-code-preview');
     const hidden  = document.getElementById('publish-code');
-    if (preview && hidden) hidden.value = preview.value;
-  });
+    const btn     = document.getElementById('publish-submit-btn');
+    const countEl = document.getElementById('publish-cmd-count');
+    const errBox  = document.getElementById('publish-empty-error');
+    const form    = document.querySelector('form[action="/library/publish"]');
+
+    {% if not from_saved %}
+    // Публикация из редактора: несохранённые правки кода живут в
+    // localStorage — берём их как источник истины (программу могли
+    // набрать, но не применить ▶). При публикации сохранённого маршрута
+    // (from_saved) код приходит из самого маршрута — черновик не трогаем.
+    let draft = '';
+    try { draft = localStorage.getItem('vegarex.code_draft') || ''; } catch (e) {}
+    if (preview && draft.trim()
+        && draft.trim() !== (preview.value || '').trim()) {
+      preview.value = draft;
+    }
+    {% endif %}
+
+    const CALL_RE = /^\s*robot\.(\w+)\s*\(/;
+    function countCmds(text) {
+      let n = 0;
+      for (const line of (text || '').split('\n')) {
+        const m = CALL_RE.exec(line);
+        if (m && m[1] !== 'load_danger_zones') n++;
+      }
+      return n;
+    }
+    function refresh() {
+      const n = preview ? countCmds(preview.value) : 0;
+      if (countEl) countEl.textContent = n;
+      if (btn)     btn.disabled = (n === 0);
+      if (errBox)  errBox.style.display = (n === 0) ? '' : 'none';
+    }
+    if (preview) preview.addEventListener('input', refresh);
+    refresh();
+
+    if (form) form.addEventListener('submit', () => {
+      if (preview && hidden) hidden.value = preview.value;
+    });
+  })();
 </script>
 {% endblock %}

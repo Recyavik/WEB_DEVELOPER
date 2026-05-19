@@ -916,6 +916,17 @@ async def missions_save_custom(request: Request,
     if not waypoints:
         return JSONResponse({"error": "no_trajectory"})
 
+    # Финиш маршрута = ФАКТИЧЕСКИЙ конец траектории (path[-1]). Keypoints
+    # из манёвров могут не дотянуться до реального конца: последний
+    # манёвр-goto идёт через автопилот и не пишет _traj_segments, а
+    # манёвры после goto начинают сегмент уже из goto-точки. Без этой
+    # коррекции маркер «финиш» вставал не на конец движения. Гарантируем:
+    # последний waypoint совпадает с конечной точкой робота.
+    true_end = path[-1]
+    if _math.hypot(waypoints[-1][0] - true_end[0],
+                   waypoints[-1][1] - true_end[1]) > 3.0:
+        waypoints.append([round(true_end[0], 1), round(true_end[1], 1)])
+
     # Зоны: красные на поле — pre-placed обстановка («не задевать»);
     # жёлтые — обязательные действия «установить зону внимания».
     danger_zones = []
@@ -1580,13 +1591,21 @@ async def api_session_path(session_id: int, db: Session = Depends(get_db)):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Библиотека маршрутов: свои сохраненные + опубликованные другими
+# Хранилище маршрутов: свои сохраненные + опубликованные другими
 # ═══════════════════════════════════════════════════════════════════════════════
 
+_ROBOT_CALL_RE = re.compile(r"^\s*robot\.(\w+)\s*\(")
+
+
 def _count_cmds_in_text(text: str) -> int:
-    """Считает CMD-маркеры в тексте программы."""
-    from session import UserSession
-    return sum(1 for line in text.split("\n") if UserSession._CMD_MARKER.match(line))
+    """Считает команды робота (`robot.X(...)`) в тексте программы.
+    Служебный `robot.load_danger_zones` — автоблок обстановки, не команда."""
+    n = 0
+    for line in (text or "").split("\n"):
+        m = _ROBOT_CALL_RE.match(line)
+        if m and m.group(1) != "load_danger_zones":
+            n += 1
+    return n
 
 
 @app.get("/library", response_class=HTMLResponse)
@@ -1619,7 +1638,8 @@ async def library_published_detail(route_id: int, request: Request,
         "current_user": current_user,
         "route":        route,
         "kind":         "published",
-        "is_owner":     (route.author_id == current_user.id) or current_user.is_admin,
+        # Удалять опубликованный маршрут может только автор.
+        "is_owner":     route.author_id == current_user.id,
     })
 
 
@@ -1645,7 +1665,8 @@ async def library_published_delete(route_id: int,
                                     current_user: User = Depends(require_user),
                                     db: Session = Depends(get_db)):
     route = db.query(PublishedRoute).filter(PublishedRoute.id == route_id).first()
-    if route and (route.author_id == current_user.id or current_user.is_admin):
+    # Удалять опубликованный маршрут может ТОЛЬКО его автор.
+    if route and route.author_id == current_user.id:
         db.delete(route); db.commit()
     return RedirectResponse("/library", status_code=303)
 
@@ -1669,10 +1690,11 @@ async def library_save_form(request: Request,
                              current_user: User = Depends(require_user),
                              db: Session = Depends(get_db)):
     sess = await get_or_create_session(current_user.id, db)
+    code = sess._program_text()
     return templates.TemplateResponse(request, "library_save.html", {
         "current_user": current_user,
-        "code":         sess._program_text(),
-        "cmd_count":    len(sess._program),
+        "code":         code,
+        "cmd_count":    _count_cmds_in_text(code),
     })
 
 
@@ -1704,12 +1726,31 @@ async def library_save_submit(
 async def library_publish_form(request: Request,
                                 current_user: User = Depends(require_user),
                                 db: Session = Depends(get_db)):
-    sess = await get_or_create_session(current_user.id, db)
+    """Публикация маршрута. Публикуем СОХРАНЁННЫЙ маршрут (?from_saved=ID) —
+    его код и данные подставляются в форму. Параметр ?from=ID — форк
+    опубликованного (parent_id)."""
+    from_saved = request.query_params.get("from_saved", "")
+    pref_title = pref_desc = ""
+    if from_saved.isdigit():
+        saved = (db.query(SavedRoute)
+                   .filter(SavedRoute.id == int(from_saved))
+                   .filter(SavedRoute.owner_id == current_user.id).first())
+        if saved is None:
+            return RedirectResponse("/library", status_code=303)
+        code       = saved.code
+        pref_title = saved.title
+        pref_desc  = saved.description or ""
+    else:
+        sess = await get_or_create_session(current_user.id, db)
+        code = sess._program_text()
     return templates.TemplateResponse(request, "library_publish.html", {
         "current_user": current_user,
-        "code":         sess._program_text(),
-        "cmd_count":    len(sess._program),
+        "code":         code,
+        "cmd_count":    _count_cmds_in_text(code),
         "parent_id":    request.query_params.get("from", ""),
+        "pref_title":   pref_title,
+        "pref_desc":    pref_desc,
+        "from_saved":   from_saved if from_saved.isdigit() else "",
     })
 
 
@@ -1753,6 +1794,48 @@ def _fetch_route(kind: str, route_id: int, user_id: int, db: Session):
     if kind == "published":
         return db.query(PublishedRoute).filter(PublishedRoute.id == route_id).first()
     return None
+
+
+@app.get("/library/routes.json")
+async def library_routes_json(current_user: User = Depends(require_user),
+                              db: Session = Depends(get_db)):
+    """Список маршрутов для пикера «📂 Загрузить» в окне Управления:
+    личные сохранения + опубликованные."""
+    saved = (db.query(SavedRoute)
+               .filter(SavedRoute.owner_id == current_user.id)
+               .order_by(SavedRoute.updated_at.desc()).all())
+    public = (db.query(PublishedRoute)
+                .order_by(PublishedRoute.created_at.desc()).limit(200).all())
+    return JSONResponse({
+        "saved": [{"id": r.id, "title": r.title, "cmd_count": r.cmd_count,
+                   "when": r.updated_at.strftime("%Y-%m-%d %H:%M")}
+                  for r in saved],
+        "published": [{"id": r.id, "title": r.title, "cmd_count": r.cmd_count,
+                       "author": (r.author.username if r.author else "удалён")}
+                      for r in public],
+    })
+
+
+@app.post("/library/{kind}/{route_id}/load_inplace")
+async def library_load_inplace(kind: str, route_id: int,
+                               current_user: User = Depends(require_user),
+                               db: Session = Depends(get_db)):
+    """Загрузка маршрута в живом окне Управления (fetch, без редиректа).
+    Применяет обстановку из кода (load_published_code → _run_reset), а
+    сам текст кода возвращает клиенту — он подставит его в редактор."""
+    if kind not in ("saved", "published"):
+        return JSONResponse({"error": "bad kind"}, status_code=400)
+    route = _fetch_route(kind, route_id, current_user.id, db)
+    if not route:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    sess = await get_or_create_session(current_user.id, db)
+    if sess._mission is not None:
+        return JSONResponse({"error": "mission_active"}, status_code=409)
+    label = f"«{route.title}»"
+    if kind == "published" and route.author and route.author.username:
+        label += f" от {route.author.username}"
+    await sess.load_published_code(route.code, source_label=label)
+    return JSONResponse({"ok": True, "code": route.code, "title": route.title})
 
 
 @app.get("/library/{kind}/{route_id}/load", response_class=HTMLResponse)

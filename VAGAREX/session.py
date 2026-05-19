@@ -4381,20 +4381,26 @@ class UserSession:
     # напрямую через robot_api.run_user_python — никакой обратной трансляции
     # текста в RobotCmd больше не нужно.
 
-    async def load_published_code(self, code: str, source_label: str = "опубликованный маршрут"):
-        """Загружает чужой опубликованный Python-код в textarea клиента.
-        Day 2: парсинг текста удалён — клиент видит код 1-в-1 и сам нажимает ▶.
-        `self._program` уже не используется как источник истины."""
+    async def load_published_code(self, code: str, source_label: str = "сохранение"):
+        """Загрузка маршрута из Хранилища: применяет ОБСТАНОВКУ из кода.
+
+        Код несёт в себе всё окружение: START_X/Y/HEADING, блок
+        DANGER_ZONES, строку OBSTACLES. `_run_reset(code_text=code)`
+        парсит их и расставляет — робот встаёт в стартовую точку, на
+        поле появляются опасные зоны автора.
+
+        Сам текст кода в редактор НЕ рассылается отсюда: пикер «Загрузить»
+        в окне Управления получает код в ответе fetch и подставляет его
+        в textarea сам (плюс в localStorage-черновик) — так код переживает
+        и перезагрузку страницы."""
         await self._do_stop()
         self._program = []  # legacy-список больше не несёт смысла
         self._last_python_code = code
-        await self.broadcast({
-            "type":  "program",
-            "lines": [],
-            "text":  code,
-        })
+        # Применяем обстановку из кода (старт + зоны + препятствия).
+        await self._run_reset(code_text=code)
         await self.push_message(
-            f"📥 Загружено: {source_label}. Можно отредактировать и нажать ▶.",
+            f"↻ Загружено: {source_label}. Старт и зоны расставлены — "
+            f"можно продолжать или нажать ▶ для прогона алгоритма.",
             "success")
         return True
 
