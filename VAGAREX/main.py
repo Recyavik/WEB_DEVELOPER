@@ -602,6 +602,19 @@ async def hardware_docs(request: Request,
     })
 
 
+@app.get("/api/status")
+async def api_status(current_user: User = Depends(require_user)):
+    """Лёгкий статус для бейджа «● Симулятор / Онлайн / Офлайн» в шапке.
+    Опрашивается badge.js с любой страницы раз в 3 сек."""
+    sess = SESSIONS.get(current_user.id)
+    if sess is None:
+        return JSONResponse({"simulated": False, "robot_online": False})
+    return JSONResponse({
+        "simulated":    bool(sess.cfg.simulation_mode),
+        "robot_online": bool(getattr(sess.robot, "connected", False)),
+    })
+
+
 @app.get("/about", response_class=HTMLResponse)
 async def about_page(request: Request,
                      current_user: User = Depends(require_user)):

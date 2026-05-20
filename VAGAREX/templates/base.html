@@ -75,5 +75,10 @@
 </footer>
 
 {% block scripts %}{% endblock %}
+
+{# Глобальное обновление индикатора в шапке («● Симулятор/Онлайн/Офлайн»).
+   Работает на ВСЕХ страницах: опрашивает /api/status раз в 3 сек.
+   На /index.html control.js дополнительно обновляет тот же бейдж по WS. #}
+<script src="/static/badge.js?v={{ robot_version }}"></script>
 </body>
 </html>
