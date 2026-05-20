@@ -1986,14 +1986,27 @@ async def launch_server_py():
         except Exception:
             in_docker = False
     if in_docker:
+        # Имя файла на хосте: путь /app/server.py — это монтированный
+        # том из docker-compose (см. .:/app). Файл уже у пользователя
+        # на диске рядом с docker-compose.yml.
+        host_hint = server_path.name
         return JSONResponse({
             "ok": False,
             "status": "docker_no_gui",
             "message": (
-                "VEGAREX запущен в Docker-контейнере — GUI-окно server.py "
-                "не может появиться на хосте (контейнер не видит рабочего "
-                "стола). Запустите вручную на хосте: "
-                f"python {server_path}"
+                "VEGAREX запущен в Docker — кнопка не может открыть GUI на "
+                "хосте (контейнер не видит рабочего стола Windows/macOS и "
+                "USB-портов).\n\n"
+                "Запустите server.py вручную на хосте:\n"
+                f"  python {host_hint}\n"
+                "(файл лежит рядом с docker-compose.yml — это та же копия, "
+                f"что у контейнера в {server_path})\n\n"
+                "В Настройках VEGAREX в поле «Адрес» используйте:\n"
+                "  ws://host.docker.internal:41235\n"
+                "(а не 127.0.0.1 — из контейнера это сам контейнер).\n"
+                "На Linux-Docker добавьте в docker-compose.yml:\n"
+                "  extra_hosts:\n"
+                "    - host.docker.internal:host-gateway"
             ),
         }, status_code=400)
 
