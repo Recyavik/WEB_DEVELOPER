@@ -1169,6 +1169,53 @@ body { padding-bottom: 22px; }
   gap: 0.3rem;
   align-items: center;
 }
+
+/* Шестерёнка скорости визуализации в шапке панели кода */
+.sim-speed-wrap { position: relative; display: inline-flex; }
+.sim-speed-wrap .btn {
+  display: inline-flex; align-items: baseline; gap: 0.18rem;
+  padding-left: 0.45rem; padding-right: 0.45rem;
+}
+.sim-speed__icon { font-size: 0.95rem; line-height: 1; }
+.sim-speed__label {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  min-width: 1.6rem;
+  text-align: left;
+}
+.sim-speed-wrap--active .sim-speed__label { color: var(--accent); }
+.sim-speed-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 30;
+  display: flex; flex-direction: column;
+  min-width: 4.2rem;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.35);
+  padding: 0.25rem;
+  gap: 0.15rem;
+}
+.sim-speed-menu[hidden] { display: none; }
+.sim-speed-menu__item {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.22rem 0.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: center;
+}
+.sim-speed-menu__item:hover { background: var(--bg-card); border-color: var(--border); }
+.sim-speed-menu__item--active {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-color: var(--accent);
+  color: var(--accent);
+}
 /* Описание поля Python-кода (над textarea) — мелкое, чтобы не отвлекало */
 .code-desc {
   font-size: 0.7rem;

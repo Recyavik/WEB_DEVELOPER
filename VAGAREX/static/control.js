@@ -21,6 +21,14 @@
       clearTimeout(reconnectTimer);
       logMsg('Соединение установлено.', 'info');
       updateRobotBadge(true);
+      // Применяем сохранённый множитель скорости визуализации (если он
+      // не 1×) — без этого после reconnect сервер откатится на 1×.
+      try {
+        const v = parseFloat(localStorage.getItem('vegarex.sim_speed') || '1');
+        if ([1, 1.5, 2, 4].includes(v) && v !== 1) {
+          ws.send(JSON.stringify({ type: 'set_sim_speed', value: v }));
+        }
+      } catch (_) {}
     };
 
     ws.onmessage = e => {
@@ -2207,6 +2215,82 @@
     }
     document.getElementById('btn-expand-python-code')?.addEventListener('click', openCodeModal);
     document.getElementById('btn-collapse-python-code')?.addEventListener('click', closeCodeModal);
+
+    // ── Шестерёнка скорости визуализации ──────────────────────────────
+    // Множитель применяется ТОЛЬКО к физике движения (см. session.py:
+    // update_physics масштабирует dt × sim_speed, _sim_sleep делит паузы
+    // между манёврами). Mission-таймер использует sim_clock — звёзды за
+    // скорость считаются по виртуальным секундам, 4× не даёт бонуса.
+    // Значение хранится в localStorage и при WS-reconnect присылается
+    // серверу в ws.onopen.
+    (function wireSimSpeed() {
+      const STORAGE_KEY = 'vegarex.sim_speed';
+      const VALID = [1, 1.5, 2, 4];
+      let current = parseFloat(localStorage.getItem(STORAGE_KEY) || '1');
+      if (!VALID.includes(current)) current = 1;
+
+      const labels = document.querySelectorAll('[data-sim-speed-label]');
+      const wraps  = document.querySelectorAll('.sim-speed-wrap');
+      const menus  = [
+        document.getElementById('sim-speed-menu'),
+        document.getElementById('sim-speed-menu-modal'),
+      ].filter(Boolean);
+      const triggers = [
+        document.getElementById('btn-sim-speed'),
+        document.getElementById('btn-modal-sim-speed'),
+      ].filter(Boolean);
+
+      const fmt = v => (Number.isInteger(v) ? v + '×' : v + '×');
+      const render = () => {
+        labels.forEach(el => el.textContent = fmt(current));
+        wraps.forEach(w => w.classList.toggle('sim-speed-wrap--active', current !== 1));
+        menus.forEach(m => {
+          m.querySelectorAll('.sim-speed-menu__item').forEach(it => {
+            const v = parseFloat(it.dataset.simSpeed);
+            it.classList.toggle('sim-speed-menu__item--active', v === current);
+          });
+        });
+      };
+      const closeAll = () => menus.forEach(m => m.hidden = true);
+
+      triggers.forEach((btn, i) => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const menu = menus[i];
+          if (!menu) return;
+          const wasHidden = menu.hidden;
+          closeAll();
+          menu.hidden = !wasHidden;
+        });
+      });
+      menus.forEach(menu => {
+        menu.addEventListener('click', (e) => {
+          const item = e.target.closest('[data-sim-speed]');
+          if (!item) return;
+          const v = parseFloat(item.dataset.simSpeed);
+          if (!VALID.includes(v)) return;
+          current = v;
+          try { localStorage.setItem(STORAGE_KEY, String(v)); } catch (_) {}
+          try {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'set_sim_speed', value: v }));
+            }
+          } catch (_) {}
+          render();
+          closeAll();
+        });
+      });
+      // Закрытие при клике вне попапа / по Esc.
+      document.addEventListener('click', (e) => {
+        if (e.target.closest('.sim-speed-wrap')) return;
+        closeAll();
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeAll();
+      });
+
+      render();
+    })();
 
     // ── Toggle «на весь экран» — растягиваем модалку на 100% × 100% viewport
     // (убираем padding 2rem и max-width 1200px). Браузерный хром сохраняется —

@@ -253,6 +253,26 @@ class UserSession:
         self._effective_start_y: Optional[float] = None
         self._effective_start_heading: Optional[float] = None
 
+        # Множитель скорости визуализации движения (шестерёнка в шапке
+        # панели кода). Применяется ТОЛЬКО к физике движения и паузам
+        # между манёврами — robot.sleep() пользовательского кода, светодиод
+        # и голос идут wall-clock. Допустимые значения: 1.0 / 1.5 / 2.0 / 4.0.
+        # Mission-таймер использует sim_clock — звёзды за скорость
+        # считаются по виртуальным секундам (4× не даёт бонуса).
+        self.sim_speed: float = 1.0
+        # Накопленные виртуальные секунды (advances by dt_real × sim_speed
+        # каждый тик update_physics). Используется run_check для измерения
+        # длительности прогона в sim-time.
+        self.sim_clock: float = 0.0
+
+    async def _sim_sleep(self, secs: float):
+        """asyncio.sleep, сокращённый множителем sim_speed.
+        Используется для пауз между манёврами (settle между шагами
+        K-turn, центрирование руля, перерыв в восьмёрке и т.п.), чтобы
+        вся хореография ускорялась пропорционально, а не «быстрое
+        движение + всегда-длинная пауза»."""
+        await asyncio.sleep(secs / max(0.1, self.sim_speed))
+
     # ── Жизненный цикл ─────────────────────────────────────────────────────────
 
     async def start(self):
@@ -458,7 +478,6 @@ class UserSession:
 
         finalize_hint=False — не дописывать «Жми 🏁» (прогон уже идёт в
         составе кнопки «Проверка», финал последует автоматически)."""
-        import time as _time
         from robot_api import run_user_python
         if self._mission is None:
             return False
@@ -471,9 +490,12 @@ class UserSession:
         # пустым — и следующая команда (кнопкой или руками) стёрла бы
         # весь набранный план миссии. Прогон не должен разрушать план.
         program_snapshot = list(self._program)
-        algo_start_t = _time.monotonic()
+        sim_start = self.sim_clock
         out = await run_user_python(self, code)
-        run_dur = _time.monotonic() - algo_start_t
+        # Sim-time: на 4× реальный прогон занимает 0.25× wall-clock, а
+        # sim_clock накапливает виртуальные секунды → ускорение не даёт
+        # бонусных звёзд за «скорость».
+        run_dur = self.sim_clock - sim_start
         self._program = program_snapshot
         if self._mission is not None:
             cumulative = (self._mission.last_algo_duration_sec or 0.0) + run_dur
@@ -511,11 +533,13 @@ class UserSession:
             return False
         m = self._mission
         m.reset_for_new_run()
-        algo_start_t = time.monotonic()
+        sim_start = self.sim_clock
         await self._run_program()
         while self._pending or self._executing is not None:
             await asyncio.sleep(0.1)
-        run_dur = time.monotonic() - algo_start_t
+        # Sim-time (см. комментарий в run_check_python) — звёзды за
+        # скорость считаются по виртуальным секундам.
+        run_dur = self.sim_clock - sim_start
         if self._mission is not None:
             cumulative = (self._mission.last_algo_duration_sec or 0.0) + run_dur
             self._mission.last_algo_duration_sec = round(cumulative, 2)
@@ -1171,7 +1195,7 @@ class UserSession:
                 await self.robot.set_angle(direction * STEER)
                 await self.robot.move(spd)
                 await self._wait_movement()
-                await asyncio.sleep(0.15)
+                await self._sim_sleep(0.15)
 
                 await self.push_message(f"Разворот {i+1}/{steps}: назад…", "info")
                 bwd_heading = (s.heading + 180) % 360
@@ -1183,7 +1207,7 @@ class UserSession:
                 await self.robot.move(-spd)
                 await self._wait_movement()
                 if i < steps - 1:
-                    await asyncio.sleep(0.15)
+                    await self._sim_sleep(0.15)
 
             # ── Фаза 2+3 итеративно — возврат в точку + коррекция курса ──
             for it in range(MAX_ITER):
@@ -1343,7 +1367,7 @@ class UserSession:
                 await self.robot.set_angle(direction * STEER)
                 await self.robot.move(spd)
                 await self._wait_movement()
-                await asyncio.sleep(0.1)
+                await self._sim_sleep(0.1)
             completed = True
         except asyncio.CancelledError:
             pass
@@ -1531,7 +1555,7 @@ class UserSession:
         try:
             await self.push_message("Восьмерка: дуга 1/2 (360°)…", "info")
             await self._arc_at_steer(direction * steer, 360.0, spd)
-            await asyncio.sleep(0.2)
+            await self._sim_sleep(0.2)
             await self.push_message("Восьмерка: дуга 2/2 (360°)…", "info")
             await self._arc_at_steer(-direction * steer, 360.0, spd)
         except asyncio.CancelledError:
@@ -1581,7 +1605,7 @@ class UserSession:
         cancelled      = False
         try:
             while sweep_abs < target_sweep_abs:
-                await asyncio.sleep(0.1)  # 10 Гц обновления руля
+                await self._sim_sleep(0.1)  # 10 Гц обновления руля
                 # Накопление развертки курса (модуль, без учета направления вращения)
                 d = (s.heading - prev_heading + 540.0) % 360.0 - 180.0
                 sweep_abs += abs(d)
@@ -1638,7 +1662,7 @@ class UserSession:
                     f"Объезд {side}: четверть {phase+1}/4 (руль {sign*max_steer:+.0f}°)",
                     "info")
                 await self._arc_at_steer(sign * max_steer, swing, spd)
-                await asyncio.sleep(0.05)
+                await self._sim_sleep(0.05)
         except asyncio.CancelledError:
             cancelled = True
         finally:
@@ -1965,7 +1989,7 @@ class UserSession:
                 steer = max(-max_steer, min(max_steer, err * GAIN))
                 s.steer = steer
                 await self.robot.set_angle(int(round(steer)))
-                await asyncio.sleep(0.05)
+                await self._sim_sleep(0.05)
         finally:
             s.speed     = 0.0
             s.steer     = 0.0
@@ -2330,14 +2354,14 @@ class UserSession:
                 steer = -max(-MAX, min(MAX, diff * STEER_GAIN))
             s.steer = steer
             await self.robot.set_angle(int(steer))
-            await asyncio.sleep(0.1)
+            await self._sim_sleep(0.1)
         # Останавливаем перед возможной фазой коррекции курса
         s.speed     = 0
         s.dist_left = 0
         s.steer     = 0.0
         await self.robot.move(0)
         await self.robot.set_servo_center()
-        await asyncio.sleep(0.15)
+        await self._sim_sleep(0.15)
 
     def _free_forward_cm(self, heading: float) -> float:
         """Сколько см робот может проехать в направлении `heading` до
@@ -4543,8 +4567,13 @@ class UserSession:
         while True:
             await asyncio.sleep(0.1)
             now = time.monotonic()
-            dt  = now - last
+            dt_real = now - last
             last = now
+            # sim_speed × — растягивает виртуальное dt: при 4× за один реальный
+            # тик 0.1 с физика проходит 0.4 «виртуальных» секунды → робот
+            # движется в 4 раза быстрее. sim_clock пишет mission-таймер.
+            dt = dt_real * self.sim_speed
+            self.sim_clock += dt
 
             s = self.robot_state
 

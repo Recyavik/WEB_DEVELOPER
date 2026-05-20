@@ -289,6 +289,18 @@
                   title="Упорядочить код: константы → функции (без дублей) → вызовы">🧹</button>
           <button id="btn-clear-python-code" class="btn btn--xs" title="Очистить код">✕</button>
           <button id="btn-expand-python-code" class="btn btn--xs" title="Развернуть редактор на весь экран">⛶</button>
+          <span class="sim-speed-wrap">
+            <button id="btn-sim-speed" class="btn btn--xs" type="button"
+                    title="Скорость визуализации движения (1× / 1.5× / 2× / 4×)">
+              <span class="sim-speed__icon">⚙</span><span class="sim-speed__label" data-sim-speed-label>1×</span>
+            </button>
+            <div id="sim-speed-menu" class="sim-speed-menu" hidden role="menu">
+              <button type="button" class="sim-speed-menu__item" data-sim-speed="1">1×</button>
+              <button type="button" class="sim-speed-menu__item" data-sim-speed="1.5">1.5×</button>
+              <button type="button" class="sim-speed-menu__item" data-sim-speed="2">2×</button>
+              <button type="button" class="sim-speed-menu__item" data-sim-speed="4">4×</button>
+            </div>
+          </span>
           <button id="btn-run-python-code" class="btn btn--xs btn--info btn--mode-action" title="Запустить код (или проверить миссию, если активна)" aria-label="Запустить код">▶</button>
         </div>
       </div>
@@ -330,6 +342,18 @@
           <button id="btn-modal-tidy"  class="btn btn--xs"
                   title="Упорядочить код: константы → функции (без дублей) → вызовы">🧹</button>
           <button id="btn-modal-clear" class="btn btn--xs" title="Очистить код">✕</button>
+          <span class="sim-speed-wrap">
+            <button id="btn-modal-sim-speed" class="btn btn--xs" type="button"
+                    title="Скорость визуализации движения (1× / 1.5× / 2× / 4×)">
+              <span class="sim-speed__icon">⚙</span><span class="sim-speed__label" data-sim-speed-label>1×</span>
+            </button>
+            <div id="sim-speed-menu-modal" class="sim-speed-menu" hidden role="menu">
+              <button type="button" class="sim-speed-menu__item" data-sim-speed="1">1×</button>
+              <button type="button" class="sim-speed-menu__item" data-sim-speed="1.5">1.5×</button>
+              <button type="button" class="sim-speed-menu__item" data-sim-speed="2">2×</button>
+              <button type="button" class="sim-speed-menu__item" data-sim-speed="4">4×</button>
+            </div>
+          </span>
           <button id="btn-modal-run"   class="btn btn--xs btn--info btn--mode-action" title="Запустить код" aria-label="Запустить код">▶</button>
           <button id="btn-modal-fullscreen" class="btn btn--xs"
                   title="Развернуть на весь экран (без браузерного хрома)" aria-label="Полный экран">⛶ Весь экран</button>

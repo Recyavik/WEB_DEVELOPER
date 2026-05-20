@@ -1991,6 +1991,20 @@ async def websocket_endpoint(ws: WebSocket):
                 sess._save_program()
                 await sess.push_program()
                 await sess.push_world()  # пнём клиента — пусть перерисует маркер
+            elif t == "set_sim_speed":
+                # Множитель скорости визуализации (шестерёнка в шапке кода).
+                # Допустимые значения: 1.0 / 1.5 / 2.0 / 4.0. Применяется
+                # к физике движения и паузам между манёврами (см.
+                # session._sim_sleep, update_physics). Сохраняется в
+                # localStorage браузера и присылается при каждом
+                # WS-подключении — серверного хранения не нужно.
+                try:
+                    val = float(data.get("value", 1.0))
+                except (TypeError, ValueError):
+                    val = 1.0
+                if val not in (1.0, 1.5, 2.0, 4.0):
+                    val = 1.0
+                sess.sim_speed = val
             elif t == "set_laser":
                 enabled = bool(data.get("enabled", True))
                 sess.cfg.laser_enabled = enabled
