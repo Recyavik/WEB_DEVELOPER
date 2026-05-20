@@ -275,6 +275,30 @@ class UserSession:
         # длительности прогона в sim-time.
         self.sim_clock: float = 0.0
 
+    async def _log_python_command(self, intent: str, raw_text: str,
+                                    success: bool = True) -> None:
+        """Записать команду Python-кода в историю сессии (CommandLog +
+        PathPoint). _dispatch уже логирует команды голос/кнопки; этот
+        метод вызывается из RobotProxy._run, чтобы вызовы robot.X() из
+        Python-программы тоже попадали в историю «Команд» и «Точек пути».
+        Не падает, если БД недоступна — просто пишет warning."""
+        if not self._db_session_id:
+            return
+        db = SessionLocal()
+        try:
+            db.add(CommandLog(session_id=self._db_session_id,
+                              raw_text=raw_text, intent=intent,
+                              success=bool(success)))
+            s = self.robot_state
+            db.add(PathPoint(session_id=self._db_session_id,
+                             x=s.x, y=s.y, heading=s.heading))
+            db.commit()
+        except Exception as e:
+            log.warning("[user %d] python command log failed: %s",
+                        self.user_id, e)
+        finally:
+            db.close()
+
     async def _sim_sleep(self, secs: float):
         """asyncio.sleep, сокращённый множителем sim_speed.
         Используется для пауз между манёврами (settle между шагами

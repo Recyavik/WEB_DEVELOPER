@@ -1916,6 +1916,93 @@ async def library_load_submit(kind: str, route_id: int,
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Запуск server.py (моста к 1Т REX) прямо из VEGAREX
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/launch_server")
+async def launch_server_py():
+    """Запустить server.py (мост браузер⇄ESP32) как отдельный процесс.
+
+    Файл server.py лежит в корне репозитория, рядом с папкой VAGAREX/.
+    Запускаем через текущий Python-интерпретатор, ОТСОЕДИНЁННЫМ процессом
+    (Windows: DETACHED_PROCESS; POSIX: start_new_session=True), чтобы он
+    выжил перезапуск VEGAREX и не сидел чайлдом FastAPI.
+
+    Перед запуском пингуем ws://127.0.0.1:41235 — если уже отвечает,
+    повторно не запускаем.
+    """
+    import sys
+    import subprocess
+    import socket
+    from pathlib import Path
+
+    # 1) Проверка: server.py уже запущен? Простой TCP-пинг порта 41235.
+    def _port_open(host: str, port: int, timeout: float = 0.3) -> bool:
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return True
+        except Exception:
+            return False
+
+    if _port_open("127.0.0.1", 41235):
+        return JSONResponse({
+            "ok": True,
+            "status": "already_running",
+            "message": "server.py уже запущен (порт 41235 отвечает).",
+        })
+
+    # 2) Найти server.py — это рядом с папкой VAGAREX/ в корне репозитория.
+    server_path = Path(__file__).parent.parent / "server.py"
+    if not server_path.is_file():
+        return JSONResponse({
+            "ok": False,
+            "status": "not_found",
+            "message": f"server.py не найден по пути {server_path}. "
+                       f"Положите файл в корень репозитория (рядом с папкой VAGAREX/).",
+        }, status_code=404)
+
+    # 3) Запустить отсоединённым процессом.
+    try:
+        kwargs = {
+            "cwd": str(server_path.parent),
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+            "stdin": subprocess.DEVNULL,
+            "close_fds": True,
+        }
+        if sys.platform == "win32":
+            DETACHED_PROCESS = 0x00000008
+            CREATE_NEW_PROCESS_GROUP = 0x00000200
+            kwargs["creationflags"] = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+        else:
+            kwargs["start_new_session"] = True
+
+        subprocess.Popen([sys.executable, str(server_path)], **kwargs)
+    except Exception as exc:
+        return JSONResponse({
+            "ok": False,
+            "status": "spawn_failed",
+            "message": f"Не удалось запустить: {exc}",
+        }, status_code=500)
+
+    # 4) Подождём пару секунд, проверим что порт поднялся.
+    import asyncio as _aio
+    await _aio.sleep(1.5)
+    if _port_open("127.0.0.1", 41235):
+        return JSONResponse({
+            "ok": True,
+            "status": "started",
+            "message": "server.py запущен. Откройте его окно и нажмите «Соединить».",
+        })
+    return JSONResponse({
+        "ok": True,
+        "status": "started_no_port",
+        "message": "Процесс запущен, но порт 41235 пока не отвечает. "
+                   "Проверьте окно server.py — возможно, требует ручного «Соединить».",
+    })
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Export кода под реальный 1Т REX (кнопка </> в редакторе)
 # ═══════════════════════════════════════════════════════════════════════════════
 

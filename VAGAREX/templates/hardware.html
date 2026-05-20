@@ -13,12 +13,22 @@
   .hw-page h3 { font-size: 1rem; color: var(--accent); margin-top: 0.9rem; }
   .hw-page h4 { font-size: 0.95rem; margin-top: 0.7rem; }
   .hw-page p, .hw-page li { line-height: 1.45; }
+  .hw-page ol, .hw-page ul {
+    padding-left: 1.6rem;
+    margin: 0.4rem 0;
+  }
+  .hw-page ol ul, .hw-page ul ul, .hw-page ol ol { margin: 0.3rem 0; }
+  .hw-page li { margin-bottom: 0.25rem; }
   .hw-page code { background: var(--bg-panel); padding: 0.1rem 0.3rem; border-radius: 3px; font-size: 0.88em; }
   .hw-page pre {
-    background: var(--bg-panel); border: 1px solid var(--border);
+    background: #0d1117; border: 1px solid var(--border);
     border-radius: 6px; padding: 0.7rem 0.9rem; overflow-x: auto;
-    font-size: 0.82rem; line-height: 1.45;
+    font-family: monospace; font-size: 0.82rem; line-height: 1.45;
+    color: #c9d1d9; white-space: pre; margin: 0.5rem 0;
   }
+  .hw-page pre .c { color: #7ee787; }   /* комментарии */
+  .hw-page pre .k { color: #ff7b72; }   /* keywords */
+  .hw-page pre .s { color: #a5d6ff; }   /* строки */
   .hw-page .note {
     background: color-mix(in srgb, var(--accent) 8%, transparent);
     border-left: 3px solid var(--accent);
@@ -179,32 +189,32 @@
 
   <h4>Шаги подключения</h4>
   <ol>
-    <li>Запусти <code>server.py</code> на компьютере (двойной клик или
+    <li>Запустите <code>server.py</code> на компьютере (двойной клик или
         <code>python server.py</code>). Откроется окно «Car Server».</li>
-    <li>В GUI выбери <strong>IP-адрес ПК</strong> (тот, к которому
-        подключится ESP32) и нажми <strong>«Соединить»</strong>.</li>
-    <li>Подключи робота:
+    <li>В GUI выберите <strong>IP-адрес ПК</strong> (тот, к которому
+        подключится ESP32) и нажмите <strong>«Соединить»</strong>.</li>
+    <li>Подключите робота:
       <ul>
-        <li><strong>WiFi:</strong> ESP32 загружен с прошивкой, знает SSID
-            твоей сети и IP-адрес ПК. Подключится сам, как только
+        <li><strong>WiFi:</strong> ESP32 загружен прошивкой, знает SSID
+            вашей сети и IP-адрес ПК. Подключится сам, как только
             <code>server.py</code> запущен. Признак — индикатор «Машинка»
             в GUI стал зелёным.</li>
         <li><strong>USB:</strong> кабель в USB-порт ПК. В GUI
-            <code>server.py</code> выбери COM-порт и при отправке команд
-            ставь <code>usb=true</code> (VEGAREX делает это автоматически,
+            <code>server.py</code> выберите COM-порт и при отправке команд
+            ставьте <code>usb=true</code> (VEGAREX делает это автоматически,
             если host начинается с <code>ws://</code>; для прямого USB —
             см. <code>server.py</code> GUI).</li>
       </ul>
     </li>
     <li>В VEGAREX → Настройки → <strong>Соединение с роботом</strong>:
       <ul>
-        <li>Сними галочку <strong>«Включить симулятор»</strong></li>
-        <li>В поле <strong>«Адрес»</strong> впиши <code>ws://127.0.0.1:41235</code>
+        <li>Снимите галочку <strong>«Включить симулятор»</strong>.</li>
+        <li>В поле <strong>«Адрес»</strong> впишите <code>ws://127.0.0.1:41235</code>
             (если <code>server.py</code> на этом же ПК) или адрес другого ПК
             с <code>server.py</code>.</li>
         <li>Поле <strong>«Порт»</strong> для WS-режима игнорируется
             (порт уже в URL), но должно быть валидным значением.</li>
-        <li>Жми <strong>«Сохранить»</strong> — соединение переустановится.</li>
+        <li>Нажмите <strong>«Сохранить»</strong> — соединение переустановится.</li>
       </ul>
     </li>
     <li>Готово. Все команды (кнопки, голос, Python-код) идут через мост на
@@ -223,19 +233,19 @@
     по WiFi. В Настройках:
   </p>
   <ul>
-    <li>Сними «Включить симулятор».</li>
-    <li>Адрес: <code>192.168.1.100</code> (IP робота в твоей сети) — БЕЗ <code>ws://</code>.</li>
+    <li>Снимите «Включить симулятор».</li>
+    <li>Адрес: <code>192.168.1.100</code> (IP робота в вашей сети) — БЕЗ <code>ws://</code>.</li>
     <li>Порт: <code>8765</code> по умолчанию.</li>
   </ul>
   <p>
     Команды идут как plain TCP, тот же словарь
     (<code>MOVE:N\n</code>, <code>ANGLE:N\n</code>, …).
-    Используется, если у тебя плата REX Board без прошивки моста ESP32.
+    Используется, если у вас плата REX Board без прошивки моста ESP32.
   </p>
 
   <h3 id="a-sim">2.3. Симулятор (без железа)</h3>
   <p>
-    Поставь галочку «Включить симулятор». Никакого <code>server.py</code> или
+    Поставьте галочку «Включить симулятор». Никакого <code>server.py</code> или
     робота не нужно. Виртуальная физика, голосовые команды, миссии — всё в
     браузере. Идеально для разработки алгоритмов до выезда на поле.
   </p>
@@ -272,8 +282,8 @@
   <p class="note">
     <strong>Подсказка по микрофону:</strong> Web Speech API в Chrome/Edge
     требует HTTPS для удалённого хостинга, но на <code>localhost</code> работает
-    без него. Если VEGAREX крутится на твоём ПК и слушаешь его в браузере на
-    том же ПК — голос работает без сертификатов.
+    без него. Если VEGAREX крутится на вашем ПК и вы слушаете его в браузере
+    на том же ПК — голос работает без сертификатов.
   </p>
 
   <h3 id="a-exported">3.2. Запуск экспортированного <code>.py</code></h3>
@@ -285,18 +295,18 @@
   </p>
 
   <ol>
-    <li>В редакторе нажми <strong><code>&lt;/&gt;</code></strong> — откроется
+    <li>В редакторе нажмите <strong><code>&lt;/&gt;</code></strong> — откроется
         модалка «Сборка кода для робота». Внутри готовый Python.</li>
-    <li>Нажми <strong>«⬇ Скачать .py»</strong> — файл сохранится с именем
+    <li>Нажмите <strong>«⬇ Скачать .py»</strong> — файл сохранится с именем
         <code>vegarex_program_YYYY-MM-DD.py</code>.</li>
-    <li>В скачанном файле найди внизу две строки:
-        <pre>robot = _LiveRobot()              # тест на ПК без железа
-# robot = _NetworkRobot()         # боевой режим через server.py</pre>
-        Закомментируй первую, раскомментируй вторую.</li>
-    <li>Установи зависимость:
+    <li>В скачанном файле найдите внизу две строки:
+        <pre>robot = _LiveRobot()              <span class="c"># тест на ПК без железа</span>
+<span class="c"># robot = _NetworkRobot()         # боевой режим через server.py</span></pre>
+        Закомментируйте первую, раскомментируйте вторую.</li>
+    <li>Установите зависимость:
         <pre>pip install websocket-client</pre></li>
-    <li>Запусти <code>server.py</code>, подключи робота (см. <a href="#a-bridge">§2.1</a>).</li>
-    <li>Запусти программу:
+    <li>Запустите <code>server.py</code>, подключите робота (см. <a href="#a-bridge">§2.1</a>).</li>
+    <li>Запустите программу:
         <pre>python vegarex_program_YYYY-MM-DD.py</pre>
     </li>
   </ol>
@@ -304,14 +314,14 @@
   <p>
     Программа подключится к <code>ws://127.0.0.1:41235</code> (адрес меняется
     в коде, константа <code>_NetworkBridge.BROWSER_WS_HOST</code>), пошлёт
-    команды на ESP32 и выполнит алгоритм. В консоли увидишь предупреждения о
+    команды на ESP32 и выполнит алгоритм. В консоли увидите предупреждения о
     зонах и итоговые сообщения.
   </p>
 
   <h3 id="a-zones-hw">3.3. Опасные зоны на поле</h3>
   <p>
     В симуляторе зоны — это объекты в браузере. На реальном поле — это
-    физические препятствия (коробки, стаканы, конусы), которые ты ставишь
+    физические препятствия (коробки, стаканы, конусы), которые вы ставите
     в известные координаты. Робот сам не «видит» их (только дальномером
     спереди), но при дед-рекoning'е знает свои координаты и проверяет
     позицию против списка зон.
@@ -319,7 +329,7 @@
 
   <h4>Как загрузить список зон</h4>
   <pre>DANGER_ZONES = [
-    (-151.0, -48.0, 25.0),   # (x, y, радиус) в см
+    (-151.0, -48.0, 25.0),   <span class="c"># (x, y, радиус) в см</span>
     (51.0,    61.0, 10.0),
 ]
 robot.load_danger_zones(DANGER_ZONES)</pre>
@@ -333,10 +343,10 @@ robot.load_danger_zones(DANGER_ZONES)</pre>
   </p>
 
   <h4>Удалить зону программно</h4>
-  <pre>robot.remove_zone_here()          # снять зону, в которой стоит робот
-robot.remove_zone(51, 61)         # снять конкретную</pre>
+  <pre>robot.remove_zone_here()          <span class="c"># снять зону, в которой стоит робот</span>
+robot.remove_zone(51, 61)         <span class="c"># снять конкретную</span></pre>
   <p>
-    Используется когда обучающийся ФИЗИЧЕСКИ убрал препятствие — после этого
+    Используется когда обучающийся физически убрал препятствие — после этого
     программа сможет проехать через эти координаты.
   </p>
 </section>
@@ -370,17 +380,17 @@ robot.remove_zone(51, 61)         # снять конкретную</pre>
     импортироваться и пройти до конца, не сломавшись.
   </p>
 
-  <pre>class _Bridge:
-    """Заглушка для теста кода на ПК БЕЗ робота."""
+  <pre><span class="k">class</span> _Bridge:
+    <span class="s">"""Заглушка для теста кода на ПК БЕЗ робота."""</span>
     x = 0.0
     y = 0.0
     heading = 0.0
 
-    def set_angle(self, deg): pass
-    def move(self, pct):      pass
-    def stop(self):           pass
-    def set_rgb(self, idx, color, delay=0.0): pass
-    def get_distance(self):   return 999.0</pre>
+    <span class="k">def</span> set_angle(self, deg): <span class="k">pass</span>
+    <span class="k">def</span> move(self, pct):      <span class="k">pass</span>
+    <span class="k">def</span> stop(self):           <span class="k">pass</span>
+    <span class="k">def</span> set_rgb(self, idx, color, delay=0.0): <span class="k">pass</span>
+    <span class="k">def</span> get_distance(self):   <span class="k">return</span> 999.0</pre>
 
   <h4>Как вплетается в архитектуру</h4>
   <p>
@@ -438,20 +448,6 @@ robot.remove_zone(51, 61)         # снять конкретную</pre>
     парсит ответ.
   </p>
 
-  <h4>Почему методы — <code>pass</code>, а не <code>print</code></h4>
-  <p>
-    В версии v3.4.0 здесь были <code>print("[bridge] set_angle(36)")</code>
-    и т.п. Идея — видеть в консоли поток команд при dry-run. Но <code>_Bridge</code>
-    целиком заменяется на <code>_NetworkBridge</code> на железе — print'ы там
-    не появлялись, а на ПК они <em>шумели</em> при каждом тике. Дешевле
-    сделать заглушку тихой.
-  </p>
-  <p class="note">
-    Если хочешь видеть поток команд при dry-run — добавь в свою копию шаблона
-    <code>print()</code> обратно, или ещё лучше — добавь
-    <code>_DEBUG = True</code> флаг.
-  </p>
-
   <h3 id="a-stub-switch">4.3. Когда использовать и как переключаться</h3>
 
   <table>
@@ -466,10 +462,10 @@ robot.remove_zone(51, 61)         # снять конкретную</pre>
   </table>
 
   <p>Внизу файла:</p>
-  <pre>robot = _LiveRobot()              # ← по умолчанию (заглушка)
-# robot = _NetworkRobot()         # ← раскомментируй для железа</pre>
+  <pre>robot = _LiveRobot()              <span class="c"># ← по умолчанию (заглушка)</span>
+<span class="c"># robot = _NetworkRobot()         # ← раскомментируйте для железа</span></pre>
   <p>
-    Меняешь местами комментарии — и тот же код работает или в заглушке, или
+    Меняйте местами комментарии — и тот же код работает или в заглушке, или
     на роботе. Программа выше не изменится.
   </p>
 </section>
@@ -483,8 +479,8 @@ robot.remove_zone(51, 61)         # снять конкретную</pre>
 
   <p id="a-calib">
     Симулятор и реальный 1Т REX едут синхронно только если калибровочные
-    константы соответствуют физическим характеристикам твоей машинки.
-    Настраиваются в [config.py] или прямо в Настройках UI.
+    константы соответствуют физическим характеристикам вашей машинки.
+    Настраиваются в <code>config.py</code> или прямо в Настройках UI.
   </p>
 
   <table>
@@ -492,8 +488,8 @@ robot.remove_zone(51, 61)         # снять конкретную</pre>
     <tbody>
       <tr>
         <td><code>SPEED_AT_100</code></td><td>80.0 см/с</td>
-        <td>Линейная скорость при 100% мощности мотора. Замерь:
-            запусти <code>robot.forward(100, speed=100)</code>, засеки секундомером.</td>
+        <td>Линейная скорость при 100% мощности мотора. Замерьте:
+            запустите <code>robot.forward(100, speed=100)</code>, засеките секундомером.</td>
       </tr>
       <tr>
         <td><code>WHEEL_CIRC_CM</code></td><td>28.3 см</td>
@@ -503,8 +499,8 @@ robot.remove_zone(51, 61)         # снять конкретную</pre>
         <td><code>HEADING_DEG_PER_ROT</code></td><td>25.0°</td>
         <td>Сколько градусов курса набегает за один оборот колеса при
             полном угле руля (45°). Зависит от колёсной базы и радиуса
-            поворота. Замерь: поставь руль на 45°, проедь известную
-            длину дуги, замерь смену курса по компасу.</td>
+            поворота. Замерьте: поставьте руль на 45°, проедьте известную
+            длину дуги, замерьте смену курса по компасу.</td>
       </tr>
       <tr>
         <td><code>TURN_SPEED_REF</code></td><td>40 %</td>
@@ -526,12 +522,6 @@ robot.remove_zone(51, 61)         # снять конкретную</pre>
     </tbody>
   </table>
 
-  <p class="warn">
-    <strong>На v3.4.4 значения дефолтные.</strong> Если на реальном поле
-    траектории не сходятся с симулятором (робот промахивается по точкам,
-    дуги шире/уже) — нужно подкалибровать. После реальных замеров на твоём
-    1Т REX напиши «возвращаемся к калибровке», и мы скорректируем константы.
-  </p>
 </section>
 
 
@@ -549,14 +539,14 @@ robot.remove_zone(51, 61)         # снять конкретную</pre>
         <td>1) <code>server.py</code> запущен и «Соединить» нажато?
             2) В Настройках адрес <code>ws://127.0.0.1:41235</code>?
             3) Индикатор «Браузер» в GUI <code>server.py</code> зелёный?
-            <br>Перезапусти соединение в Настройках (Сохранить).</td>
+            <br>Перезапустите соединение в Настройках (Сохранить).</td>
       </tr>
       <tr>
         <td>«Машинка» в GUI <code>server.py</code> красная</td>
         <td>ESP32 не подключился. Проверь:
             <ul>
               <li>WiFi-режим: ESP32 знает SSID и пароль сети
-                  (проверь через GUI <code>server.py</code> → «Получить»);
+                  (проверьте через GUI <code>server.py</code> → «Получить»);
                   IP-адрес ПК в настройках ESP32 совпадает с выбранным в GUI.</li>
               <li>USB-режим: правильный COM-порт; ESP32 виден в системе.</li>
             </ul>
@@ -565,8 +555,8 @@ robot.remove_zone(51, 61)         # снять конкретную</pre>
       <tr>
         <td>Робот двигается, но дальномер всегда показывает 999</td>
         <td>Прошивка ESP32 не отвечает на <code>LASER?</code>.
-            Проверь в <code>server.py</code> в режиме «Отладка Serial»:
-            пошли вручную <code>LASER?</code>. Должен прийти ответ
+            Проверьте в <code>server.py</code> в режиме «Отладка Serial»:
+            пошлите вручную <code>LASER?</code>. Должен прийти ответ
             типа «LASER:42.5» или «42.5».</td>
       </tr>
       <tr>

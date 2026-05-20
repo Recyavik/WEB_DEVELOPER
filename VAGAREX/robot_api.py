@@ -83,14 +83,32 @@ class RobotProxy:
         """Прокидывает корутину в event-loop сервера и ждёт результат.
         Между шагами пользовательской программы проверяет флаг отмены.
         Регистрирует активный future на session — ■ СТОП может его
-        отменить мгновенно, чтобы текущая команда не доехала до конца."""
+        отменить мгновенно, чтобы текущая команда не доехала до конца.
+
+        После успешного завершения логирует команду в историю сессии,
+        если это был метод вида `UserSession._run_*` (т.е. движение или
+        action). Низкоуровневые вызовы (push_message, robot.set_angle,
+        robot.move) — не логируются."""
         if self._cancel.is_set():
             raise RobotInterrupted("Прервано пользователем (■ СТОП).")
+        # Имя корутины фиксируем ДО await — после завершения может быть None.
+        coro_qualname = getattr(coro, "__qualname__", "") or ""
         fut = asyncio.run_coroutine_threadsafe(coro, self._loop)
         # Регистрируем — _do_stop отменит этот future при ■ СТОП.
         self._session._python_active_future = fut
         try:
-            return fut.result(timeout=self._CMD_TIMEOUT_SEC)
+            result = fut.result(timeout=self._CMD_TIMEOUT_SEC)
+            # Логируем в историю сессии — только методы движения/action.
+            # _run_forward → "forward", _run_face_cardinal → "face_cardinal",
+            # _run_goto → "goto" и т.д. Этим путём отлавливаются вызовы
+            # robot.X() из пользовательского Python-кода. Голос/кнопки
+            # логируются отдельно в session._dispatch.
+            if "._run_" in coro_qualname:
+                intent = coro_qualname.split("._run_")[-1].split(".")[0]
+                asyncio.run_coroutine_threadsafe(
+                    self._session._log_python_command(intent, intent),
+                    self._loop)
+            return result
         except asyncio.TimeoutError:
             fut.cancel()
             raise RobotInterrupted(

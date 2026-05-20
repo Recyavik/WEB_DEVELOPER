@@ -35,6 +35,25 @@
       <p class="hint">
         При изменении адреса/порта/режима соединение будет переустановлено автоматически.
       </p>
+
+      <div style="margin-top:0.7rem; display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+        <button id="btn-launch-server-py" type="button" class="btn"
+                style="font-size:0.85rem;"
+                title="Запустить server.py из репозитория (мост браузер⇄ESP32) отдельным процессом">
+          🚀 Запустить server.py
+        </button>
+        <a href="/hardware" class="btn" style="font-size:0.85rem;"
+           title="Полная инструкция по подключению реального 1Т REX">
+          📖 Справка: Реальный 1Т REX
+        </a>
+        <span id="launch-server-status" class="hint" style="margin:0;"></span>
+      </div>
+      <p class="hint" style="margin-top:0.4rem; font-size:0.8rem;">
+        Кнопка запускает <code>server.py</code> (мост к 1Т REX) на этом компьютере.
+        Используется только в режиме <code>ws://...</code>. После запуска откроется
+        окно «Car Server» — нажмите там «Соединить» и подключите робота
+        (WiFi или USB). Подробности — в справке.
+      </p>
     </section>
 
     <!-- Движение -->
@@ -309,27 +328,41 @@
 
   </form>
 
-  <!-- ── Инструкция: подключение реального 1T REX ─────────────────── -->
-  <section class="card">
-    <h3 class="card__title">Подключение 1T REX (реальный робот)</h3>
-    <ol class="steps-list">
-      <li>Подключите Rex-Board к компьютеру по USB Type-C.</li>
-      <li>Запустите <code>server.py</code> (из комплекта 1T REX).</li>
-      <li>Введите Wi-Fi SSID и пароль робота, нажмите «Применить» в его утилите.</li>
-      <li>Отключите USB, переведите тумблер питания в положение ВКЛ.</li>
-      <li>Дождитесь сообщения <code>Rexboard started</code> в логах робота.</li>
-      <li>Выше в разделе «Соединение с роботом» укажите его адрес и порт,
-          снимите галочку «Режим симулятора».</li>
-      <li>Сохраните настройки — соединение установится автоматически,
-          в шапке индикатор «● Симулятор» сменится на «● Онлайн».</li>
-    </ol>
-    <p class="note">
-      <strong>Python API робота:</strong>
-      <code>robot.move(speed)</code>, <code>robot.set_angle(angle)</code>,
-      <code>robot.get_laser()</code> и другие — задокументированы в
-      <code>robot_driver.py</code>.
-    </p>
-  </section>
-
 </div>
+
+<script>
+// Запуск server.py из приложения. POST /api/launch_server, показываем
+// статус в #launch-server-status (текст рядом с кнопкой).
+(function() {
+  const btn = document.getElementById('btn-launch-server-py');
+  const status = document.getElementById('launch-server-status');
+  if (!btn || !status) return;
+
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    const prev = btn.textContent;
+    btn.textContent = '⏳ Запускаю…';
+    status.textContent = '';
+    status.style.color = '';
+    try {
+      const r = await fetch('/api/launch_server', {method: 'POST'});
+      const j = await r.json();
+      status.textContent = j.message || '';
+      if (j.ok) {
+        // Зелёный для «запустился», синий для «уже работает»
+        status.style.color = (j.status === 'already_running')
+          ? '#58a6ff' : '#3fb950';
+      } else {
+        status.style.color = '#f85149';
+      }
+    } catch (e) {
+      status.textContent = 'Ошибка запроса: ' + e.message;
+      status.style.color = '#f85149';
+    } finally {
+      btn.textContent = prev;
+      btn.disabled = false;
+    }
+  });
+})();
+</script>
 {% endblock %}
