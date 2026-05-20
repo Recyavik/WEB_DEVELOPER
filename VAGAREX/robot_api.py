@@ -35,6 +35,12 @@ class RobotInterrupted(Exception):
     """Поднимается, когда пользователь нажал ■ СТОП — прерывает цикл/код."""
 
 
+# Минимальная допустимая скорость в %. Константа MIN_SPEED_PCT
+# определена в config.py — здесь только реэкспорт для совместимости
+# (см. _clamp_speed_pct в RobotProxy).
+from config import MIN_SPEED_PCT  # noqa: E402,F401
+
+
 class RobotProxy:
     """Объект `robot` в коде пользователя. Все методы синхронные.
 
@@ -57,6 +63,19 @@ class RobotProxy:
         self._session = session
         self._loop = loop
         self._cancel = cancel_flag
+
+    def _clamp_speed_pct(self, spd: int) -> int:
+        """Клэмп скорости на MIN_SPEED_PCT с сообщением в журнал, если
+        поднимали. Принимает оба знака — для движения задом важен знак."""
+        spd = int(spd)
+        sign = -1 if spd < 0 else 1
+        mag = abs(spd)
+        if 0 < mag < MIN_SPEED_PCT:
+            self._run(self._session.push_message(
+                f"⚠ Скорость {spd}% поднята до минимума {sign*MIN_SPEED_PCT}% — "
+                f"двигатель не тянет ниже.", "warning"))
+            return sign * MIN_SPEED_PCT
+        return spd
 
     # ── Инфраструктура ──────────────────────────────────────────────────────
 
@@ -111,13 +130,17 @@ class RobotProxy:
     # ── Движение ────────────────────────────────────────────────────────────
 
     def forward(self, distance_cm: float, speed: Optional[int] = None):
-        """Едет ВПЕРЁД на `distance_cm` см. Скорость по умолчанию — из настроек."""
+        """Едет ВПЕРЁД на `distance_cm` см. Скорость по умолчанию — из настроек.
+        Минимум — 30%; ниже мотор реального робота не тянет, клэмп с
+        сообщением в журнал."""
         spd = int(speed) if speed is not None else int(self._session.cfg.move_speed)
+        spd = self._clamp_speed_pct(spd)
         self._run_segment(self._session._run_forward(float(distance_cm), spd))
 
     def back(self, distance_cm: float, speed: Optional[int] = None):
-        """Едет НАЗАД на `distance_cm` см."""
+        """Едет НАЗАД на `distance_cm` см. Минимум — 30%."""
         spd = int(speed) if speed is not None else int(self._session.cfg.move_speed)
+        spd = self._clamp_speed_pct(spd)
         self._run_segment(self._session._run_back(float(distance_cm), spd))
 
     def turn_right(self, angle_deg: float):
@@ -226,13 +249,15 @@ class RobotProxy:
     # ── Манёвры (высокоуровневые) ───────────────────────────────────────────
 
     def forward_to_wall(self, speed: Optional[int] = None):
-        """Едет вперёд до ближайшей стены или препятствия."""
+        """Едет вперёд до ближайшей стены или препятствия. Минимум — 30%."""
         spd = int(speed) if speed is not None else int(self._session.cfg.move_speed)
+        spd = self._clamp_speed_pct(spd)
         self._run_segment(self._session._run_forward_to_wall(spd))
 
     def backward_to_wall(self, speed: Optional[int] = None):
-        """Едет назад до ближайшей стены или препятствия."""
+        """Едет назад до ближайшей стены или препятствия. Минимум — 30%."""
         spd = int(speed) if speed is not None else int(self._session.cfg.move_speed)
+        spd = self._clamp_speed_pct(spd)
         self._run_segment(self._session._run_backward_to_wall(spd))
 
     def turn_around(self, direction: int = 1):
@@ -318,8 +343,9 @@ class RobotProxy:
     def set_default_speed(self, speed_pct: int):
         """Изменить скорость по умолчанию для последующих `robot.forward()`
         / `robot.back()` без явного `speed=`. Применяется только в этой
-        сессии (в настройки не сохраняется)."""
-        self._session.cfg.move_speed = int(speed_pct)
+        сессии (в настройки не сохраняется). Минимум — 30%; ниже мотор
+        реального робота не тянет (клэмп с сообщением в журнал)."""
+        self._session.cfg.move_speed = self._clamp_speed_pct(speed_pct)
 
     def set_default_turn_angle(self, angle_deg: int):
         """Изменить угол руля по умолчанию (−45..+45) для последующих

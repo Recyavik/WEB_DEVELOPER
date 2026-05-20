@@ -184,8 +184,8 @@
       <tbody>
         <tr>
           <td><code>Вега медленно</code> · <code>Вега тихо</code></td>
-          <td><code>robot.set_default_speed(20)</code></td>
-          <td>20% мощности по умолчанию</td>
+          <td><code>robot.set_default_speed(30)</code></td>
+          <td>30% мощности по умолчанию (минимум — ниже мотор не тянет)</td>
         </tr>
         <tr>
           <td><code>Вега спокойно</code> · <code>Вега средне</code></td>
@@ -200,7 +200,7 @@
         <tr>
           <td><code>Вега скорость 60 процентов</code></td>
           <td><code>robot.set_default_speed(60)</code></td>
-          <td>Точное значение 5–100%</td>
+          <td>Точное значение 30–100% (меньшие клэмпаются до 30 с предупреждением в журнал)</td>
         </tr>
         <tr>
           <td><code>Вега угол руля 25</code></td>

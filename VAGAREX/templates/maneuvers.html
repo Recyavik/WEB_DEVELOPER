@@ -788,6 +788,27 @@ robot.kturn(4, -1)      <span class="c"># за 4 шага, разворот вл
 <section class="card alg-card">
   <h2 class="card__title">4. Дуги и фигуры</h2>
 
+  <p class="note">
+    <strong>Все «именованные» геометрические манёвры едут на калиброванной
+    скорости <code>TURN_SPEED_REF</code> (по умолчанию 40%),</strong>
+    независимо от текущей <code>cfg.move_speed</code>. Это раздел 4 целиком
+    (<code>arc</code>, <code>figure_eight</code>, <code>spiral</code>,
+    <code>bypass</code>), а также <a href="#a-kturn">K-turn</a>,
+    <a href="#a-course">set_course</a>, <a href="#a-turnplace">kturn</a>,
+    <code>turn_around</code>, <code>turn_right/left</code>,
+    <code>face_*</code>, <code>home</code>. Цель — детерминированная
+    геометрия: дуга на железе совпадает с симуляторной, потому что
+    <code>HEADING_DEG_PER_ROT</code> снят именно на этой скорости.
+  </p>
+  <p class="note">
+    Пользовательская <code>cfg.move_speed</code> (MIN / Спокойно /
+    Быстро / MAX в Пульте управления) действует только на
+    <strong>прямые</strong>: <code>forward</code>, <code>back</code>,
+    <code>forward_to_wall</code>, <code>backward_to_wall</code> — и на
+    навигацию <a href="#a-goto">goto</a> / <a href="#a-autopilot">автопилот</a>,
+    где геометрия не гарантируется (приоритет — добраться до точки).
+  </p>
+
   <!-- ── arc ──────────────────────────────────────────────────────────── -->
   <h3 id="a-arc">4.1. robot.arc(angle, direction) — дуга и полный круг</h3>
 

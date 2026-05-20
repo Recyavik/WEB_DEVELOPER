@@ -1457,7 +1457,7 @@ async def api_settings_save(
     row.rex_host          = host
     row.rex_port          = port
     row.simulation_mode   = new_sim
-    row.move_speed        = max(5, min(100, move_speed))
+    row.move_speed        = max(config.MIN_SPEED_PCT, min(100, move_speed))
     row.turn_angle        = max(5, min(45, turn_angle))
     row.wheel_circ_cm     = max(1.0, wheel_circ)
     row.speed_at_100      = max(1.0, speed_at_100)
@@ -1903,6 +1903,157 @@ async def library_load_submit(kind: str, route_id: int,
     await sess.load_published_code(route.code, source_label=label)
 
     return RedirectResponse("/", status_code=303)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Export кода под реальный 1Т REX (кнопка </> в редакторе)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/code/export")
+async def code_export(request: Request):
+    """Собрать self-contained Python для запуска на железе.
+
+    Берёт текст кода пользователя из { "code": "..." }, парсит вызовы
+    robot.X(...), и из robot_lib/_templates.py включает ТОЛЬКО нужные
+    высокоуровневые методы + их транзитивные зависимости (face нужен
+    в goto, arc — в figure_eight и т.д.).
+
+    Всегда включаются:
+      • module-docstring + import math/time
+      • константы класса Robot (калибровка)
+      • __init__ (инициализирует списки зон)
+      • все helper'ы (_clamp_speed, _arc_time, _zone_blocked,
+        _drive_with_zone_check) — они компактные, и любая выбранная
+        публичная функция может их использовать
+      • _Bridge / _LiveRobot / robot = _LiveRobot() (инфраструктура)
+    """
+    import ast
+    import re
+    from pathlib import Path
+
+    payload = await request.json()
+    user_code = (payload.get("code") or "").rstrip() + "\n"
+
+    tpl_path = Path(__file__).parent / "robot_lib" / "_templates.py"
+    try:
+        tpl_text = tpl_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return JSONResponse({"code":
+            "# ⚠ robot_lib/_templates.py не найден\n"
+            "# === НАЧАЛО ПРОГРАММЫ ===\n" + user_code})
+
+    try:
+        tree = ast.parse(tpl_text)
+    except SyntaxError as exc:
+        return JSONResponse({"code":
+            f"# ⚠ robot_lib/_templates.py содержит синтаксическую ошибку: {exc}\n"
+            "# === НАЧАЛО ПРОГРАММЫ ===\n" + user_code})
+
+    # Делим top-level узлы на pre (до Robot) и tail (после Robot).
+    pre_segs, robot_cls, tail_segs = [], None, []
+    seen_robot = False
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name == "Robot":
+            robot_cls = node
+            seen_robot = True
+            continue
+        seg = ast.get_source_segment(tpl_text, node, padded=True)
+        if seg is None:
+            continue
+        (tail_segs if seen_robot else pre_segs).append(seg)
+
+    if robot_cls is None:
+        return JSONResponse({"code":
+            tpl_text + "\n# === НАЧАЛО ПРОГРАММЫ ===\n" + user_code})
+
+    # padded=True у ast.get_source_segment добавляет отступ только у
+    # МНОГОстрочных узлов; однострочные (одиночные константы / docstring)
+    # возвращаются без ведущих пробелов. Добавляем 4 пробела вручную,
+    # если их нет — нужно для корректного тела class Robot:.
+    def _class_seg(node):
+        seg = ast.get_source_segment(tpl_text, node, padded=True)
+        if seg is None:
+            return None
+        return seg if seg.startswith("    ") else "    " + seg
+
+    # Разбираем тело класса Robot.
+    docstring_seg = None
+    consts: list[str] = []
+    helpers: dict[str, str] = {}   # _underscore-методы
+    methods: dict[str, str] = {}   # публичные методы
+    init_seg: str | None = None
+    for i, node in enumerate(robot_cls.body):
+        seg = _class_seg(node)
+        if seg is None:
+            continue
+        # Class docstring — первый Expr с Constant-строкой.
+        if (i == 0 and isinstance(node, ast.Expr)
+                and isinstance(node.value, ast.Constant)
+                and isinstance(node.value.value, str)):
+            docstring_seg = seg
+            continue
+        if isinstance(node, ast.FunctionDef):
+            if node.name == "__init__":
+                init_seg = seg
+            elif node.name.startswith("_"):
+                helpers[node.name] = seg
+            else:
+                methods[node.name] = seg
+        else:
+            consts.append(seg)
+
+    # 1) Какие методы вызваны в коде пользователя?
+    called = set(re.findall(r"\brobot\.(\w+)\s*\(", user_code))
+    needed = called & set(methods.keys())
+
+    # 2) Транзитивные зависимости (методы вызывают друг друга через self.X).
+    method_deps: dict[str, set[str]] = {}
+    for name, src in methods.items():
+        method_deps[name] = (
+            set(re.findall(r"\bself\.(\w+)\s*\(", src)) & set(methods.keys())
+        )
+    queue = list(needed)
+    while queue:
+        m = queue.pop()
+        for dep in method_deps.get(m, ()):
+            if dep not in needed:
+                needed.add(dep)
+                queue.append(dep)
+
+    # 3) Сборка итогового файла
+    parts: list[str] = []
+    parts.extend(pre_segs)                  # module docstring + imports
+    parts.append("")
+    parts.append("class Robot:")
+    if docstring_seg:
+        parts.append(docstring_seg)
+        parts.append("")
+    # Константы — всегда все.
+    parts.extend(consts)
+    parts.append("")
+    # __init__ — всегда (нужен для зон).
+    if init_seg:
+        parts.append(init_seg)
+        parts.append("")
+    # Helper'ы — всегда все.
+    for hname in helpers:
+        parts.append(helpers[hname])
+        parts.append("")
+    # Публичные — только нужные, в порядке появления в исходнике.
+    src_order = [n.name for n in robot_cls.body
+                 if isinstance(n, ast.FunctionDef) and not n.name.startswith("_")
+                    and n.name != "__init__"]
+    for mname in src_order:
+        if mname in needed:
+            parts.append(methods[mname])
+            parts.append("")
+    # Хвост — _Bridge / _LiveRobot / robot = _LiveRobot()
+    parts.extend(tail_segs)
+    parts.append("")
+    parts.append("# === НАЧАЛО ПРОГРАММЫ ===")
+    parts.append(user_code.rstrip())
+
+    return JSONResponse({"code": "\n".join(parts) + "\n"})
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

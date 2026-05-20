@@ -141,17 +141,14 @@
           </div>
         </details>
 
-        <!-- Скорость -->
+        <!-- Скорость на прямых (манёвры с дугами едут на TURN_SPEED_REF = 40%) -->
         <details class="ctrl-group" open>
-          <summary>Скорость</summary>
+          <summary title="Дуги (arc / figure_eight / spiral / bypass / K-turn / set_course) едут на калиброванной 40%, чтобы железо и симулятор совпадали">Скорость на прямых</summary>
           <div class="quick-extra">
-            <button class="btn btn--xs" data-cmd="Вега медленно" title="20%">Медленно</button>
+            <button class="btn btn--xs" data-cmd="Вега медленно" title="30% — минимум, ниже мотор не тянет">MIN</button>
             <button class="btn btn--xs" data-cmd="Вега спокойно" title="40%">Спокойно</button>
             <button class="btn btn--xs" data-cmd="Вега быстро" title="80%">Быстро</button>
-            <button class="btn btn--xs" data-cmd="Вега скорость 20 процентов" title="Установить скорость 20%">20%</button>
-            <button class="btn btn--xs" data-cmd="Вега скорость 40 процентов" title="Установить скорость 40%">40%</button>
-            <button class="btn btn--xs" data-cmd="Вега скорость 60 процентов" title="Установить скорость 60%">60%</button>
-            <button class="btn btn--xs" data-cmd="Вега скорость 80 процентов" title="Установить скорость 80%">80%</button>
+            <button class="btn btn--xs" data-cmd="Вега скорость 90 процентов" title="90% — максимум">MAX</button>
           </div>
         </details>
 
@@ -285,8 +282,8 @@
           <a href="/library/save/new"    class="btn btn--xs" title="Сохранить код в Хранилище (личное)">💾</a>
           <button id="btn-load-route" class="btn btn--xs" type="button"
                   title="Загрузить маршрут из Хранилища (свой или опубликованный)">📂</button>
-          <button id="btn-tidy-python-code" class="btn btn--xs"
-                  title="Упорядочить код: константы → функции (без дублей) → вызовы">🧹</button>
+          <button id="btn-tidy-python-code" class="btn btn--xs btn--code"
+                  title="Сборка кода для робота: упорядочить + добавить тела функций (arc / face / goto / …)">&lt;/&gt;</button>
           <button id="btn-clear-python-code" class="btn btn--xs" title="Очистить код">✕</button>
           <button id="btn-expand-python-code" class="btn btn--xs" title="Развернуть редактор на весь экран">⛶</button>
           <span class="sim-speed-wrap">
@@ -339,8 +336,8 @@
           <a href="/library/save/new"  class="btn btn--xs" title="Сохранить код в Хранилище (личное)">💾</a>
           <button id="btn-modal-load-route" class="btn btn--xs" type="button"
                   title="Загрузить маршрут из Хранилища (свой или опубликованный)">📂</button>
-          <button id="btn-modal-tidy"  class="btn btn--xs"
-                  title="Упорядочить код: константы → функции (без дублей) → вызовы">🧹</button>
+          <button id="btn-modal-tidy"  class="btn btn--xs btn--code"
+                  title="Сборка кода для робота: упорядочить + добавить тела функций">&lt;/&gt;</button>
           <button id="btn-modal-clear" class="btn btn--xs" title="Очистить код">✕</button>
           <span class="sim-speed-wrap">
             <button id="btn-modal-sim-speed" class="btn btn--xs" type="button"
@@ -385,6 +382,40 @@
           <span class="code-modal__hint">Shift+колесо мыши — масштаб</span>
         </div>
         <div id="code-modal-journal" class="cmd-log code-modal__journal-body"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Модалка «Сборка кода для робота» (кнопка </>) ──────────────── -->
+  <!-- Отдельная от fullscreen-редактора: только просмотр + скачать +
+       выгрузить в робота. При открытии POST'ит код на /code/export и
+       показывает self-contained Python (классы Robot + _LiveRobot + код
+       учащегося под сентинелем «# === НАЧАЛО ПРОГРАММЫ ===»). -->
+  <div id="code-export-modal" class="code-export-modal" hidden>
+    <div class="code-export-modal__backdrop" data-close-export-modal></div>
+    <div class="code-export-modal__panel">
+      <header class="code-export-modal__header">
+        <h3 class="code-export-modal__title">&lt;/&gt; Сборка кода для робота</h3>
+        <div class="code-export-modal__actions">
+          <button id="btn-export-load" class="btn btn--xs" type="button" title="Загрузить готовый .py-файл с диска (заменит превью)">📁 Загрузить из файла</button>
+          <input id="export-load-input" type="file" accept=".py,text/x-python,text/plain" style="display:none">
+          <button id="btn-export-copy" class="btn btn--xs" type="button" title="Скопировать">⎘ Копировать</button>
+          <button id="btn-export-download" class="btn btn--xs btn--info" type="button" title="Скачать .py-файл">⬇ Скачать .py</button>
+          <button id="btn-export-upload" class="btn btn--xs" type="button" title="Выгрузить в реального робота (через мост server.py)">🤖 Выгрузить в робота</button>
+          <button id="btn-export-close" class="btn btn--xs" type="button" data-close-export-modal title="Закрыть">✕</button>
+        </div>
+      </header>
+      <p class="code-export-modal__hint">
+        Самодостаточный Python: класс <code>Robot</code> с шаблонами вызванных манёвров +
+        твой алгоритм внизу. Замени <code>_Bridge</code> на свой мост к 1Т REX
+        (TCP / Serial / ESP-Now). Можно редактировать прямо здесь: «Скачать .py» сохранит
+        текущее содержимое.
+      </p>
+      <div class="code-export-modal__editor">
+        <pre id="code-export-gutter" class="code-export-modal__gutter" aria-hidden="true">1</pre>
+        <textarea id="code-export-text" class="code-export-modal__textarea"
+                  spellcheck="false" wrap="off"
+                  aria-label="Сгенерированный Python-код, можно править">Готовится…</textarea>
       </div>
     </div>
   </div>

@@ -271,7 +271,7 @@ def extract_speed(text: str, default: int = 40) -> int:
     if any(w in n for w in ("быстро", "быстрый", "максимум", "полная скорость")):
         return 80
     if any(w in n for w in ("медленно", "медленный", "тихо", "потихоньку")):
-        return 20
+        return 30
     if any(w in n for w in ("спокойно", "спокойный", "средне")):
         return 40
     return default

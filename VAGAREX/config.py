@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 
 # Версия прошивки робота 1T REX (отображается в шапке UI).
-ROBOT_VERSION = "3.3.1"
+ROBOT_VERSION = "3.4.1"
 
 # Папка с пользовательскими данными (БД, загруженные файлы и т. п.).
 # В Docker/Coolify сюда монтируется persistent volume — переживает rebuild.
@@ -52,6 +52,10 @@ START_HEADING_DEG = float(os.getenv("START_HEADING_DEG", "0.0"))
 
 MOVE_SPEED   = int(os.getenv("MOVE_SPEED", "40"))    # % мощности по умолчанию
 TURN_ANGLE   = int(os.getenv("TURN_ANGLE", "36"))    # угол руля в градусах (-45..45)
+# Минимальная допустимая скорость в %. На реальном 1Т REX мотор не тянет
+# < 30: рывки, остановки. Всякая попытка установить меньшее значение
+# (через UI / голос / API) поднимается до этого порога с предупреждением.
+MIN_SPEED_PCT = int(os.getenv("MIN_SPEED_PCT", "30"))
 
 LIGHT_INDEX = int(os.getenv("LIGHT_INDEX", "0"))
 # Задержка между установкой каналов R/G/B в robot.set_rgb (третий параметр).

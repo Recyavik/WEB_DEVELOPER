@@ -1901,6 +1901,161 @@
     logMsg('🧹 Код упорядочен: функции собраны вверху, вызовы внизу.', 'info');
   }
 
+  // ── «Сборка кода для робота» (модалка </>) ─────────────────────────────
+  // Click </> → tidyPythonCode → POST /code/export → показать в редактируемом
+  // textarea с гуттером. Источник правды для Копировать / Скачать / Выгрузить —
+  // текущее содержимое textarea, не отдельная переменная (учащийся может
+  // править прямо в превью).
+
+  function _getCurrentEditorText() {
+    // Источник правды — боковой textarea. Если открыта модалка с CM,
+    // забираем оттуда (там может быть свежее).
+    const modal = document.getElementById('python-code-modal');
+    if (modal && !modal.hidden && window.cmEditor && window.cmEditor.isReady()) {
+      return window.cmEditor.getValue();
+    }
+    const main = document.getElementById('python-code');
+    return main ? main.value : '';
+  }
+
+  function _updateExportGutter() {
+    const ta  = document.getElementById('code-export-text');
+    const gut = document.getElementById('code-export-gutter');
+    if (!ta || !gut) return;
+    const n = (ta.value.match(/\n/g) || []).length + 1;
+    const lines = [];
+    for (let i = 1; i <= n; i++) lines.push(i);
+    gut.textContent = lines.join('\n');
+    gut.scrollTop = ta.scrollTop;
+  }
+
+  function _getExportedCode() {
+    const ta = document.getElementById('code-export-text');
+    return ta ? ta.value : '';
+  }
+
+  function _setExportedCode(text) {
+    const ta = document.getElementById('code-export-text');
+    if (!ta) return;
+    ta.value = text;
+    _updateExportGutter();
+  }
+
+  async function openExportModal() {
+    const exportModal = document.getElementById('code-export-modal');
+    if (!exportModal) return;
+
+    const userCode = _getCurrentEditorText() || '';
+    const tidied = tidyPythonCode(userCode);
+    _setExportedCode('Готовится…');
+    exportModal.hidden = false;
+
+    try {
+      const r = await fetch('/code/export', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({code: tidied}),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json();
+      _setExportedCode(j.code || '');
+    } catch (e) {
+      _setExportedCode('# Не удалось собрать код: ' + e.message);
+    }
+  }
+
+  function closeExportModal() {
+    const m = document.getElementById('code-export-modal');
+    if (m) m.hidden = true;
+  }
+
+  function _downloadExportedCode() {
+    const code = _getExportedCode();
+    if (!code) return;
+    const blob = new Blob([code], {type: 'text/x-python;charset=utf-8'});
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    // Имя файла — vegarex_program_YYYY-MM-DD.py
+    const d = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    a.download = `vegarex_program_${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}.py`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    logMsg('⬇ Скачан ' + a.download, 'info');
+  }
+
+  function _copyExportedCode() {
+    const code = _getExportedCode();
+    if (!code) return;
+    navigator.clipboard?.writeText(code).then(
+      () => logMsg('⎘ Скопировано в буфер.', 'info'),
+      () => logMsg('⚠ Не удалось скопировать.', 'warning')
+    );
+  }
+
+  function _uploadToRobot() {
+    // Заглушка: реальный мост к 1Т REX появится отдельной фичей через
+    // server.py (см. memory: project-vegarex-next-steps).
+    alert('Выгрузка в реального робота пока не реализована.\n' +
+          'Будет в следующих версиях через мост server.py — браузер⇄Python⇄ESP32.\n\n' +
+          'Сейчас доступно: «⬇ Скачать .py» — забрать файл и запустить вручную.');
+  }
+
+  function _triggerLoadFromFile() {
+    document.getElementById('export-load-input')?.click();
+  }
+
+  function _handleLoadedFile(evt) {
+    const file = evt.target.files && evt.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      _setExportedCode(String(e.target.result || ''));
+      logMsg(`📁 Загружен ${file.name}.`, 'info');
+    };
+    reader.onerror = () => {
+      logMsg('⚠ Не удалось прочитать файл.', 'warning');
+    };
+    reader.readAsText(file, 'utf-8');
+    // Сбрасываем value, чтобы повторный выбор того же файла тоже сработал.
+    evt.target.value = '';
+  }
+
+  function _wireExportEditor() {
+    const ta = document.getElementById('code-export-text');
+    if (!ta) return;
+    // Sync гуттера на input + scroll.
+    ta.addEventListener('input', _updateExportGutter);
+    ta.addEventListener('scroll', () => {
+      const gut = document.getElementById('code-export-gutter');
+      if (gut) gut.scrollTop = ta.scrollTop;
+    });
+    // Tab → 4 пробела (Shift+Tab → dedent).
+    ta.addEventListener('keydown', (e) => {
+      if (e.key !== 'Tab') return;
+      e.preventDefault();
+      const s = ta.selectionStart, en = ta.selectionEnd, v = ta.value;
+      const multiline = (s !== en) && v.slice(s, en).includes('\n');
+      if (multiline) {
+        const ls = v.lastIndexOf('\n', s - 1) + 1;
+        const block = v.slice(ls, en);
+        const newBlock = e.shiftKey
+          ? block.split('\n').map(l => l.startsWith('    ') ? l.slice(4) : l.replace(/^ {1,3}/, '')).join('\n')
+          : block.split('\n').map(l => '    ' + l).join('\n');
+        ta.value = v.slice(0, ls) + newBlock + v.slice(en);
+        ta.selectionStart = ls;
+        ta.selectionEnd   = ls + newBlock.length;
+      } else if (!e.shiftKey) {
+        ta.value = v.slice(0, s) + '    ' + v.slice(en);
+        ta.selectionStart = ta.selectionEnd = s + 4;
+      }
+      _updateExportGutter();
+    });
+  }
+
   // ── Голосовое управление (Web Speech API) ──────────────────────────────────
 
   let recognition = null;
@@ -2092,7 +2247,26 @@
     document.getElementById('btn-run-python-code')?.addEventListener('click', runPythonCode);
     document.getElementById('btn-clear-python-code')?.addEventListener('click', clearPythonCode);
     document.getElementById('btn-copy-python-code')?.addEventListener('click', copyPythonCode);
-    document.getElementById('btn-tidy-python-code')?.addEventListener('click', tidyCurrentTextarea);
+    document.getElementById('btn-tidy-python-code')?.addEventListener('click', openExportModal);
+
+    // ── Кнопки модалки «Сборка кода для робота» (</>) ─────────────────
+    document.getElementById('btn-export-copy')?.addEventListener('click', _copyExportedCode);
+    document.getElementById('btn-export-download')?.addEventListener('click', _downloadExportedCode);
+    document.getElementById('btn-export-upload')?.addEventListener('click', _uploadToRobot);
+    document.getElementById('btn-export-load')?.addEventListener('click', _triggerLoadFromFile);
+    document.getElementById('export-load-input')?.addEventListener('change', _handleLoadedFile);
+    _wireExportEditor();
+    document.querySelectorAll('[data-close-export-modal]').forEach(el => {
+      el.addEventListener('click', closeExportModal);
+    });
+    document.addEventListener('keydown', (e) => {
+      // Esc закрывает только если export-модалка открыта (sim-speed-меню
+      // ловят Esc раньше, но они hidden — это безопасно).
+      const m = document.getElementById('code-export-modal');
+      if (e.key === 'Escape' && m && !m.hidden) {
+        closeExportModal();
+      }
+    });
 
     // Подсветка комментариев в обоих редакторах кода
     attachCodeHighlight('python-code',            'python-code-overlay');
@@ -2380,11 +2554,10 @@
       }
     });
     document.getElementById('btn-modal-tidy')?.addEventListener('click', () => {
-      const tidied = tidyPythonCode(modalText());
-      setModalText(tidied);
-      if (sideArea) sideArea.value = tidied;
-      if (sideArea) sideArea.dispatchEvent(new Event('input', {bubbles: true}));
-      logMsg('🧹 Код упорядочен.', 'info');
+      // Открываем модалку «Сборка кода для робота». При запуске синкаем
+      // CM-редактор → боковой textarea (источник правды для экспорта).
+      if (sideArea) sideArea.value = modalText();
+      openExportModal();
     });
     document.getElementById('btn-modal-run')?.addEventListener('click', () => {
       // Sync CM → side, потом запускаем (runPythonCode читает sideArea).

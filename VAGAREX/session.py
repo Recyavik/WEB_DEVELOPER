@@ -28,6 +28,7 @@ from fastapi import WebSocket
 from sqlalchemy.orm import Session
 
 import nlu
+from config import MIN_SPEED_PCT
 from database import SessionLocal
 from models import (CommandLog, DangerZone, PathPoint, ProgramCommand,
                     RobotSession, User, UserSettings)
@@ -1170,7 +1171,11 @@ class UserSession:
         Никаких принудительных перемещений координат в конце."""
         s   = self.robot_state
         STEER         = int(self.cfg.turn_angle)
-        spd           = self.cfg.move_speed
+        # K-turn — «именованный» геометрический манёвр: всегда едет на
+        # TURN_SPEED_REF (40% по умолчанию), на которой откалибровано
+        # HEADING_DEG_PER_ROT. Это даёт ИДЕНТИЧНУЮ геометрию на железе и
+        # в симуляторе. cfg.move_speed остаётся для прямых и навигации.
+        spd           = self.cfg.turn_speed_ref
         steer_ratio   = STEER / 45.0
         trf           = self._turn_rate_factor(spd)
         arc90         = 90.0 * self.cfg.wheel_circ_cm / (self.cfg.heading_per_rot * steer_ratio * trf)
@@ -1348,7 +1353,8 @@ class UserSession:
         s = self.robot_state
         TOLERANCE   = 5.0
         STEER       = int(self.cfg.turn_angle)
-        spd         = self.cfg.move_speed
+        # set_course — геометрический манёвр; едет на TURN_SPEED_REF.
+        spd         = self.cfg.turn_speed_ref
         steer_ratio = STEER / 45.0
         trf         = self._turn_rate_factor(spd)
         arc90       = 90.0 * self.cfg.wheel_circ_cm / (self.cfg.heading_per_rot * steer_ratio * trf)
@@ -1523,7 +1529,8 @@ class UserSession:
         if not await self._clear_to_maneuver("Дуга"):
             return
         s = self.robot_state
-        spd = self.cfg.move_speed
+        # arc — геометрический манёвр; едет на TURN_SPEED_REF.
+        spd = self.cfg.turn_speed_ref
         steer = direction * self.cfg.turn_angle
         sweep = abs(float(angle_deg))
         if sweep <= 0:
@@ -1549,7 +1556,8 @@ class UserSession:
         if not await self._clear_to_maneuver("Восьмёрка"):
             return
         s = self.robot_state
-        spd = self.cfg.move_speed
+        # figure_eight — геометрический манёвр; едет на TURN_SPEED_REF.
+        spd = self.cfg.turn_speed_ref
         steer = self.cfg.turn_angle
         cancelled = False
         try:
@@ -1580,7 +1588,8 @@ class UserSession:
         if not await self._clear_to_maneuver("Спираль"):
             return
         s = self.robot_state
-        spd = self.cfg.move_speed
+        # spiral — геометрический манёвр; едет на TURN_SPEED_REF.
+        spd = self.cfg.turn_speed_ref
         if outward:
             steer_start, steer_end = 36.0, 24.0
         else:
@@ -1650,7 +1659,8 @@ class UserSession:
         if not await self._clear_to_maneuver("Объезд"):
             return
         s = self.robot_state
-        spd = self.cfg.move_speed
+        # bypass — геометрический манёвр; едет на TURN_SPEED_REF.
+        spd = self.cfg.turn_speed_ref
         swing = 30.0  # размах курса в каждую сторону
         side = "справа" if start_dir > 0 else "слева"
         # Фазы 0,3 → знак start_dir; фазы 1,2 → противоположный
@@ -2136,7 +2146,8 @@ class UserSession:
             return
         s.turning_in_place = True
 
-        spd       = self.cfg.move_speed
+        # K-turn-to-heading — геометрический манёвр; едет на TURN_SPEED_REF.
+        spd       = self.cfg.turn_speed_ref
         STEER     = int(self.cfg.turn_angle)
         direction = +1 if diff > 0 else -1
         # Сохраняем стартовую позицию — после K-turn вернёмся сюда.
@@ -3352,6 +3363,12 @@ class UserSession:
             code, label = "steer(0)", "Руль прямо"
         elif intent == "set_speed":
             spd = nlu.extract_speed(raw, c.move_speed)
+            # Клэмп до MIN_SPEED_PCT: сгенерированный код пишем с уже
+            # поднятой скоростью, чтобы пользователь не путался.
+            # Предупреждение в журнал выдаётся при фактическом применении
+            # (см. _dispatch ниже).
+            if 0 < spd < MIN_SPEED_PCT:
+                spd = MIN_SPEED_PCT
             code, label = f"set_speed({spd})", f"Скорость {spd}%"
         elif intent == "set_turn_angle":
             ang = nlu.extract_default_turn_angle(raw, c.turn_angle)
@@ -3955,7 +3972,18 @@ class UserSession:
             await self.robot.set_servo_center()
             msg = "Руль прямо."
         elif intent == "set_speed":
-            spd = nlu.extract_speed(raw, c.move_speed)
+            spd_raw = nlu.extract_speed(raw, c.move_speed)
+            # Клэмп до MIN_SPEED_PCT с предупреждением в журнал.
+            # На реальном 1Т REX двигатель ниже 30% не тянет — рывки,
+            # остановки. Тренируем поведение, совпадающее с железом.
+            if 0 < spd_raw < MIN_SPEED_PCT:
+                await self.push_message(
+                    f"⚠ Скорость {spd_raw}% поднята до минимума "
+                    f"{MIN_SPEED_PCT}% — двигатель не тянет ниже.",
+                    "warning")
+                spd = MIN_SPEED_PCT
+            else:
+                spd = spd_raw
             self.cfg.move_speed = spd
             if s.speed != 0:
                 sign = -1 if s.speed < 0 else 1
