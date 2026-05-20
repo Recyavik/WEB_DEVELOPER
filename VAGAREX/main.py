@@ -1920,7 +1920,7 @@ async def library_load_submit(kind: str, route_id: int,
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @app.post("/api/launch_server")
-async def launch_server_py():
+async def launch_server_py(request: Request):
     """Запустить server.py (мост браузер⇄ESP32) как отдельный процесс.
 
     Файл server.py лежит в корне репозитория, рядом с папкой VAGAREX/.
@@ -1986,19 +1986,45 @@ async def launch_server_py():
         except Exception:
             in_docker = False
     if in_docker:
-        # Имя файла на хосте: путь /app/server.py — это монтированный
-        # том из docker-compose (см. .:/app). Файл уже у пользователя
-        # на диске рядом с docker-compose.yml.
-        host_hint = server_path.name
+        # Различаем два сценария Docker:
+        # • Локальный Docker (пользователь сам поднял compose у себя) —
+        #   доступ к роботу есть, нужна подсказка про host.docker.internal
+        # • Удалённый прод-деплой (домен в браузере ≠ адрес контейнера) —
+        #   достучаться до робота в домашней сети пользователя НЕЛЬЗЯ
+        host_header = (request.headers.get("host") or "").lower()
+        host_no_port = host_header.split(":")[0]
+        is_remote_deploy = bool(host_no_port) and not (
+            host_no_port == "localhost" or host_no_port == "127.0.0.1"
+            or host_no_port == "::1"
+            or host_no_port.startswith("192.168.")
+            or host_no_port.startswith("10.")
+            or any(host_no_port.startswith(f"172.{n}.") for n in range(16, 32))
+        )
+        if is_remote_deploy:
+            return JSONResponse({
+                "ok": False,
+                "status": "remote_deploy",
+                "message": (
+                    "Это удалённый деплой VEGAREX (домен " + host_no_port + ").\n\n"
+                    "Боевой режим (server.py + физический 1Т REX) работает "
+                    "ТОЛЬКО при локальном запуске VEGAREX рядом с роботом — "
+                    "прод-сервер в датацентре не может достучаться до робота "
+                    "в вашей домашней сети.\n\n"
+                    "Что делать:\n"
+                    "  • На проде используйте режим «Симулятор» (галочка в Настройках)\n"
+                    "  • Для боевого режима — клонируйте репо локально, поднимите "
+                    "VEGAREX и server.py на своём ПК, подключите 1Т REX к WiFi/USB"
+                ),
+            }, status_code=400)
+        # Локальный Docker — есть смысл подсказывать host.docker.internal.
         return JSONResponse({
             "ok": False,
             "status": "docker_no_gui",
             "message": (
                 "VEGAREX запущен в Docker — кнопка не может открыть GUI на "
-                "хосте (контейнер не видит рабочего стола Windows/macOS и "
-                "USB-портов).\n\n"
+                "хосте (контейнер не видит рабочего стола и USB-портов).\n\n"
                 "Запустите server.py вручную на хосте:\n"
-                f"  python {host_hint}\n"
+                f"  python {server_path.name}\n"
                 "(файл лежит рядом с docker-compose.yml — это та же копия, "
                 f"что у контейнера в {server_path})\n\n"
                 "В Настройках VEGAREX в поле «Адрес» используйте:\n"

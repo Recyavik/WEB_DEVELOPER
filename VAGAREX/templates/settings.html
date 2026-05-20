@@ -333,10 +333,34 @@
 <script>
 // Запуск server.py из приложения. POST /api/launch_server, показываем
 // статус в #launch-server-status (текст рядом с кнопкой).
+//
+// На удалённом деплое (vegarex.dev.appswire.ru и т.п.) кнопка
+// блокируется: server.py должен крутиться рядом с роботом, а не
+// в датацентре. Боевой режим работает только при локальном запуске
+// VEGAREX (localhost / LAN-IP).
 (function() {
   const btn = document.getElementById('btn-launch-server-py');
   const status = document.getElementById('launch-server-status');
   if (!btn || !status) return;
+
+  // Детектор «локальный ли это запуск VEGAREX»
+  const h = window.location.hostname;
+  const isLocal = h === 'localhost' || h === '127.0.0.1' || h === '::1' ||
+                  /^192\.168\./.test(h) ||
+                  /^10\./.test(h) ||
+                  /^172\.(1[6-9]|2[0-9]|3[01])\./.test(h);
+
+  if (!isLocal) {
+    btn.disabled = true;
+    btn.style.opacity = '0.5';
+    btn.style.cursor = 'not-allowed';
+    btn.title = 'Доступно только при локальном запуске VEGAREX (вместе с роботом)';
+    status.textContent = '⚠ Удалённый деплой: боевой режим (server.py + физический 1Т REX) ' +
+                         'работает только при локальном запуске VEGAREX рядом с роботом. ' +
+                         'На прод-сайте — только симулятор.';
+    status.style.color = '#f0883e';
+    return;
+  }
 
   btn.addEventListener('click', async () => {
     btn.disabled = true;
