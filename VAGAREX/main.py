@@ -1967,23 +1967,55 @@ async def launch_server_py():
             ),
         }, status_code=404)
 
-    # 3) Запустить отсоединённым процессом.
+    # 3) Запустить отдельным процессом.
+    #    Если VEGAREX крутится в Docker — GUI-окно tkinter не сможет
+    #    появиться (нет DISPLAY/доступа к рабочему столу хоста).
+    if Path("/.dockerenv").exists():
+        return JSONResponse({
+            "ok": False,
+            "status": "docker_no_gui",
+            "message": (
+                "VEGAREX запущен в Docker — окно server.py не может появиться "
+                "на хосте (контейнер не имеет доступа к рабочему столу). "
+                f"Запустите вручную на хосте: python {server_path.name}"
+            ),
+        }, status_code=400)
+
+    # На Windows — предпочитаем pythonw.exe (без черного консольного окна).
+    # На остальных — обычный sys.executable.
+    py_exe = sys.executable
+    if sys.platform == "win32":
+        pythonw = Path(sys.executable).with_name("pythonw.exe")
+        if pythonw.is_file():
+            py_exe = str(pythonw)
+
+    # Не глушим stderr полностью — пишем в лог-файл во временной папке,
+    # чтобы при неудаче можно было диагностировать (тkinter не запустился,
+    # netifaces не установлен и т.п.).
+    import tempfile, os
+    log_path = Path(tempfile.gettempdir()) / "vegarex_server_py.log"
+    try:
+        log_f = open(log_path, "w", encoding="utf-8")
+    except Exception:
+        log_f = subprocess.DEVNULL
+
     try:
         kwargs = {
             "cwd": str(server_path.parent),
-            "stdout": subprocess.DEVNULL,
-            "stderr": subprocess.DEVNULL,
+            "stdout": log_f,
+            "stderr": log_f,
             "stdin": subprocess.DEVNULL,
             "close_fds": True,
         }
         if sys.platform == "win32":
-            DETACHED_PROCESS = 0x00000008
+            # CREATE_NEW_PROCESS_GROUP — чтобы Ctrl+C VEGAREX не убил мост.
+            # DETACHED_PROCESS НЕ ставим — Tk-окно может его не любить.
             CREATE_NEW_PROCESS_GROUP = 0x00000200
-            kwargs["creationflags"] = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+            kwargs["creationflags"] = CREATE_NEW_PROCESS_GROUP
         else:
             kwargs["start_new_session"] = True
 
-        subprocess.Popen([sys.executable, str(server_path)], **kwargs)
+        proc = subprocess.Popen([py_exe, str(server_path)], **kwargs)
     except Exception as exc:
         return JSONResponse({
             "ok": False,
@@ -1993,18 +2025,44 @@ async def launch_server_py():
 
     # 4) Подождём пару секунд, проверим что порт поднялся.
     import asyncio as _aio
-    await _aio.sleep(1.5)
+    await _aio.sleep(2.0)
+
+    # Проверка: процесс не упал?
+    rc = proc.poll()
+    if rc is not None and rc != 0:
+        # Процесс умер — читаем лог
+        tail = ""
+        try:
+            tail = log_path.read_text(encoding="utf-8", errors="ignore")[-2000:]
+        except Exception:
+            pass
+        return JSONResponse({
+            "ok": False,
+            "status": "crashed",
+            "message": (
+                f"server.py упал сразу после запуска (exit code {rc}). "
+                f"Лог: {log_path}\n\n{tail}"
+            ),
+        }, status_code=500)
+
     if _port_open("127.0.0.1", 41235):
         return JSONResponse({
             "ok": True,
             "status": "started",
             "message": "server.py запущен. Откройте его окно и нажмите «Соединить».",
         })
+
     return JSONResponse({
         "ok": True,
         "status": "started_no_port",
-        "message": "Процесс запущен, но порт 41235 пока не отвечает. "
-                   "Проверьте окно server.py — возможно, требует ручного «Соединить».",
+        "message": (
+            "Процесс запущен (PID " + str(proc.pid) + "), но порт 41235 пока не отвечает. "
+            "Возможные причины:\n"
+            "  • окно «Car Server» открылось, но «Соединить» ещё не нажат — нажмите его;\n"
+            "  • окно не появилось — проверьте таскбар или лог: " + str(log_path) + ";\n"
+            "  • не установлены зависимости (websockets, pyserial, serial_asyncio).\n"
+            f"Если ничего не помогло — запустите вручную: python {server_path}"
+        ),
     })
 
 

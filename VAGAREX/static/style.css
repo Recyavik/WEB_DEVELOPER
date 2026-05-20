@@ -46,6 +46,43 @@
    рабочие экраны (Управление и пр.) не затронуты. */
 html:has(body.page-docs) { font-size: 18px; }
 
+/* Единый стиль обычного текста для всех страниц справки:
+   обычный текст серый (читается спокойно), акценты остаются яркими.
+   Применяется внутри .card и .help-grid — основных контейнеров доков. */
+body.page-docs .card p,
+body.page-docs .card li,
+body.page-docs .card td,
+body.page-docs .card .hint,
+body.page-docs .help-card p,
+body.page-docs .help-card__desc,
+body.page-docs .subtitle {
+  color: var(--text-dim);
+}
+/* Акценты остаются яркими */
+body.page-docs .card strong,
+body.page-docs .card th,
+body.page-docs .card h1,
+body.page-docs .card h2,
+body.page-docs .card h3,
+body.page-docs .card h4,
+body.page-docs .help-card__title,
+body.page-docs .help-card h2 {
+  color: var(--text);
+}
+/* h3 — акцентный синий (как было) */
+body.page-docs .card h3,
+body.page-docs .alg-card h3 {
+  color: var(--accent);
+}
+/* Код — яркий с фоном (того же размера, что окружающий текст) */
+body.page-docs code {
+  background: var(--bg-panel);
+  padding: 0.05rem 0.3rem;
+  border-radius: 3px;
+  color: var(--text);
+  font-size: 1em;
+}
+
 body {
   font-family: var(--font);
   background:  var(--bg);

@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="/static/style.css?v={{ robot_version }}">
   {% block head %}{% endblock %}
 </head>
-<body class="{% if request.url.path in ['/help', '/training', '/system', '/maneuvers', '/about'] %}page-docs{% endif %}">
+<body class="{% if request.url.path in ['/help', '/training', '/system', '/maneuvers', '/hardware', '/about'] %}page-docs{% endif %}">
 
 <header class="topbar">
   <div class="topbar__brand">
@@ -30,8 +30,8 @@
       ⚙️ Настройки
     </a>
     {# Справка — хаб-страница со списком разделов и описаниями.
-       Активна также для дочерних страниц (Инструкция / API / Маневры). #}
-    {% set _help_paths = ('/help', '/training', '/system', '/maneuvers') %}
+       Активна также для дочерних страниц (Инструкция / API / Маневры / Реальный 1Т REX). #}
+    {% set _help_paths = ('/help', '/training', '/system', '/maneuvers', '/hardware') %}
     <a href="/help"
        class="nav-link {% if request.url.path in _help_paths %}nav-link--active{% endif %}">
       📖 Справка
