@@ -4,61 +4,12 @@
 
 {% block head %}
 <style>
-  .hw-page {
-    max-width: 1100px; margin: 0 auto; padding: 0.4rem 0.6rem 2rem;
-    /* Базовый шрифт страницы — крупнее на 1-2 пт по сравнению с дефолтом */
-    font-size: 1.02rem;
-    color: var(--text-dim);
-  }
-  .toc { font-size: 0.95rem; line-height: 1.6; margin-bottom: 1rem; color: var(--text-dim); }
-  .toc a { color: var(--accent); text-decoration: none; }
-  .toc a:hover { text-decoration: underline; }
+  /* Типографика, цвета, h3-акценты, таблицы, pre с подсветкой, .note/.warn,
+     TOC и др. — едины для всех справок, см. body.page-docs в style.css.
+     Здесь только то, что специфично для /hardware. */
+  .hw-page { max-width: 1100px; margin: 0 auto; padding: 0.4rem 0.6rem 2rem; }
   .hw-page section { margin-bottom: 1.3rem; }
-  .hw-page h2 { font-size: 1.25rem; margin-top: 1rem; color: var(--text); }
-  .hw-page h3 { font-size: 1.08rem; color: var(--accent); margin-top: 0.9rem; }
-  .hw-page h4 { font-size: 1rem; margin-top: 0.7rem; color: var(--text); }
-  .hw-page p, .hw-page li { line-height: 1.5; color: var(--text-dim); }
-  .hw-page strong { color: var(--text); }   /* акценты остаются яркими */
-  .hw-page ol, .hw-page ul {
-    padding-left: 1.6rem;
-    margin: 0.4rem 0;
-  }
-  .hw-page ol ul, .hw-page ul ul, .hw-page ol ol { margin: 0.3rem 0; }
-  .hw-page li { margin-bottom: 0.25rem; }
-  /* <code> теперь того же размера, что окружающий текст */
-  .hw-page code {
-    background: var(--bg-panel); padding: 0.1rem 0.3rem;
-    border-radius: 3px; font-size: 1em;
-    color: var(--text);
-  }
-  .hw-page pre {
-    background: #0d1117; border: 1px solid var(--border);
-    border-radius: 6px; padding: 0.7rem 0.9rem; overflow-x: auto;
-    font-family: monospace; font-size: 0.82rem; line-height: 1.45;
-    color: #c9d1d9; white-space: pre; margin: 0.5rem 0;
-  }
-  .hw-page pre .c { color: #7ee787; }   /* комментарии */
-  .hw-page pre .k { color: #ff7b72; }   /* keywords */
-  .hw-page pre .s { color: #a5d6ff; }   /* строки */
-  .hw-page .note {
-    background: color-mix(in srgb, var(--accent) 8%, transparent);
-    border-left: 3px solid var(--accent);
-    padding: 0.6rem 0.85rem; border-radius: 4px;
-    margin: 0.6rem 0;
-  }
-  .hw-page .warn {
-    background: color-mix(in srgb, #f0883e 10%, transparent);
-    border-left: 3px solid #f0883e;
-    padding: 0.6rem 0.85rem; border-radius: 4px;
-    margin: 0.6rem 0;
-  }
-  .hw-page table { width: 100%; border-collapse: collapse; margin: 0.5rem 0; font-size: 0.98rem; }
-  .hw-page th, .hw-page td {
-    border: 1px solid var(--border);
-    padding: 0.45rem 0.65rem; text-align: left; vertical-align: top;
-    color: var(--text-dim);
-  }
-  .hw-page th { background: var(--bg-panel); color: var(--text); }
+
   .arch-diagram {
     background: #0d1117; border: 1px solid var(--border);
     border-radius: 6px; padding: 0.9rem 1.1rem; margin: 0.6rem 0;

@@ -4,28 +4,20 @@
 
 {% block head %}
 <style>
-  .toc { font-size: 0.85rem; line-height: 1.6; }
-  .toc a { color: var(--accent); text-decoration: none; }
-  .toc a:hover { text-decoration: underline; }
+  /* Базовая типографика (font-size, цвета, h3-акценты, .toc, code, table)
+     — едина для всех справок, см. body.page-docs в style.css.
+     Здесь только то, что специфично для /maneuvers (alg-grid, alg-svg,
+     formula, alg-code, params-list, svg-* инлайн-классы). */
 
   .alg-card { padding-bottom: 0.5rem; }
+  /* h3 в .alg-card — пунктирная разделительная линия снизу (уникально). */
   .alg-card h3 {
-    font-size: 1.05rem;
     margin: 1.4rem 0 0.6rem;
-    color: var(--accent);
     border-bottom: 1px dashed var(--border);
     padding-bottom: 0.25rem;
   }
   .alg-card h3:first-child { margin-top: 0; }
-  .alg-card h4 {
-    font-size: 0.95rem;
-    margin: 1rem 0 0.4rem;
-    color: var(--text-strong, #e6edf3);
-  }
   .alg-card h4.example-title { color: #d2a8ff; margin-top: 0.8rem; }
-  .alg-card p, .alg-card ul, .alg-card ol { font-size: 0.9rem; line-height: 1.55; }
-  .alg-card ul, .alg-card ol { margin-left: 1.2rem; }
-  .alg-card li { margin-bottom: 0.25rem; }
 
   .alg-grid {
     display: grid;

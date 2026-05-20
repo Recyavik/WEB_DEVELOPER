@@ -46,9 +46,18 @@
    рабочие экраны (Управление и пр.) не затронуты. */
 html:has(body.page-docs) { font-size: 18px; }
 
-/* Единый стиль обычного текста для всех страниц справки:
-   обычный текст серый (читается спокойно), акценты остаются яркими.
-   Применяется внутри .card и .help-grid — основных контейнеров доков. */
+/* ═══════════════════════════════════════════════════════════════════════════
+   Единый стиль страниц справки (page-docs).
+   Применяется ко всем разделам: /help, /training, /system, /maneuvers,
+   /hardware, /about. Цель — одинаковая типографика, цветовая иерархия,
+   читаемые таблицы, акцентные подзаголовки h3 голубым.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Базовый размер текста и цвет — обычный текст серый, акценты ярче. */
+body.page-docs .card,
+body.page-docs .help-card {
+  font-size: 1.02rem;          /* +1-2 пт от дефолта */
+}
 body.page-docs .card p,
 body.page-docs .card li,
 body.page-docs .card td,
@@ -57,24 +66,33 @@ body.page-docs .help-card p,
 body.page-docs .help-card__desc,
 body.page-docs .subtitle {
   color: var(--text-dim);
+  line-height: 1.5;
 }
-/* Акценты остаются яркими */
+
+/* Акценты (strong, th, заголовки) — яркие. */
 body.page-docs .card strong,
 body.page-docs .card th,
 body.page-docs .card h1,
 body.page-docs .card h2,
-body.page-docs .card h3,
 body.page-docs .card h4,
 body.page-docs .help-card__title,
 body.page-docs .help-card h2 {
   color: var(--text);
 }
-/* h3 — акцентный синий (как было) */
+
+/* Размеры заголовков. */
+body.page-docs .card h2 { font-size: 1.25rem; margin-top: 1rem; }
+body.page-docs .card h4 { font-size: 1rem;    margin-top: 0.7rem; }
+
+/* h3 — подзаголовок: акцентный голубой, чуть крупнее обычного текста. */
 body.page-docs .card h3,
 body.page-docs .alg-card h3 {
   color: var(--accent);
+  font-size: 1.08rem;
+  margin-top: 0.9rem;
 }
-/* Код — яркий с фоном (того же размера, что окружающий текст) */
+
+/* Код — яркий с фоном, того же размера что окружение. */
 body.page-docs code {
   background: var(--bg-panel);
   padding: 0.05rem 0.3rem;
@@ -82,6 +100,77 @@ body.page-docs code {
   color: var(--text);
   font-size: 1em;
 }
+
+/* Таблицы справки — выравнивание ячеек + светлая шапка. */
+body.page-docs .card table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.5rem 0;
+  font-size: 0.98rem;
+}
+body.page-docs .card th,
+body.page-docs .card td {
+  border: 1px solid var(--border);
+  padding: 0.45rem 0.65rem;
+  text-align: left;
+  vertical-align: top;
+}
+body.page-docs .card th { background: var(--bg-panel); }
+
+/* Списки внутри карточек — нормальный отступ под маркеры. */
+body.page-docs .card ol,
+body.page-docs .card ul {
+  padding-left: 1.6rem;
+  margin: 0.4rem 0;
+}
+body.page-docs .card ol ul,
+body.page-docs .card ul ul,
+body.page-docs .card ol ol { margin: 0.3rem 0; }
+body.page-docs .card li { margin-bottom: 0.25rem; }
+
+/* Блоки `<pre>` — подсветка как в /hardware и /maneuvers. */
+body.page-docs .card pre {
+  background: #0d1117;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.7rem 0.9rem;
+  overflow-x: auto;
+  font-family: monospace;
+  font-size: 0.95rem;
+  line-height: 1.45;
+  white-space: pre;
+  color: #c9d1d9;
+  margin: 0.5rem 0;
+}
+body.page-docs .card pre .c { color: #7ee787; }   /* комментарии — зелёный */
+body.page-docs .card pre .k { color: #ff7b72; }   /* keywords    — красный */
+body.page-docs .card pre .s { color: #a5d6ff; }   /* строки      — голубой */
+
+/* Callout «note» — общий стиль для всех справок. */
+body.page-docs .card .note {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-left: 3px solid var(--accent);
+  padding: 0.6rem 0.85rem;
+  border-radius: 4px;
+  margin: 0.6rem 0;
+}
+body.page-docs .card .warn {
+  background: color-mix(in srgb, #f0883e 10%, transparent);
+  border-left: 3px solid #f0883e;
+  padding: 0.6rem 0.85rem;
+  border-radius: 4px;
+  margin: 0.6rem 0;
+}
+
+/* TOC (оглавление) — одинаковый стиль в /maneuvers и /hardware. */
+body.page-docs .card .toc {
+  font-size: 0.95rem;
+  line-height: 1.6;
+  color: var(--text-dim);
+  margin-bottom: 1rem;
+}
+body.page-docs .card .toc a { color: var(--accent); text-decoration: none; }
+body.page-docs .card .toc a:hover { text-decoration: underline; }
 
 body {
   font-family: var(--font);

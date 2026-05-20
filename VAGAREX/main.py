@@ -1968,16 +1968,32 @@ async def launch_server_py():
         }, status_code=404)
 
     # 3) Запустить отдельным процессом.
-    #    Если VEGAREX крутится в Docker — GUI-окно tkinter не сможет
-    #    появиться (нет DISPLAY/доступа к рабочему столу хоста).
-    if Path("/.dockerenv").exists():
+    #    Если VEGAREX крутится в Docker под Linux — GUI-окно tkinter не
+    #    сможет появиться (нет DISPLAY / доступа к рабочему столу хоста).
+    #    На Windows / macOS этот файл может оказаться валидным путём
+    #    (например, корень диска C:\.dockerenv) — поэтому проверяем
+    #    только на Linux + наличие cgroup-сигнатуры Docker.
+    in_docker = False
+    if sys.platform.startswith("linux"):
+        try:
+            if Path("/.dockerenv").is_file():
+                in_docker = True
+            else:
+                cg = Path("/proc/1/cgroup")
+                if cg.exists():
+                    txt = cg.read_text(errors="ignore")
+                    in_docker = ("docker" in txt) or ("containerd" in txt)
+        except Exception:
+            in_docker = False
+    if in_docker:
         return JSONResponse({
             "ok": False,
             "status": "docker_no_gui",
             "message": (
-                "VEGAREX запущен в Docker — окно server.py не может появиться "
-                "на хосте (контейнер не имеет доступа к рабочему столу). "
-                f"Запустите вручную на хосте: python {server_path.name}"
+                "VEGAREX запущен в Docker-контейнере — GUI-окно server.py "
+                "не может появиться на хосте (контейнер не видит рабочего "
+                "стола). Запустите вручную на хосте: "
+                f"python {server_path}"
             ),
         }, status_code=400)
 
