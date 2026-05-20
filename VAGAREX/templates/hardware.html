@@ -54,7 +54,7 @@
       <a href="#a-modes">три режима</a> ·
       <a href="#a-pipeline">путь сигнала</a>
     <br><strong>2. Подключение</strong> —
-      <a href="#a-bridge">через server.py (рекомендуется)</a> ·
+      <a href="#a-bridge">через bridge.py (рекомендуется)</a> ·
       <a href="#a-tcp">прямой TCP к REX Board</a> ·
       <a href="#a-sim">симулятор</a>
     <br><strong>3. Использование</strong> —
@@ -96,13 +96,13 @@
         <td>Ничего — всё в браузере</td>
       </tr>
       <tr>
-        <td><strong>Мост <code>server.py</code></strong> (host: <code>ws://...</code>)</td>
+        <td><strong>Мост <code>bridge.py</code></strong> (host: <code>ws://...</code>)</td>
         <td>Боевой режим: голос + физический 1Т REX</td>
-        <td>Запущенный <code>server.py</code>, подключённый ESP32 (WiFi или USB)</td>
+        <td>Запущенный <code>bridge.py</code>, подключённый ESP32 (WiFi или USB)</td>
       </tr>
       <tr>
         <td><strong>Прямой TCP</strong> (host: <code>IP:port</code>)</td>
-        <td>Старая плата REX Board без <code>server.py</code></td>
+        <td>Старая плата REX Board без <code>bridge.py</code></td>
         <td>Робот в той же WiFi-сети, открытый TCP-порт</td>
       </tr>
     </tbody>
@@ -117,7 +117,7 @@
                                         <span class="ar">↓</span>
                               <span class="net">ws://127.0.0.1:41235</span>
                                         <span class="ar">↓</span>
-                                   <span class="hl">server.py</span>
+                                   <span class="hl">bridge.py</span>
                                         <span class="ar">↓</span> <span class="lbl">(WiFi или USB-Serial)</span>
                                 <span class="hl">ESP32 / 1Т REX</span></div>
 
@@ -126,7 +126,7 @@
     NLU (<code>nlu.py</code>) парсит, <code>session.py</code> исполняет
     шаблон манёвра (face / goto / forward / arc / ...), который через
     <code>BridgeDriver</code> шлёт примитивные команды (<code>MOVE:40</code>,
-    <code>ANGLE:36</code>) на <code>server.py</code>. <code>server.py</code> —
+    <code>ANGLE:36</code>) на <code>bridge.py</code>. <code>bridge.py</code> —
     прозрачный мост, который пересылает их на ESP32 по WiFi-WebSocket
     или USB-Serial.
   </p>
@@ -146,50 +146,64 @@
 <section class="card">
   <h2 class="card__title">2. Подключение</h2>
 
-  <h3 id="a-bridge">2.1. Через <code>server.py</code> (рекомендуется)</h3>
+  <h3 id="a-bridge">2.1. Через <code>bridge.py</code> (рекомендуется)</h3>
 
-  <h4>Что такое <code>server.py</code></h4>
+  <h4>Что такое <code>bridge.py</code></h4>
   <p>
-    Отдельная программа на Python с GUI (tkinter), которая работает
-    «прозрачным мостом» между браузером и ESP32. Имеет два WebSocket-сервера:
-    один для клиентов (порт <strong>41235</strong>), второй для самого
-    робота (порт <strong>8080</strong>). Также умеет общаться с ESP32 через
-    USB-Serial (если робот подключён кабелем).
+    Лёгкий headless-скрипт (~140 строк, без GUI), который работает
+    «прозрачным мостом» между VEGAREX и ESP32. Лежит в репозитории
+    в папке <code>VAGAREX/bridge.py</code>. Открывает два
+    WebSocket-сервера: <strong>:41235</strong> для VEGAREX/браузера и
+    <strong>:8080</strong> для ESP32 по WiFi. По флагу <code>--com</code>
+    дополнительно подключается к ESP32 по USB-Serial.
   </p>
 
-  <h4>Шаги подключения</h4>
+  <h4>Установка зависимостей (один раз)</h4>
+  <p>В PowerShell или терминале на хосте (вашем ПК):</p>
+  <pre>pip install websockets pyserial-asyncio</pre>
+  <p>
+    <code>websockets</code> — обязательно (релей);
+    <code>pyserial-asyncio</code> — только для USB-режима, можно поставить позже.
+  </p>
+
+  <h4>Запуск моста</h4>
+  <p>Два варианта:</p>
   <ol>
-    <li>Запустите <code>server.py</code> на компьютере (двойной клик или
-        <code>python server.py</code>). Откроется окно «Car Server».</li>
-    <li>В GUI выберите <strong>IP-адрес ПК</strong> (тот, к которому
-        подключится ESP32) и нажмите <strong>«Соединить»</strong>.</li>
-    <li>Подключите робота:
-      <ul>
-        <li><strong>WiFi:</strong> ESP32 загружен прошивкой, знает SSID
-            вашей сети и IP-адрес ПК. Подключится сам, как только
-            <code>server.py</code> запущен. Признак — индикатор «Машинка»
-            в GUI стал зелёным.</li>
-        <li><strong>USB:</strong> кабель в USB-порт ПК. В GUI
-            <code>server.py</code> выберите COM-порт и при отправке команд
-            ставьте <code>usb=true</code> (VEGAREX делает это автоматически,
-            если host начинается с <code>ws://</code>; для прямого USB —
-            см. <code>server.py</code> GUI).</li>
-      </ul>
+    <li><strong>Автоматически из VEGAREX:</strong>
+        Настройки → «Соединение с роботом» → кнопка <strong>🚀 Запустить
+        bridge.py</strong>. Сработает только если VEGAREX запущен
+        локально (не из Docker, не на проде). Запустит мост в WiFi-режиме
+        (без USB) фоновым процессом.</li>
+    <li><strong>Вручную из терминала:</strong>
+        <pre>cd m:\WEB_DEVELOPER\VAGAREX
+python bridge.py                # только WiFi
+python bridge.py --com COM3     # WiFi + USB-Serial (для COM3)</pre>
+        Окно с логами должно остаться открытым. Можно закрыть Ctrl+C.
     </li>
-    <li>В VEGAREX → Настройки → <strong>Соединение с роботом</strong>:
-      <ul>
-        <li>Снимите галочку <strong>«Включить симулятор»</strong>.</li>
-        <li>В поле <strong>«Адрес»</strong> впишите <code>ws://127.0.0.1:41235</code>
-            (если <code>server.py</code> на этом же ПК) или адрес другого ПК
-            с <code>server.py</code>.</li>
-        <li>Поле <strong>«Порт»</strong> для WS-режима игнорируется
-            (порт уже в URL), но должно быть валидным значением.</li>
-        <li>Нажмите <strong>«Сохранить»</strong> — соединение переустановится.</li>
-      </ul>
-    </li>
-    <li>Готово. Все команды (кнопки, голос, Python-код) идут через мост на
-        реальный робот.</li>
   </ol>
+
+  <p>В логах увидите:</p>
+  <ul>
+    <li><code>[BROWSER] подключён</code> — VEGAREX установил соединение</li>
+    <li><code>[ESP32] подключён</code> — робот вышел на связь по WiFi</li>
+    <li><code>[→WiFi] MOVE:40</code> / <code>[→USB] ...</code> — поток команд от VEGAREX</li>
+    <li><code>[WiFi→]</code> / <code>[USB→]</code> — ответы робота</li>
+  </ul>
+
+  <h4>Настройки VEGAREX</h4>
+  <p>В <strong>Настройки → Соединение с роботом</strong>:</p>
+  <ul>
+    <li>Снимите галочку <strong>«Включить симулятор»</strong></li>
+    <li>В поле <strong>«Адрес»</strong> впишите один из:
+      <ul>
+        <li><code>ws://host.docker.internal:41235</code> — VEGAREX в Docker, мост на хосте</li>
+        <li><code>ws://127.0.0.1:41235</code> — VEGAREX и bridge.py на одном ПК (без Docker)</li>
+        <li><code>ws://192.168.x.y:41235</code> — мост на другом ПК в той же сети</li>
+      </ul>
+    </li>
+    <li>Поле <strong>«Порт»</strong> для WS-режима не используется (порт уже в URL)</li>
+    <li>Нажмите <strong>«Сохранить»</strong> — соединение переустановится</li>
+  </ul>
 
   <p class="note">
     Робот сам разместить препятствия не сможет — координаты опасных зон
@@ -199,7 +213,7 @@
 
   <h3 id="a-tcp">2.2. Прямой TCP к REX Board</h3>
   <p>
-    Старый режим — без <code>server.py</code>, напрямую к плате REX Board
+    Старый режим — без <code>bridge.py</code>, напрямую к плате REX Board
     по WiFi. В Настройках:
   </p>
   <ul>
@@ -215,7 +229,7 @@
 
   <h3 id="a-sim">2.3. Симулятор (без железа)</h3>
   <p>
-    Поставьте галочку «Включить симулятор». Никакого <code>server.py</code> или
+    Поставьте галочку «Включить симулятор». Никакого <code>bridge.py</code> или
     робота не нужно. Виртуальная физика, голосовые команды, миссии — всё в
     браузере. Идеально для разработки алгоритмов до выезда на поле.
   </p>

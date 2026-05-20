@@ -1916,54 +1916,61 @@ async def library_load_submit(kind: str, route_id: int,
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Запуск server.py (моста к 1Т REX) прямо из VEGAREX
+# Запуск bridge.py (моста к 1Т REX) прямо из VEGAREX
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@app.post("/api/launch_server")
-async def launch_server_py(request: Request):
-    """Запустить server.py (мост браузер⇄ESP32) как отдельный процесс.
+@app.post("/api/launch_bridge")
+async def launch_bridge(request: Request):
+    """Запустить bridge.py (мост браузер⇄ESP32) как отдельный процесс.
 
-    Файл server.py лежит в корне репозитория, рядом с папкой VAGAREX/.
-    Запускаем через текущий Python-интерпретатор, ОТСОЕДИНЁННЫМ процессом
-    (Windows: DETACHED_PROCESS; POSIX: start_new_session=True), чтобы он
-    выжил перезапуск VEGAREX и не сидел чайлдом FastAPI.
+    bridge.py — headless-релей WebSocket'ов (без tkinter). Лежит в
+    VAGAREX/bridge.py. Запускаем через текущий Python-интерпретатор,
+    отсоединённым процессом, чтобы он выжил перезапуск VEGAREX и не
+    сидел чайлдом FastAPI.
 
     Перед запуском пингуем ws://127.0.0.1:41235 — если уже отвечает,
-    повторно не запускаем.
+    повторно не запускаем. USB-режим (--com) при автозапуске не
+    подключается; для USB нужно запустить bridge.py вручную:
+        python bridge.py --com COM3
     """
     import sys
     import subprocess
     import socket
     from pathlib import Path
 
-    # 1) Проверка: server.py уже запущен? Простой TCP-пинг порта 41235.
-    def _port_open(host: str, port: int, timeout: float = 0.3) -> bool:
+    # 1) Проверка: bridge уже запущен? Пингуем порт 41235 на нескольких
+    #    возможных адресах. Если VEGAREX в Docker, а bridge.py на хосте —
+    #    нужно достукиваться через host.docker.internal (Windows/Mac Docker
+    #    Desktop) или адрес шлюза.
+    def _port_open(host: str, port: int, timeout: float = 0.4) -> bool:
         try:
             with socket.create_connection((host, port), timeout=timeout):
                 return True
         except Exception:
             return False
 
-    if _port_open("127.0.0.1", 41235):
-        return JSONResponse({
-            "ok": True,
-            "status": "already_running",
-            "message": "server.py уже запущен (порт 41235 отвечает).",
-        })
+    for probe_host in ("127.0.0.1", "host.docker.internal"):
+        if _port_open(probe_host, 41235):
+            return JSONResponse({
+                "ok": True,
+                "status": "already_running",
+                "message": (
+                    f"bridge.py уже запущен и слушает порт 41235 "
+                    f"(достижим по {probe_host}). "
+                    "VEGAREX подключится автоматически после Сохранить настроек."
+                ),
+            })
 
-    # 2) Найти server.py. Сначала смотрим внутри папки VAGAREX/ (там, где
-    #    main.py), затем — рядом с папкой (корень репозитория, fallback).
+    # 2) Найти bridge.py. Ищем внутри папки VAGAREX/ (там, где main.py).
     base = Path(__file__).parent
-    candidates = [base / "server.py", base.parent / "server.py"]
-    server_path = next((p for p in candidates if p.is_file()), None)
-    if server_path is None:
+    bridge_path = base / "bridge.py"
+    if not bridge_path.is_file():
         return JSONResponse({
             "ok": False,
             "status": "not_found",
             "message": (
-                "server.py не найден. Проверены пути:\n"
-                + "\n".join(f"  {p}" for p in candidates)
-                + "\nПоложите server.py в папку VAGAREX/ (рядом с main.py)."
+                f"bridge.py не найден по пути {bridge_path}. "
+                "Возможно файл не закоммичен или потерялся."
             ),
         }, status_code=404)
 
@@ -2006,27 +2013,28 @@ async def launch_server_py(request: Request):
                 "status": "remote_deploy",
                 "message": (
                     "Это удалённый деплой VEGAREX (домен " + host_no_port + ").\n\n"
-                    "Боевой режим (server.py + физический 1Т REX) работает "
+                    "Боевой режим (bridge.py + физический 1Т REX) работает "
                     "ТОЛЬКО при локальном запуске VEGAREX рядом с роботом — "
                     "прод-сервер в датацентре не может достучаться до робота "
                     "в вашей домашней сети.\n\n"
                     "Что делать:\n"
                     "  • На проде используйте режим «Симулятор» (галочка в Настройках)\n"
                     "  • Для боевого режима — клонируйте репо локально, поднимите "
-                    "VEGAREX и server.py на своём ПК, подключите 1Т REX к WiFi/USB"
+                    "VEGAREX и bridge.py на своём ПК, подключите 1Т REX к WiFi/USB"
                 ),
             }, status_code=400)
         # Локальный Docker — есть смысл подсказывать host.docker.internal.
         return JSONResponse({
             "ok": False,
-            "status": "docker_no_gui",
+            "status": "docker_no_can_launch",
             "message": (
-                "VEGAREX запущен в Docker — кнопка не может открыть GUI на "
-                "хосте (контейнер не видит рабочего стола и USB-портов).\n\n"
-                "Запустите server.py вручную на хосте:\n"
-                f"  python {server_path.name}\n"
-                "(файл лежит рядом с docker-compose.yml — это та же копия, "
-                f"что у контейнера в {server_path})\n\n"
+                "VEGAREX запущен в Docker — кнопка не может запустить мост "
+                "на хосте, и в контейнере нет доступа к USB-портам робота.\n\n"
+                "Запустите bridge.py вручную на хосте Windows/macOS:\n"
+                f"  cd {bridge_path.parent.name}\n"
+                "  pip install websockets pyserial-asyncio\n"
+                "  python bridge.py              # только WiFi\n"
+                "  python bridge.py --com COM3   # WiFi + USB-Serial\n\n"
                 "В Настройках VEGAREX в поле «Адрес» используйте:\n"
                 "  ws://host.docker.internal:41235\n"
                 "(а не 127.0.0.1 — из контейнера это сам контейнер).\n"
@@ -2048,7 +2056,7 @@ async def launch_server_py(request: Request):
     # чтобы при неудаче можно было диагностировать (тkinter не запустился,
     # netifaces не установлен и т.п.).
     import tempfile, os
-    log_path = Path(tempfile.gettempdir()) / "vegarex_server_py.log"
+    log_path = Path(tempfile.gettempdir()) / "vegarex_bridge_py.log"
     try:
         log_f = open(log_path, "w", encoding="utf-8")
     except Exception:
@@ -2056,7 +2064,7 @@ async def launch_server_py(request: Request):
 
     try:
         kwargs = {
-            "cwd": str(server_path.parent),
+            "cwd": str(bridge_path.parent),
             "stdout": log_f,
             "stderr": log_f,
             "stdin": subprocess.DEVNULL,
@@ -2064,13 +2072,14 @@ async def launch_server_py(request: Request):
         }
         if sys.platform == "win32":
             # CREATE_NEW_PROCESS_GROUP — чтобы Ctrl+C VEGAREX не убил мост.
-            # DETACHED_PROCESS НЕ ставим — Tk-окно может его не любить.
+            # DETACHED_PROCESS — нет console-окна (bridge.py headless).
+            DETACHED_PROCESS = 0x00000008
             CREATE_NEW_PROCESS_GROUP = 0x00000200
-            kwargs["creationflags"] = CREATE_NEW_PROCESS_GROUP
+            kwargs["creationflags"] = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
         else:
             kwargs["start_new_session"] = True
 
-        proc = subprocess.Popen([py_exe, str(server_path)], **kwargs)
+        proc = subprocess.Popen([py_exe, str(bridge_path)], **kwargs)
     except Exception as exc:
         return JSONResponse({
             "ok": False,
@@ -2095,7 +2104,7 @@ async def launch_server_py(request: Request):
             "ok": False,
             "status": "crashed",
             "message": (
-                f"server.py упал сразу после запуска (exit code {rc}). "
+                f"bridge.py упал сразу после запуска (exit code {rc}). "
                 f"Лог: {log_path}\n\n{tail}"
             ),
         }, status_code=500)
@@ -2104,19 +2113,19 @@ async def launch_server_py(request: Request):
         return JSONResponse({
             "ok": True,
             "status": "started",
-            "message": "server.py запущен. Откройте его окно и нажмите «Соединить».",
+            "message": f"bridge.py запущен (PID {proc.pid}), слушает порт 41235. "
+                       "VEGAREX подключится автоматически после Сохранить.",
         })
 
     return JSONResponse({
         "ok": True,
         "status": "started_no_port",
         "message": (
-            "Процесс запущен (PID " + str(proc.pid) + "), но порт 41235 пока не отвечает. "
+            f"Процесс запущен (PID {proc.pid}), но порт 41235 пока не отвечает. "
             "Возможные причины:\n"
-            "  • окно «Car Server» открылось, но «Соединить» ещё не нажат — нажмите его;\n"
-            "  • окно не появилось — проверьте таскбар или лог: " + str(log_path) + ";\n"
-            "  • не установлены зависимости (websockets, pyserial, serial_asyncio).\n"
-            f"Если ничего не помогло — запустите вручную: python {server_path}"
+            "  • не установлены зависимости (pip install websockets pyserial-asyncio);\n"
+            f"  • смотрите лог: {log_path};\n"
+            f"  • если ничего не помогло — запустите вручную: python {bridge_path}"
         ),
     })
 

@@ -26,34 +26,26 @@
           <span>Включить симулятор (без реального робота)</span>
         </label>
       </div>
-      <p class="hint" style="margin-top:.5rem">
-        <strong>Три режима работы:</strong><br>
-        • <strong>Симулятор</strong> — поставь галочку. Виртуальный робот в браузере, железа не требуется.<br>
-        • <strong>Прямой TCP к 1Т REX</strong> — сними галочку, в адресе укажи IP робота (например <code>192.168.1.100</code>), порт по умолчанию <code>8765</code>.<br>
-        • <strong>Через мост server.py</strong> — сними галочку, в адресе укажи <code>ws://127.0.0.1:41235</code> (или адрес ПК с server.py). Поддерживает WiFi и USB-Serial — выбор в GUI <code>server.py</code>. Голосовые команды работают как в симуляторе, но крутят настоящий 1Т REX.
-      </p>
-      <p class="hint">
-        При изменении адреса/порта/режима соединение будет переустановлено автоматически.
+      <p class="hint" style="margin-top:.5rem; margin-bottom:0;">
+        Три режима: <strong>🖥 Симулятор</strong> (галочка), <strong>🔌 Через
+        мост <code>bridge.py</code></strong> (адрес <code>ws://...</code>),
+        <strong>📡 Прямой TCP</strong> (IP без <code>ws://</code>).
+        Подробная инструкция — в справке. При изменении адреса/порта/режима
+        соединение переустановится автоматически.
       </p>
 
       <div style="margin-top:0.7rem; display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
-        <button id="btn-launch-server-py" type="button" class="btn"
+        <button id="btn-launch-bridge" type="button" class="btn"
                 style="font-size:0.85rem;"
-                title="Запустить server.py из репозитория (мост браузер⇄ESP32) отдельным процессом">
-          🚀 Запустить server.py
+                title="Запустить bridge.py (мост к 1Т REX) на этом компьютере. Только WiFi-режим, для USB запускайте вручную с --com">
+          🚀 Запустить bridge.py
         </button>
         <a href="/hardware" class="btn" style="font-size:0.85rem;"
            title="Полная инструкция по подключению реального 1Т REX">
           📖 Справка: Реальный 1Т REX
         </a>
-        <span id="launch-server-status" class="hint" style="margin:0;"></span>
+        <span id="launch-bridge-status" class="hint" style="margin:0;"></span>
       </div>
-      <p class="hint" style="margin-top:0.4rem; font-size:0.8rem;">
-        Кнопка запускает <code>server.py</code> (мост к 1Т REX) на этом компьютере.
-        Используется только в режиме <code>ws://...</code>. После запуска откроется
-        окно «Car Server» — нажмите там «Соединить» и подключите робота
-        (WiFi или USB). Подробности — в справке.
-      </p>
     </section>
 
     <!-- Движение -->
@@ -331,33 +323,24 @@
 </div>
 
 <script>
-// Запуск server.py из приложения. POST /api/launch_server, показываем
-// статус в #launch-server-status (текст рядом с кнопкой).
-//
-// На удалённом деплое (vegarex.dev.appswire.ru и т.п.) кнопка
-// блокируется: server.py должен крутиться рядом с роботом, а не
-// в датацентре. Боевой режим работает только при локальном запуске
-// VEGAREX (localhost / LAN-IP).
+// Кнопка «Запустить bridge.py» — POST /api/launch_bridge.
+// На удалённом деплое блокируется (мост должен крутиться рядом с роботом).
 (function() {
-  const btn = document.getElementById('btn-launch-server-py');
-  const status = document.getElementById('launch-server-status');
+  const btn = document.getElementById('btn-launch-bridge');
+  const status = document.getElementById('launch-bridge-status');
   if (!btn || !status) return;
 
-  // Детектор «локальный ли это запуск VEGAREX»
   const h = window.location.hostname;
   const isLocal = h === 'localhost' || h === '127.0.0.1' || h === '::1' ||
-                  /^192\.168\./.test(h) ||
-                  /^10\./.test(h) ||
+                  /^192\.168\./.test(h) || /^10\./.test(h) ||
                   /^172\.(1[6-9]|2[0-9]|3[01])\./.test(h);
 
   if (!isLocal) {
     btn.disabled = true;
     btn.style.opacity = '0.5';
     btn.style.cursor = 'not-allowed';
-    btn.title = 'Доступно только при локальном запуске VEGAREX (вместе с роботом)';
-    status.textContent = '⚠ Удалённый деплой: боевой режим (server.py + физический 1Т REX) ' +
-                         'работает только при локальном запуске VEGAREX рядом с роботом. ' +
-                         'На прод-сайте — только симулятор.';
+    btn.title = 'Удалённый деплой: мост запускается только локально, рядом с роботом';
+    status.textContent = '⚠ Удалённый деплой: для боевого режима VEGAREX и bridge.py должны быть на одном ПК рядом с роботом.';
     status.style.color = '#f0883e';
     return;
   }
@@ -369,16 +352,12 @@
     status.textContent = '';
     status.style.color = '';
     try {
-      const r = await fetch('/api/launch_server', {method: 'POST'});
+      const r = await fetch('/api/launch_bridge', {method: 'POST'});
       const j = await r.json();
       status.textContent = j.message || '';
-      if (j.ok) {
-        // Зелёный для «запустился», синий для «уже работает»
-        status.style.color = (j.status === 'already_running')
-          ? '#58a6ff' : '#3fb950';
-      } else {
-        status.style.color = '#f85149';
-      }
+      status.style.color = j.ok
+        ? (j.status === 'already_running' ? '#58a6ff' : '#3fb950')
+        : '#f85149';
     } catch (e) {
       status.textContent = 'Ошибка запроса: ' + e.message;
       status.style.color = '#f85149';
