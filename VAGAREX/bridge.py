@@ -27,11 +27,20 @@ bridge.py — лёгкий релей WebSocket'ов между VEGAREX и 1Т R
 import argparse
 import asyncio
 import json
+import logging
 import sys
 from datetime import datetime
 from typing import Optional
 
 import websockets
+
+# Глушим шумные warning'и websockets-сервера про невалидные TCP-пробы
+# (например /api/launch_bridge из VEGAREX делает plain-TCP коннект для
+# проверки «жив ли мост» — это не WS-handshake, библиотека печатает
+# огромный traceback, который пугает). Реальные ошибки на ERROR уровне
+# мы оставляем.
+logging.getLogger("websockets.server").setLevel(logging.ERROR)
+logging.getLogger("websockets.asyncio.server").setLevel(logging.ERROR)
 
 try:
     import serial_asyncio                       # noqa
