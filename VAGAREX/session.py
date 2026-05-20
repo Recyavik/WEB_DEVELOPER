@@ -254,6 +254,15 @@ class UserSession:
         self._effective_start_y: Optional[float] = None
         self._effective_start_heading: Optional[float] = None
 
+        # Контекст для финального сообщения «✓ X.» в журнале. Ставится
+        # верхнеуровневой командой ПЕРЕД запуском движения через
+        # dist_left; update_physics в конце сегмента эмиттит
+        # "✓ {_segment_label}." и сбрасывает в None. Если label = None,
+        # сообщения не будет (используется для внутренних под-сегментов
+        # K-turn / восьмёрки / спирали / bypass — они эмиттят
+        # единственную итоговую строку из вызывающего метода).
+        self._segment_label: Optional[str] = None
+
         # Множитель скорости визуализации движения (шестерёнка в шапке
         # панели кода). Применяется ТОЛЬКО к физике движения и паузам
         # между манёврами — robot.sleep() пользовательского кода, светодиод
@@ -1257,6 +1266,9 @@ class UserSession:
         # Если дальномер включен — физика остановит у стены, не доезжая
         # запрошенных см. Если выключен — поедет до коллизии (стенка симулятора).
         s.laser_stop = bool(self.cfg.laser_enabled)
+        # Лейбл для финального «✓ Вперёд N см.» в журнале.
+        if dist_cm:
+            self._segment_label = f"Вперёд {dist_cm:g} см"
         if dist_cm:
             try:
                 await self._wait_movement()
@@ -1276,6 +1288,8 @@ class UserSession:
         s.speed     = float(-spd)
         s.dist_left = float(dist_cm) if dist_cm else 0.0
         s.laser_stop = bool(self.cfg.laser_enabled)
+        if dist_cm:
+            self._segment_label = f"Назад {dist_cm:g} см"
         if dist_cm:
             try:
                 await self._wait_movement()
@@ -1385,6 +1399,8 @@ class UserSession:
             await self.robot.set_servo_center()
         if completed:
             s.heading = float(target_deg % 360)
+            await self.push_message(
+                f"✓ Курс {target_deg:.0f}°.", "success")
         await self.push_state()
 
     # ── Сложные маневры (круг / восьмерка / спираль / синусоида) ────────────
@@ -1536,6 +1552,10 @@ class UserSession:
         if sweep <= 0:
             return
         cancelled = False
+        # Лейбл для одиночной user-команды robot.arc(...). Внутри
+        # _arc_at_steer происходит ровно один dist_left сегмент.
+        self._segment_label = (
+            f"Дуга {sweep:g}° {'против часовой' if direction == -1 else 'по часовой'}")
         try:
             await self._arc_at_steer(steer, sweep, spd)
         except asyncio.CancelledError:
@@ -1577,6 +1597,7 @@ class UserSession:
         await self.push_state()
         if not cancelled:
             await self._graceful_finish("Восьмёрка")
+            await self.push_message("✓ Восьмёрка.", "success")
 
     async def _run_spiral(self, direction: int = 1, outward: bool = True):
         """Плавная спираль: робот непрерывно едет, угол руля линейно
@@ -1650,6 +1671,7 @@ class UserSession:
         await self.push_state()
         if not cancelled:
             await self._graceful_finish("Спираль")
+            await self.push_message("✓ Спираль.", "success")
 
     async def _run_bypass(self, start_dir: int = +1, max_steer: float = 36.0):
         """Объезд препятствия — одна S-волна на 2π:
@@ -1684,6 +1706,7 @@ class UserSession:
         await self.push_state()
         if not cancelled:
             await self._graceful_finish("Объезд")
+            await self.push_message("✓ Объезд.", "success")
 
     # ── Перейти в координату / домой ────────────────────────────────────────
 
@@ -2673,6 +2696,8 @@ class UserSession:
         # 1) Места достаточно — обычный K-turn без отъезда.
         if forward_have >= forward_need:
             await self._k_turn_to_heading(deg)
+            await self.push_message(
+                f"✓ Развернулся к {label} (курс {deg:.0f}°).", "success")
             return
 
         # Тесно. Проверяем, влезает ли хотя бы самый мелкий многошаговый
@@ -2700,6 +2725,8 @@ class UserSession:
             "↻ Тесно для обычного разворота — выполняю мелким многошаговым.",
             "info")
         await self._multi_step_kturn(deg)
+        await self.push_message(
+            f"✓ Развернулся к {label} (курс {deg:.0f}°).", "success")
 
     async def _kturn_clearance_ok(self, target_deg: float) -> bool:
         """Проверяет, достаточно ли места для K-turn'а БЕЗ отъезда.
@@ -4796,7 +4823,13 @@ class UserSession:
                     s.dist_left = 0
                     s.speed = 0
                     await self.robot.move(0)
-                    await self.push_message("Готово.", "success")
+                    # Если верхнеуровневая команда поставила label —
+                    # эмиттим именованное «✓ X.». Иначе молчим (внутренние
+                    # под-сегменты K-turn / восьмёрки / спирали / bypass).
+                    if self._segment_label:
+                        await self.push_message(
+                            f"✓ {self._segment_label}.", "success")
+                        self._segment_label = None
 
             await self.push_state()
 
