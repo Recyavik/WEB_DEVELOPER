@@ -1951,14 +1951,20 @@ async def launch_server_py():
             "message": "server.py уже запущен (порт 41235 отвечает).",
         })
 
-    # 2) Найти server.py — это рядом с папкой VAGAREX/ в корне репозитория.
-    server_path = Path(__file__).parent.parent / "server.py"
-    if not server_path.is_file():
+    # 2) Найти server.py. Сначала смотрим внутри папки VAGAREX/ (там, где
+    #    main.py), затем — рядом с папкой (корень репозитория, fallback).
+    base = Path(__file__).parent
+    candidates = [base / "server.py", base.parent / "server.py"]
+    server_path = next((p for p in candidates if p.is_file()), None)
+    if server_path is None:
         return JSONResponse({
             "ok": False,
             "status": "not_found",
-            "message": f"server.py не найден по пути {server_path}. "
-                       f"Положите файл в корень репозитория (рядом с папкой VAGAREX/).",
+            "message": (
+                "server.py не найден. Проверены пути:\n"
+                + "\n".join(f"  {p}" for p in candidates)
+                + "\nПоложите server.py в папку VAGAREX/ (рядом с main.py)."
+            ),
         }, status_code=404)
 
     # 3) Запустить отсоединённым процессом.
