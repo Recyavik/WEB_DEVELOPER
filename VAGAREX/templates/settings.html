@@ -11,11 +11,11 @@
     <section class="card">
       <h3 class="card__title">Соединение с роботом</h3>
       <div class="settings-grid">
-        <label class="settings-label">Адрес (IP/hostname)</label>
+        <label class="settings-label">Адрес (IP / hostname / WS-URL)</label>
         <input class="settings-input" type="text" name="host" value="{{ cfg.host }}"
-               placeholder="192.168.1.100" required>
+               placeholder="192.168.1.100 или ws://127.0.0.1:41235" required>
 
-        <label class="settings-label">Порт</label>
+        <label class="settings-label">Порт (для TCP)</label>
         <input class="settings-input" type="number" name="port" value="{{ cfg.port }}"
                min="1" max="65535" required>
 
@@ -27,6 +27,12 @@
         </label>
       </div>
       <p class="hint" style="margin-top:.5rem">
+        <strong>Три режима работы:</strong><br>
+        • <strong>Симулятор</strong> — поставь галочку. Виртуальный робот в браузере, железа не требуется.<br>
+        • <strong>Прямой TCP к 1Т REX</strong> — сними галочку, в адресе укажи IP робота (например <code>192.168.1.100</code>), порт по умолчанию <code>8765</code>.<br>
+        • <strong>Через мост server.py</strong> — сними галочку, в адресе укажи <code>ws://127.0.0.1:41235</code> (или адрес ПК с server.py). Поддерживает WiFi и USB-Serial — выбор в GUI <code>server.py</code>. Голосовые команды работают как в симуляторе, но крутят настоящий 1Т REX.
+      </p>
+      <p class="hint">
         При изменении адреса/порта/режима соединение будет переустановлено автоматически.
       </p>
     </section>

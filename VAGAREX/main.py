@@ -592,6 +592,16 @@ async def maneuvers_docs(request: Request,
     })
 
 
+@app.get("/hardware", response_class=HTMLResponse)
+async def hardware_docs(request: Request,
+                        current_user: User = Depends(require_user)):
+    """Раздел справки «Реальный 1Т REX» — подключение, запуск программ,
+    голосовые команды на железе, отладка через заглушку _Bridge."""
+    return templates.TemplateResponse(request, "hardware.html", {
+        "current_user": current_user,
+    })
+
+
 @app.get("/about", response_class=HTMLResponse)
 async def about_page(request: Request,
                      current_user: User = Depends(require_user)):
