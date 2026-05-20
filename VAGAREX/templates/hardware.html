@@ -54,6 +54,45 @@
     font-size: 0.85rem; white-space: pre; line-height: 1.4;
     overflow-x: auto;
   }
+  /* SVG-схема архитектуры */
+  .arch-svg {
+    display: block;
+    margin: 0.8rem auto;
+    max-width: 100%;
+    height: auto;
+    color: var(--text-dim);
+  }
+  .arch-svg rect.arch-box {
+    stroke: var(--border);
+    stroke-width: 1.5;
+    fill: var(--bg-panel);
+  }
+  .arch-svg .arch-box--voice  { fill: color-mix(in srgb, #a371f7 18%, var(--bg-panel)); stroke: #a371f7; }
+  .arch-svg .arch-box--browser { fill: color-mix(in srgb, #58a6ff 18%, var(--bg-panel)); stroke: #58a6ff; }
+  .arch-svg .arch-box--server  { fill: color-mix(in srgb, #3fb950 18%, var(--bg-panel)); stroke: #3fb950; }
+  .arch-svg .arch-box--bridge  { fill: color-mix(in srgb, #f0883e 18%, var(--bg-panel)); stroke: #f0883e; }
+  .arch-svg .arch-box--hw      { fill: color-mix(in srgb, #f85149 18%, var(--bg-panel)); stroke: #f85149; }
+  .arch-svg .arch-title {
+    font: 600 14px/1 system-ui, sans-serif;
+    fill: var(--text);
+  }
+  .arch-svg .arch-sub {
+    font: 11px/1 system-ui, sans-serif;
+    fill: var(--text-dim);
+  }
+  .arch-svg .arch-code {
+    font: 11px ui-monospace, Consolas, monospace;
+    fill: var(--text);
+  }
+  .arch-svg .arch-arrow {
+    stroke: var(--text-dim);
+    stroke-width: 2;
+    fill: none;
+  }
+  .arch-svg .arch-label {
+    font: 11px ui-monospace, Consolas, monospace;
+    fill: var(--accent);
+  }
   .kbd {
     background: var(--bg-panel); border: 1px solid var(--border);
     border-bottom-width: 2px; border-radius: 3px;
@@ -140,16 +179,54 @@
 
   <h3 id="a-pipeline">1.2. Путь сигнала (с мостом)</h3>
 
-  <div class="arch-diagram">голос (Web Speech API) → браузер → VEGAREX FastAPI server
-                                        ↓ NLU
-                                        ↓ _run_forward / _run_arc / face / goto / ...
-                                        ↓ self.robot ← BridgeDriver
-                                        ↓
-                              ws://127.0.0.1:41235
-                                        ↓
-                                   server.py
-                                        ↓ (WiFi или USB-Serial)
-                                ESP32 / 1Т REX</div>
+  <svg class="arch-svg" viewBox="0 0 600 600" xmlns="http://www.w3.org/2000/svg"
+       role="img" aria-label="Путь сигнала от голоса до ESP32">
+    <defs>
+      <marker id="arch-arrowhead" viewBox="0 0 10 10" refX="9" refY="5"
+              markerWidth="7" markerHeight="7" orient="auto">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--text-dim)"/>
+      </marker>
+    </defs>
+
+    <!-- 1. Голос -->
+    <rect class="arch-box arch-box--voice" x="180" y="10" width="240" height="60" rx="8"/>
+    <text class="arch-title" x="300" y="35" text-anchor="middle">🎙 Голос</text>
+    <text class="arch-sub"   x="300" y="55" text-anchor="middle">Web Speech API</text>
+
+    <path class="arch-arrow" d="M 300 75 L 300 105" marker-end="url(#arch-arrowhead)"/>
+
+    <!-- 2. Браузер -->
+    <rect class="arch-box arch-box--browser" x="180" y="110" width="240" height="60" rx="8"/>
+    <text class="arch-title" x="300" y="135" text-anchor="middle">🌐 Браузер</text>
+    <text class="arch-sub"   x="300" y="155" text-anchor="middle">VEGAREX UI · WebSocket</text>
+
+    <path class="arch-arrow" d="M 300 175 L 300 205" marker-end="url(#arch-arrowhead)"/>
+
+    <!-- 3. VEGAREX FastAPI server (большой блок с тремя строками) -->
+    <rect class="arch-box arch-box--server" x="100" y="210" width="400" height="140" rx="8"/>
+    <text class="arch-title" x="300" y="235" text-anchor="middle">⚙️ VEGAREX FastAPI server</text>
+    <text class="arch-sub"   x="300" y="252" text-anchor="middle">шаблоны манёвров и роутинг команд</text>
+    <line x1="130" y1="265" x2="470" y2="265" stroke="var(--border)" stroke-dasharray="3,3"/>
+    <text class="arch-code"  x="300" y="285" text-anchor="middle">NLU (nlu.py)</text>
+    <text class="arch-code"  x="300" y="305" text-anchor="middle">_run_forward · _run_arc · face · goto · …</text>
+    <text class="arch-code"  x="300" y="325" text-anchor="middle">self.robot ← BridgeDriver</text>
+
+    <path class="arch-arrow" d="M 300 355 L 300 405" marker-end="url(#arch-arrowhead)"/>
+    <text class="arch-label" x="315" y="380">ws://127.0.0.1:41235</text>
+
+    <!-- 4. server.py -->
+    <rect class="arch-box arch-box--bridge" x="180" y="410" width="240" height="60" rx="8"/>
+    <text class="arch-title" x="300" y="435" text-anchor="middle">🔌 server.py</text>
+    <text class="arch-sub"   x="300" y="455" text-anchor="middle">прозрачный мост браузер↔ESP32</text>
+
+    <path class="arch-arrow" d="M 300 475 L 300 525" marker-end="url(#arch-arrowhead)"/>
+    <text class="arch-label" x="315" y="500">WiFi · USB-Serial</text>
+
+    <!-- 5. ESP32 / 1Т REX -->
+    <rect class="arch-box arch-box--hw" x="180" y="530" width="240" height="60" rx="8"/>
+    <text class="arch-title" x="300" y="555" text-anchor="middle">🤖 ESP32 / 1Т REX</text>
+    <text class="arch-sub"   x="300" y="575" text-anchor="middle">прошивка: MOVE / ANGLE / LASER? / RGB</text>
+  </svg>
 
   <p>
     Голос распознаётся в браузере, отправляется в VEGAREX server,
