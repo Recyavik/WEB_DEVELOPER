@@ -17,6 +17,15 @@ show_danger_zones, remove_zone, recharge) на MicroPython/ESP32 уходят в
 UART — открой монитор последовательного порта (Thonny / Arduino Serial /
 minicom) и увидишь сообщения. На железе это полезный канал отладки.
 
+ВЫБОР МОСТА (внизу файла):
+  • robot = _LiveRobot()    — заглушка для теста кода БЕЗ робота
+  • robot = _NetworkRobot() — боевой режим через server.py
+
+Боевой режим требует:
+  pip install websocket-client
+  Запущенный server.py (рядом с прошивкой) на 127.0.0.1:41235
+  Подключённый ESP32 — WiFi или USB-Serial (выбор в GUI server.py)
+
 Зоны опасности — НЕ no-op: программа держит список (x, y, radius) и
 во время движения tick-проверяет позицию. Координаты совпадают с
 реальными препятствиями на поле; программа сама останавливается, если
@@ -318,13 +327,29 @@ class Robot:
         print("🔌 Подключи зарядку и нажми пуск, когда будет 100%.")
 
 
-# ── Мост к 1Т REX (замени на реальную реализацию) ─────────────────────
-# Этот класс — СКЕЛЕТ. На реальном железе перепиши тело каждого метода
-# на свой мост (TCP / Serial / BLE / ESP-Now). Свойства x, y, heading
-# должны обновляться счислением пути от set_angle/move/stop.
-# Методы здесь оставлены пустыми (pass), чтобы экспортированный файл
-# не валился при импорте, но и не вёл себя как «настоящий робот».
+# ── Мост к 1Т REX ─────────────────────────────────────────────────────
+# Низкоуровневое API класса Robot выше требует мост к железу. Доступны
+# ДВА варианта:
+#
+#   1. _Bridge — пустые методы (pass). Для теста кода на ПК без робота:
+#      Robot.X() выполнятся, x/y/heading остаются 0.
+#
+#   2. _NetworkBridge — реальный мост через server.py (тот, что в репо
+#      рядом с прошивкой). Требует:
+#        pip install websocket-client
+#        запущенный server.py на 127.0.0.1:41235
+#        подключённый ESP32 (WiFi или USB-Serial — выбирается в GUI server.py)
+#      Команды отправляются в формате JSON {id, command, usb=false},
+#      server.py пересылает на ESP32. Командный словарь: MOVE:N, ANGLE:N,
+#      LASER?, RGB:i,r,g,b,delay (см. RexDriver в проекте VEGAREX).
+#      Свойства x, y, heading считаются ФОНОВЫМ потоком dead-reckoning:
+#      каждые 50 мс интегрируется позиция по скорости × времени. Точность
+#      ограничена калибровкой (проскальзывание шин не учитывается).
+#
+# В конце файла выбери активный robot (одна из двух строчек раскоммен-
+# тирована, другая — нет).
 class _Bridge:
+    """Заглушка для теста кода на ПК БЕЗ робота."""
     x = 0.0
     y = 0.0
     heading = 0.0
@@ -345,11 +370,180 @@ class _Bridge:
         return 999.0
 
 
+class _NetworkBridge:
+    """Реальный мост к 1Т REX через server.py (WebSocket).
+
+    Подключается к ws://127.0.0.1:41235 при __init__. Все команды
+    (set_angle/move/stop/set_rgb/get_distance) обёрнуты в JSON
+    {id, command, usb=false} и пересылаются server.py на ESP32.
+
+    Свойства x, y, heading обновляются фоновым потоком _dr_loop:
+    каждые 50 мс интегрирует позицию по time × speed. Калибровка
+    (SPEED_AT_100, WHEEL_CIRC_CM, HEADING_DEG_PER_ROT) синхронизирована
+    с классом Robot выше — если меняешь там, поправь и здесь."""
+
+    BROWSER_WS_HOST = "127.0.0.1"
+    BROWSER_WS_PORT = 41235
+
+    # Калибровка для счисления пути (та же, что в классе Robot).
+    _SPEED_AT_100        = 80.0    # см/с при 100% мощности
+    _WHEEL_CIRC_CM       = 28.3    # см, окружность колеса
+    _HEADING_DEG_PER_ROT = 25.0    # °, sweep курса за оборот колеса при руле 45°
+
+    def __init__(self):
+        import json, threading, time, math, uuid
+        try:
+            import websocket  # pip install websocket-client
+        except ImportError:
+            raise RuntimeError(
+                "Для _NetworkBridge нужен websocket-client. "
+                "Установи: pip install websocket-client")
+
+        self._json = json
+        self._uuid = uuid
+        self._math = math
+        self._time = time
+
+        self.x = 0.0
+        self.y = 0.0
+        self.heading = 0.0
+
+        self._cur_speed_pct = 0      # последняя поданная скорость (для DR)
+        self._cur_angle_deg = 0      # последний угол руля (для DR)
+        self._last_tick = None
+        self._stop_threads = False
+
+        self._pending = {}           # id → [Event, value]
+        self._pending_lock = threading.Lock()
+        self._send_lock = threading.Lock()
+
+        url = f"ws://{self.BROWSER_WS_HOST}:{self.BROWSER_WS_PORT}"
+        self._ws = websocket.WebSocketApp(
+            url,
+            on_message=self._on_message,
+            on_error=lambda ws, e: print(f"[bridge] WS error: {e}"),
+            on_close=lambda ws, c, m: print("[bridge] WS closed"),
+            on_open=lambda ws: print(f"[bridge] WS connected to {url}"),
+        )
+        threading.Thread(target=self._ws.run_forever, daemon=True).start()
+        # Маленькая пауза, чтобы сокет успел подняться до первой команды.
+        time.sleep(0.5)
+        # Запуск dead-reckoning потока
+        threading.Thread(target=self._dr_loop, daemon=True).start()
+
+    # ── WebSocket ──────────────────────────────────────────────────────
+    def _on_message(self, ws, raw):
+        try:
+            data = self._json.loads(raw)
+            cid = data.get("id")
+            with self._pending_lock:
+                if cid in self._pending:
+                    self._pending[cid][1] = data.get("value")
+                    self._pending[cid][0].set()
+        except Exception as e:
+            print(f"[bridge] parse error: {e}")
+
+    def _send_cmd(self, command, expect_response=False, timeout=2.0):
+        import threading
+        cid = str(self._uuid.uuid4())
+        msg = self._json.dumps({"id": cid, "command": command, "usb": False})
+        if expect_response:
+            evt = threading.Event()
+            with self._pending_lock:
+                self._pending[cid] = [evt, None]
+        try:
+            with self._send_lock:
+                self._ws.send(msg)
+        except Exception as e:
+            print(f"[bridge] send failed: {e}")
+            if expect_response:
+                with self._pending_lock:
+                    self._pending.pop(cid, None)
+            return None
+        if expect_response:
+            evt.wait(timeout)
+            with self._pending_lock:
+                _, value = self._pending.pop(cid, [None, None])
+            return value
+        return None
+
+    # ── Dead-reckoning ─────────────────────────────────────────────────
+    def _dr_loop(self):
+        while not self._stop_threads:
+            self._time.sleep(0.05)
+            now = self._time.monotonic()
+            if self._last_tick is None:
+                self._last_tick = now
+                continue
+            dt = now - self._last_tick
+            self._last_tick = now
+            spd = self._cur_speed_pct
+            if spd == 0:
+                continue
+            sign = 1 if spd > 0 else -1
+            cm_per_s = (abs(spd) / 100.0) * self._SPEED_AT_100
+            if cm_per_s <= 0:
+                continue
+            dist = cm_per_s * dt
+            ang = self._cur_angle_deg
+            if ang != 0:
+                steer_ratio = ang / 45.0
+                heading_delta = ((dist / self._WHEEL_CIRC_CM)
+                                 * self._HEADING_DEG_PER_ROT
+                                 * steer_ratio * sign)
+                self.heading = (self.heading + heading_delta) % 360
+            h_rad = self._math.radians(self.heading)
+            self.x += dist * self._math.sin(h_rad) * sign
+            self.y += dist * self._math.cos(h_rad) * sign
+
+    # ── Низкоуровневое API ─────────────────────────────────────────────
+    def set_angle(self, deg):
+        deg = max(-45, min(45, int(deg)))
+        self._cur_angle_deg = deg
+        self._send_cmd(f"ANGLE:{deg}")
+
+    def move(self, pct):
+        pct = max(-100, min(100, int(pct)))
+        self._cur_speed_pct = pct
+        self._send_cmd(f"MOVE:{pct}")
+
+    def stop(self):
+        self._cur_speed_pct = 0
+        self._cur_angle_deg = 0
+        self._send_cmd("MOVE:0")
+        self._send_cmd("ANGLE:0")
+
+    def set_rgb(self, idx, color, delay=0.0):
+        r, g, b = color
+        self._send_cmd(f"RGB:{idx},{r},{g},{b},{delay}")
+
+    def get_distance(self):
+        """Запрашивает LASER? и парсит ответ «LASER:NNN» или «NNN»."""
+        resp = self._send_cmd("LASER?", expect_response=True)
+        if resp is None:
+            return 999.0
+        try:
+            s = str(resp)
+            return float(s.split(":")[-1] if ":" in s else s)
+        except (TypeError, ValueError):
+            return 999.0
+
+
 class _LiveRobot(_Bridge, Robot):
-    """Объединение моста (низкий уровень) и Robot (шаблоны).
-    __init__ запускает Robot.__init__ — инициализирует списки зон."""
+    """STUB-режим: моторы не дёргаются, x/y/heading = 0.
+    Используется для проверки кода на ПК без подключения к роботу."""
     def __init__(self):
         Robot.__init__(self)
 
 
-robot = _LiveRobot()
+class _NetworkRobot(_NetworkBridge, Robot):
+    """БОЕВОЙ режим: при __init__ подключается к server.py через WebSocket.
+    Требуется запущенный server.py и подключённый ESP32 (WiFi или USB)."""
+    def __init__(self):
+        _NetworkBridge.__init__(self)
+        Robot.__init__(self)
+
+
+# Активный робот. Раскомментируй ОДНУ из двух строк:
+robot = _LiveRobot()              # тест на ПК без железа
+# robot = _NetworkRobot()         # боевой режим через server.py
