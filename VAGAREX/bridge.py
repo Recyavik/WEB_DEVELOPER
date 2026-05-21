@@ -34,18 +34,33 @@ from typing import Optional
 
 import websockets
 
-# Глушим шумные warning'и websockets-библиотеки про невалидные TCP-пробы.
-# /api/launch_bridge из VEGAREX делает plain-TCP коннект для проверки
-# «жив ли мост» — это не WS-handshake, библиотека печатает огромный
-# traceback (EOFError + InvalidMessage), который пугает.
-#
-# Подавляем ВЕСЬ пакет websockets на уровень ERROR. Реальные ERROR
-# (типа неожиданного разрыва WS-сессии) останутся видимы; handshake-failed
-# при probe'е порта 41235 пропадут.
-logging.getLogger("websockets").setLevel(logging.ERROR)
-# На всякий случай — отключаем propagate в asyncio.logger тоже,
-# некоторые версии websockets пишут traceback через root logger.
-logging.getLogger("asyncio").setLevel(logging.ERROR)
+# Глушим шумные traceback'и websockets-библиотеки про невалидные
+# TCP-пробы. /api/launch_bridge в VEGAREX делает plain-TCP коннект на
+# порт 41235 чтобы проверить «жив ли мост», а это не WS-handshake.
+# Библиотека websockets логирует это через logger.error("opening
+# handshake failed", exc_info=True) — обычное подавление уровнем не
+# помогает (ERROR-сообщения и так пропускаются). Поэтому ставим
+# именованный фильтр, который дропает конкретно эти строки.
+class _SilenceProbeNoise(logging.Filter):
+    NOISY_FRAGMENTS = (
+        "opening handshake failed",
+        "did not receive a valid HTTP request",
+        "InvalidMessage",
+        "connection closed while reading HTTP request line",
+    )
+    def filter(self, record):
+        try:
+            msg = record.getMessage()
+        except Exception:
+            return True
+        return not any(s in msg for s in self.NOISY_FRAGMENTS)
+
+_websockets_logger = logging.getLogger("websockets")
+_websockets_logger.addFilter(_SilenceProbeNoise())
+# Подстраховка: некоторые версии используют дочерние логгеры
+for _name in ("websockets.server", "websockets.asyncio.server",
+              "websockets.protocol"):
+    logging.getLogger(_name).addFilter(_SilenceProbeNoise())
 
 try:
     import serial_asyncio                       # noqa
