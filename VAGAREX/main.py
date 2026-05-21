@@ -1962,7 +1962,11 @@ async def launch_bridge(request: Request):
         except Exception:
             return False
 
-    for probe_host in ("127.0.0.1", "host.docker.internal"):
+    # Проверяем порт 41235 по трём адресам:
+    #   bridge — Docker-сервис из compose (рекомендуемая v3.7.0+ конфигурация)
+    #   127.0.0.1 — нативный запуск VEGAREX на хосте
+    #   host.docker.internal — VEGAREX в Docker + bridge на хосте (старая схема)
+    for probe_host in ("bridge", "127.0.0.1", "host.docker.internal"):
         if _port_open(probe_host, 41235):
             return JSONResponse({
                 "ok": True,
@@ -2041,19 +2045,23 @@ async def launch_bridge(request: Request):
             "ok": False,
             "status": "docker_no_can_launch",
             "message": (
-                "VEGAREX запущен в Docker — кнопка не может запустить мост "
-                "на хосте, и в контейнере нет доступа к USB-портам робота.\n\n"
-                "Запустите bridge.py вручную на хосте Windows/macOS:\n"
-                f"  cd {bridge_path.parent.name}\n"
-                "  pip install websockets pyserial-asyncio\n"
-                "  python bridge.py              # только WiFi\n"
-                "  python bridge.py --com COM3   # WiFi + USB-Serial\n\n"
-                "В Настройках VEGAREX в поле «Адрес» используйте:\n"
-                "  ws://host.docker.internal:41235\n"
-                "(а не 127.0.0.1 — из контейнера это сам контейнер).\n"
-                "На Linux-Docker добавьте в docker-compose.yml:\n"
-                "  extra_hosts:\n"
-                "    - host.docker.internal:host-gateway"
+                "VEGAREX в Docker — кнопка не может запустить мост напрямую.\n"
+                "Есть два рабочих варианта:\n"
+                "\n"
+                "▸ Вариант 1 — bridge как docker-compose сервис "
+                "(рекомендуется, v3.7.0+):\n"
+                "    docker compose up -d --build\n"
+                "  В Настройках адрес:  ws://bridge:41235\n"
+                "  Bridge будет автостартовать вместе с приложением.\n"
+                "\n"
+                "▸ Вариант 2 — запустить bridge на хосте вручную:\n"
+                f"    cd {bridge_path.parent.name}\n"
+                "    pip install websockets pyserial-asyncio\n"
+                "    python bridge.py              # только WiFi\n"
+                "    python bridge.py --com COM3   # WiFi + USB-Serial\n"
+                "  В Настройках адрес:  ws://host.docker.internal:41235\n"
+                "  (Linux-Docker: добавьте в compose `extra_hosts: "
+                "[host.docker.internal:host-gateway]`)"
             ),
         }, status_code=400)
 
