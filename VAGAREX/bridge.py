@@ -34,13 +34,18 @@ from typing import Optional
 
 import websockets
 
-# Глушим шумные warning'и websockets-сервера про невалидные TCP-пробы
-# (например /api/launch_bridge из VEGAREX делает plain-TCP коннект для
-# проверки «жив ли мост» — это не WS-handshake, библиотека печатает
-# огромный traceback, который пугает). Реальные ошибки на ERROR уровне
-# мы оставляем.
-logging.getLogger("websockets.server").setLevel(logging.ERROR)
-logging.getLogger("websockets.asyncio.server").setLevel(logging.ERROR)
+# Глушим шумные warning'и websockets-библиотеки про невалидные TCP-пробы.
+# /api/launch_bridge из VEGAREX делает plain-TCP коннект для проверки
+# «жив ли мост» — это не WS-handshake, библиотека печатает огромный
+# traceback (EOFError + InvalidMessage), который пугает.
+#
+# Подавляем ВЕСЬ пакет websockets на уровень ERROR. Реальные ERROR
+# (типа неожиданного разрыва WS-сессии) останутся видимы; handshake-failed
+# при probe'е порта 41235 пропадут.
+logging.getLogger("websockets").setLevel(logging.ERROR)
+# На всякий случай — отключаем propagate в asyncio.logger тоже,
+# некоторые версии websockets пишут traceback через root logger.
+logging.getLogger("asyncio").setLevel(logging.ERROR)
 
 try:
     import serial_asyncio                       # noqa
