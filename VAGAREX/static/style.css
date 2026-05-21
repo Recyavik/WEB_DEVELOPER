@@ -419,13 +419,26 @@ body {
 }
 .about-list li::marker { color: var(--sec-accent, var(--accent)); }
 
-/* Возможности — сетка плиток */
+/* Возможности — сетка плиток.
+   На широких экранах 3 колонки; если последняя карточка осталась одна в
+   ряду (количество карточек ≡ 1 mod 3 — например 10) — центрируем её.
+   На средних — 2 колонки, тогда 10 карточек ложатся ровно 5×2.
+   На узких — одна колонка. */
 .about-features {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 1rem;
 }
-@media (max-width: 720px) {
+.about-features > .about-feature:last-child:nth-child(3n+1) {
+  grid-column-start: 2;
+}
+@media (max-width: 1000px) {
+  .about-features { grid-template-columns: repeat(2, 1fr); }
+  .about-features > .about-feature:last-child:nth-child(3n+1) {
+    grid-column-start: auto;
+  }
+}
+@media (max-width: 600px) {
   .about-features { grid-template-columns: 1fr; }
 }
 .about-feature {
