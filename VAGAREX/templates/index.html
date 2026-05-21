@@ -358,15 +358,12 @@
                   title="Свернуть редактор обратно в боковую панель" aria-label="Свернуть">↙ Свернуть</button>
         </div>
       </div>
-      <!-- Код-зона: пробуем CodeMirror 6 (autocomplete robot.X, Python-подсветка).
-           Если esm.sh недоступен или модуль не загрузился — control.js
-           включит резервный textarea с нашей самописной подсветкой. -->
+      <!-- Код-зона. CodeMirror 6 был удалён в v3.7.7 (npm-пакет codemirror@6
+           на esm.sh — это legacy CM5 с несовместимым API; полный CM6 — 20+
+           отдельных пакетов, слишком сложно хостить). Используется textarea
+           с самописной подсветкой, гуттером строк и popup-автодополнением. -->
       <div class="code-wrap code-wrap--modal" id="code-wrap-modal">
-        <div id="cm-modal-host" class="cm-modal-host"></div>
-        <!-- Fallback textarea (показывается если CM не загрузился).
-             Гуттер слева — номера строк, рендерятся в attachCodeHighlight
-             по id с суффиксом «-gutter» вместо «-area». -->
-        <div class="code-wrap__editor" id="cm-modal-fallback" hidden>
+        <div class="code-wrap__editor" id="cm-modal-fallback">
           <pre id="python-code-modal-gutter" class="code-gutter code-gutter--modal" aria-hidden="true"></pre>
           <div class="code-wrap__editor-inner">
             <pre class="code-overlay code-overlay--modal" aria-hidden="true"><code id="python-code-modal-overlay"></code></pre>
@@ -428,9 +425,13 @@
      грузится даже если esm.sh заблокирован — control.js всё равно сможет
      показать popup-автодополнение в textarea. -->
 <script src="/static/robot-catalog.js?v={{ robot_version }}"></script>
-<!-- CodeMirror 6 редактор: ES-модуль, загружается ДО control.js,
-     чтобы window.cmEditor был готов когда control.js откроет модалку. -->
-<script type="module" src="/static/cm-editor.js?v={{ robot_version }}"></script>
+<!-- CodeMirror 6 раньше грузился отсюда — удалён в v3.7.7.
+     Оригинальный импорт из codemirror@6 на esm.sh резолвился в legacy
+     CodeMirror 5 (npm-пакет с тем же именем) с разными API. Полноценный
+     CM6 разложен по @codemirror/state, /view и т.д. — слишком большая
+     dependency tree чтобы хостить локально. Фолбэк-textarea с
+     самописной подсветкой делает всё что нужно: подсветка комментов,
+     номера строк, popup-автодополнение, Tab=4 пробела. -->
 <script src="/static/canvas.js?v={{ robot_version }}"></script>
 <script src="/static/control.js?v={{ robot_version }}"></script>
 {% endblock %}
