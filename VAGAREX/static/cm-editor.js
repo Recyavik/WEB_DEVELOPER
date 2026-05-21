@@ -1,20 +1,25 @@
 /**
  * cm-editor.js — CodeMirror 6 редактор для развёрнутого окна кода.
  *
- * Грузим CodeMirror через esm.sh с `?bundle` — все зависимости в одном
- * файле, без проблем с дедупом instance-ов EditorView между пакетами.
- * Версии без точного пина: esm.sh резолвит в latest major, мы привязаны
- * к мажорному 6.x. Если esm.sh недоступен — control.js это увидит
- * (window.cmEditor.isReady() = false) и оставит обычный textarea.
+ * Грузим CodeMirror из локальной папки /static/vendor/codemirror/ —
+ * бандлы скачаны с esm.sh с `?bundle` (все зависимости в одном файле,
+ * без проблем с дедупом instance-ов EditorView между пакетами).
+ * Версии зафиксированы: codemirror@6.65.7, lang-python@6.2.1,
+ * autocomplete@6.20.2, theme-one-dark@6.1.3, commands@6.10.3,
+ * state@6.6.0. Чтобы обновить — перекачать тем же скриптом
+ * (см. историю v3.7.6).
+ *
+ * Если по какой-то причине бандлы не загрузились — control.js это
+ * увидит (window.cmEditor.isReady() = false) и оставит fallback-textarea.
  */
-console.log('[cm-editor] загружаю CodeMirror 6 с esm.sh…');
+console.log('[cm-editor] загружаю CodeMirror 6 из /static/vendor/codemirror…');
 import {EditorView, basicSetup, keymap, lineNumbers}
-                                   from 'https://esm.sh/codemirror@6?bundle';
-import {python}                    from 'https://esm.sh/@codemirror/lang-python@6?bundle';
-import {autocompletion}            from 'https://esm.sh/@codemirror/autocomplete@6?bundle';
-import {oneDark}                   from 'https://esm.sh/@codemirror/theme-one-dark@6?bundle';
-import {indentWithTab}             from 'https://esm.sh/@codemirror/commands@6?bundle';
-import {Compartment}               from 'https://esm.sh/@codemirror/state@6?bundle';
+                                   from '/static/vendor/codemirror/codemirror.js';
+import {python}                    from '/static/vendor/codemirror/lang-python.js';
+import {autocompletion}            from '/static/vendor/codemirror/autocomplete.js';
+import {oneDark}                   from '/static/vendor/codemirror/theme-one-dark.js';
+import {indentWithTab}             from '/static/vendor/codemirror/commands.js';
+import {Compartment}               from '/static/vendor/codemirror/state.js';
 console.log('[cm-editor] импорты OK, EditorView:', typeof EditorView);
 
 // ── Каталог robot.X ────────────────────────────────────────────────────
