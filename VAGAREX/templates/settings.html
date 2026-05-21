@@ -28,10 +28,17 @@
       </div>
       <p class="hint" style="margin-top:.5rem; margin-bottom:0;">
         Три режима: <strong>🖥 Симулятор</strong> (галочка), <strong>🔌 Через
-        мост <code>bridge.py</code></strong> (адрес <code>ws://...</code>),
-        <strong>📡 Прямой TCP</strong> (IP без <code>ws://</code>).
-        Подробная инструкция — в справке. При изменении адреса/порта/режима
-        соединение переустановится автоматически.
+        мост</strong> (адрес <code>ws://...</code>), <strong>📡 Прямой TCP</strong>
+        (IP без <code>ws://</code>).
+      </p>
+      <p class="hint" style="margin-top:.4rem; margin-bottom:0;">
+        Адрес моста зависит от того, как запущен VEGAREX:
+        <br>• <strong>В Docker (compose)</strong>: <code>ws://bridge:41235</code>
+            — bridge поднимается автоматически вместе с приложением
+        <br>• <strong>Нативно на ПК</strong>: <code>ws://127.0.0.1:41235</code>
+            — запустите <code>python bridge.py</code> рядом или кнопкой ниже
+        <br>• <strong>Bridge на другом ПК сети</strong>: <code>ws://192.168.x.y:41235</code>
+        <br>Подробнее — в справке. Соединение переустанавливается автоматически при сохранении.
       </p>
 
       <div style="margin-top:0.7rem; display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">

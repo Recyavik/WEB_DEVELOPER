@@ -167,19 +167,29 @@
   </p>
 
   <h4>Запуск моста</h4>
-  <p>Два варианта:</p>
+  <p>Три варианта (зависит от того, как запущен VEGAREX):</p>
   <ol>
-    <li><strong>Автоматически из VEGAREX:</strong>
-        Настройки → «Соединение с роботом» → кнопка <strong>🚀 Запустить
-        bridge.py</strong>. Сработает только если VEGAREX запущен
-        локально (не из Docker, не на проде). Запустит мост в WiFi-режиме
-        (без USB) фоновым процессом.</li>
-    <li><strong>Вручную из терминала:</strong>
-        <pre>cd m:\WEB_DEVELOPER\VAGAREX
+    <li><strong>VEGAREX в Docker (docker-compose):</strong>
+        <code>bridge</code> теперь сервис в <code>docker-compose.yml</code> и
+        стартует автоматически вместе с <code>app</code> и <code>db</code>:
+        <pre>docker compose up -d --build</pre>
+        Никаких ручных команд. В Настройках адрес — <code>ws://bridge:41235</code>
+        (Docker DNS). Порт 8080 проброшен на хост для подключения ESP32 по WiFi.</li>
+
+    <li><strong>VEGAREX нативно (без Docker):</strong>
+        Используй кнопку <strong>🚀 Запустить bridge.py</strong> в Настройках
+        — она запустит фоновый процесс на твоём ПК. Или вручную:
+        <pre>cd VAGAREX
 python bridge.py                # только WiFi
-python bridge.py --com COM3     # WiFi + USB-Serial (для COM3)</pre>
-        Окно с логами должно остаться открытым. Можно закрыть Ctrl+C.
+python bridge.py --com COM3     # WiFi + USB-Serial</pre>
+        Адрес в Настройках — <code>ws://127.0.0.1:41235</code>.
     </li>
+
+    <li><strong>USB-Serial на хосте (любой режим):</strong>
+        Docker не пробрасывает COM-порты, поэтому для USB всегда запускай
+        <code>python bridge.py --com COMx</code> на хосте — он перехватит
+        порт 41235 раньше, чем bridge из контейнера (или просто отключи
+        bridge-сервис: <code>docker compose stop bridge</code>).</li>
   </ol>
 
   <p>В логах увидите:</p>

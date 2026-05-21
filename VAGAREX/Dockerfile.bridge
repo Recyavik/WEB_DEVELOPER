@@ -1,0 +1,19 @@
+# Лёгкий контейнер для bridge.py — WebSocket-релей VEGAREX↔ESP32.
+# Запускается как отдельный сервис docker-compose, автостартует
+# вместе с приложением.
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Только websockets — pyserial-asyncio не нужен (USB-режим в контейнере
+# не поддерживается без device passthrough). Кому нужен USB — запускает
+# bridge.py на хосте: pip install pyserial-asyncio + python bridge.py --com PORT
+RUN pip install --no-cache-dir websockets
+
+COPY bridge.py /app/bridge.py
+
+# Порты: 41235 — для VEGAREX (внутри Docker network), 8080 — для ESP32
+# по WiFi (пробрасывается на хост).
+EXPOSE 41235 8080
+
+CMD ["python", "-u", "/app/bridge.py"]
