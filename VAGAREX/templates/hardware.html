@@ -56,7 +56,8 @@
     <br><strong>2. Подключение</strong> —
       <a href="#a-bridge">через bridge.py (рекомендуется)</a> ·
       <a href="#a-tcp">прямой TCP к REX Board</a> ·
-      <a href="#a-sim">симулятор</a>
+      <a href="#a-sim">симулятор</a> ·
+      <a href="#a-esp32-setup">первый запуск ESP32</a>
     <br><strong>3. Использование</strong> —
       <a href="#a-voice">голосовые команды на железе</a> ·
       <a href="#a-exported">запуск экспортированного .py</a> ·
@@ -242,6 +243,59 @@ python bridge.py --com COM3     # WiFi + USB-Serial</pre>
     Поставьте галочку «Включить симулятор». Никакого <code>bridge.py</code> или
     робота не нужно. Виртуальная физика, голосовые команды, миссии — всё в
     браузере. Идеально для разработки алгоритмов до выезда на поле.
+  </p>
+
+  <h3 id="a-esp32-setup">2.4. Первый запуск нового ESP32 (один раз)</h3>
+  <p>
+    Когда у вас новый робот (или сменили WiFi-сеть) — нужно прошить в
+    EEPROM ESP32 имя сети, пароль и IP сервера с <code>bridge.py</code>.
+    Эти настройки запоминаются на плате, после чего робот сам подключится
+    к WiFi и к мосту при каждом включении.
+  </p>
+
+  <h4>Через браузер (рекомендуется)</h4>
+  <ol>
+    <li>Подключите ESP32 по USB-кабелю к вашему ПК.</li>
+    <li>Откройте VEGAREX → Настройки → кнопка
+        <strong>🛠 Настроить ESP32</strong> (или прямо
+        <a href="/esp-config">/esp-config</a>).</li>
+    <li>Жмите <strong>🔌 Подключиться к ESP32</strong> — браузер
+        попросит выбрать COM-порт. Выбирайте тот, где ESP32
+        (обычно с описанием <code>USB-SERIAL CH340</code>,
+        <code>Silicon Labs CP210x</code> или <code>USB Serial Port</code>).</li>
+    <li>Заполните поля:
+      <ul>
+        <li><strong>Имя WiFi (SSID)</strong> — имя вашей сети
+            (или точки доступа телефона)</li>
+        <li><strong>Пароль WiFi</strong></li>
+        <li><strong>Имя устройства</strong> — произвольное (например <code>rex01</code>)</li>
+        <li><strong>IP сервера</strong> — IP вашего ПК в этой WiFi-сети
+            (по которому виден из сети)</li>
+        <li><strong>Порт сервера</strong> — <code>8080</code> по умолчанию</li>
+      </ul>
+    </li>
+    <li>Жмите <strong>📤 Записать в EEPROM</strong>. В логе должны появиться
+        <code>← OK</code> или подобные подтверждения.</li>
+    <li>Отключите USB — настройки сохранены навсегда (до следующей перепрошивки).</li>
+  </ol>
+
+  <p class="note">
+    Браузерная страница использует <strong>Web Serial API</strong>
+    (только Chrome и Edge на десктопе). USB-доступ — у браузера,
+    не у Docker-контейнера VEGAREX, поэтому работает в любом окружении.
+  </p>
+
+  <h4>Запасной путь — <code>esp_config.py</code> (Firefox/Safari)</h4>
+  <p>
+    Если ваш браузер не поддерживает Web Serial — используйте
+    нативную утилиту из репозитория:
+  </p>
+  <pre>cd m:\WEB_DEVELOPER\VAGAREX
+pip install pyserial
+python esp_config.py</pre>
+  <p>
+    Откроется маленькое tkinter-окно с теми же полями. Логика идентичная
+    браузерной версии.
   </p>
 </section>
 

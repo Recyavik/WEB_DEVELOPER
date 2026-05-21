@@ -592,6 +592,18 @@ async def maneuvers_docs(request: Request,
     })
 
 
+@app.get("/esp-config", response_class=HTMLResponse)
+async def esp_config_page(request: Request,
+                          current_user: User = Depends(require_user)):
+    """Страница настройки ESP32 через Web Serial API.
+    Браузерная замена утилиты esp_config.py — пишет в EEPROM ESP32
+    параметры WiFi (SSID, пароль, имя устройства) и адрес моста.
+    Работает в Chrome/Edge — USB-Serial проброшен через Web Serial."""
+    return templates.TemplateResponse(request, "esp_config.html", {
+        "current_user": current_user,
+    })
+
+
 @app.get("/hardware", response_class=HTMLResponse)
 async def hardware_docs(request: Request,
                         current_user: User = Depends(require_user)):

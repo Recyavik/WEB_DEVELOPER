@@ -1,0 +1,351 @@
+{% extends "base.html" %}
+
+{% block title %}VEGAREX — Настройка ESP32{% endblock %}
+
+{% block head %}
+<style>
+  .esp-page { max-width: 760px; margin: 0 auto; padding: 1rem 0.6rem 2rem; }
+  .esp-page section.card { margin-bottom: 1.2rem; }
+
+  .esp-grid {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.5rem 1rem;
+    align-items: center;
+    margin: 0.6rem 0;
+  }
+  .esp-grid label { color: var(--text-dim); font-size: 0.95rem; }
+  .esp-grid input {
+    background: var(--bg-panel); border: 1px solid var(--border);
+    color: var(--text); border-radius: 4px; padding: 0.4rem 0.6rem;
+    font-size: 0.92rem; width: 100%;
+  }
+  .esp-buttons {
+    display: flex; gap: 0.5rem; flex-wrap: wrap;
+    margin: 0.8rem 0 0.3rem;
+  }
+  .esp-port-info {
+    background: var(--bg-panel); border: 1px solid var(--border);
+    border-radius: 4px; padding: 0.5rem 0.75rem;
+    font-family: ui-monospace, Consolas, monospace; font-size: 0.85rem;
+    color: var(--text-dim); margin-top: 0.6rem;
+  }
+  .esp-port-info.connected { color: #3fb950; border-color: #3fb950; }
+  .esp-log {
+    background: #0d1117; border: 1px solid var(--border);
+    border-radius: 4px; padding: 0.6rem 0.8rem;
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 0.82rem; line-height: 1.45;
+    color: #c9d1d9; max-height: 280px; overflow-y: auto;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .esp-log .system { color: #8b949e; }
+  .esp-log .send   { color: #79c0ff; }
+  .esp-log .recv   { color: #7ee787; }
+  .esp-log .warn   { color: #f0883e; }
+  .esp-log .error  { color: #f85149; }
+  .esp-unsupported {
+    background: color-mix(in srgb, #f85149 12%, transparent);
+    border-left: 3px solid #f85149;
+    padding: 0.7rem 1rem; border-radius: 4px;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="esp-page">
+
+<section class="card">
+  <h2 class="card__title">🛠 Настройка ESP32 (1Т REX) — Web Serial</h2>
+  <p>
+    Эта страница прошивает в EEPROM ESP32 параметры WiFi и адрес моста.
+    Использует <strong>Web Serial API</strong> прямо в браузере — не
+    нужны ни <code>esp_config.py</code>, ни Python на хосте, ни
+    отдельная программа. Работает в <strong>Chrome / Edge</strong>
+    (другие браузеры пока не поддерживают Web Serial — для них есть
+    запасной <code>python esp_config.py</code>).
+  </p>
+  <p class="hint" id="esp-browser-check"></p>
+</section>
+
+<section class="card" id="esp-form-card">
+  <h3 class="card__title">Параметры</h3>
+
+  <div class="esp-grid">
+    <label for="esp-ssid">Имя WiFi (SSID):</label>
+    <input id="esp-ssid" type="text" placeholder="например, MyHomeWiFi">
+
+    <label for="esp-pwd">Пароль WiFi:</label>
+    <input id="esp-pwd" type="password" placeholder="••••••••">
+
+    <label for="esp-name">Имя устройства:</label>
+    <input id="esp-name" type="text" placeholder="rex01">
+
+    <label for="esp-ip">IP сервера (bridge.py):</label>
+    <input id="esp-ip" type="text" placeholder="192.168.x.y">
+
+    <label for="esp-port">Порт сервера:</label>
+    <input id="esp-port" type="text" value="8080">
+  </div>
+
+  <p class="hint" style="margin-top:0.3rem; font-size:0.85rem;">
+    <strong>IP сервера</strong> — это IP компьютера с запущенным
+    <code>bridge.py</code>. ESP32 будет к нему стучаться по WiFi.
+    Запиши IP, по которому твой ПК виден в сети телефона/роутера
+    (например <code>192.168.88.55</code>).
+  </p>
+
+  <div class="esp-buttons">
+    <button id="esp-connect" class="btn btn--info" type="button">
+      🔌 Подключиться к ESP32
+    </button>
+    <button id="esp-read" class="btn" type="button" disabled>
+      📥 Прочитать настройки
+    </button>
+    <button id="esp-write" class="btn btn--success" type="button" disabled>
+      📤 Записать в EEPROM
+    </button>
+    <button id="esp-clear" class="btn btn--danger" type="button" disabled>
+      🗑 Очистить EEPROM
+    </button>
+    <button id="esp-disconnect" class="btn" type="button" disabled>
+      ✕ Отключиться
+    </button>
+  </div>
+
+  <div class="esp-port-info" id="esp-port-info">Порт не выбран. Жми «Подключиться к ESP32».</div>
+</section>
+
+<section class="card">
+  <h3 class="card__title">Лог</h3>
+  <div class="esp-log" id="esp-log"></div>
+</section>
+
+</div>
+
+<script>
+// ESP32 Config через Web Serial API.
+// Документация: https://developer.mozilla.org/en-US/docs/Web/API/Web_Serial_API
+//
+// Протокол ESP32 (унаследован от server.py / esp_config.py):
+//   GW  → SSID
+//   GP  → пароль
+//   GN  → имя устройства
+//   SW:val / SP:val / SN:val / SIP:val / SPORT:val — запись
+//   SAVE   — сохранить в EEPROM
+//   SZEROS — стереть EEPROM
+//
+// Команды отправляются текстом с \n, ответ — до первого \n.
+(function() {
+  const BAUD = 38400;
+  const log_el = document.getElementById('esp-log');
+  const browser_check_el = document.getElementById('esp-browser-check');
+  const port_info_el = document.getElementById('esp-port-info');
+
+  const $ssid = document.getElementById('esp-ssid');
+  const $pwd  = document.getElementById('esp-pwd');
+  const $name = document.getElementById('esp-name');
+  const $ip   = document.getElementById('esp-ip');
+  const $port = document.getElementById('esp-port');
+
+  const btn_connect    = document.getElementById('esp-connect');
+  const btn_read       = document.getElementById('esp-read');
+  const btn_write      = document.getElementById('esp-write');
+  const btn_clear      = document.getElementById('esp-clear');
+  const btn_disconnect = document.getElementById('esp-disconnect');
+
+  let port = null;
+  let reader = null;
+  let writer = null;
+  let read_buf = '';
+
+  // ── Проверка поддержки Web Serial ─────────────────────────────────
+  if (!('serial' in navigator)) {
+    browser_check_el.innerHTML =
+      '<div class="esp-unsupported">⚠ Этот браузер <strong>не поддерживает Web Serial API</strong>. ' +
+      'Используй Chrome или Edge (десктоп). Запасной путь — <code>python esp_config.py</code> ' +
+      'из папки <code>VAGAREX/</code> на хосте.</div>';
+    btn_connect.disabled = true;
+    return;
+  } else {
+    browser_check_el.innerHTML =
+      '✅ Web Serial поддерживается. Жми «🔌 Подключиться к ESP32» — браузер покажет диалог выбора COM-порта.';
+  }
+
+  // ── Лог ──────────────────────────────────────────────────────────
+  function log(level, msg) {
+    const t = new Date().toTimeString().slice(0, 8);
+    const line = document.createElement('div');
+    line.className = level;
+    line.textContent = `[${t}] ${msg}`;
+    log_el.appendChild(line);
+    log_el.scrollTop = log_el.scrollHeight;
+  }
+
+  function setConnected(state) {
+    btn_connect.disabled    = state;
+    btn_disconnect.disabled = !state;
+    btn_read.disabled       = !state;
+    btn_write.disabled      = !state;
+    btn_clear.disabled      = !state;
+  }
+
+  // ── Connection ──────────────────────────────────────────────────
+  async function connect() {
+    try {
+      port = await navigator.serial.requestPort();
+      await port.open({ baudRate: BAUD });
+      const info = port.getInfo();
+      const vendor = info.usbVendorId ? `VID 0x${info.usbVendorId.toString(16)}` : '';
+      const product = info.usbProductId ? `PID 0x${info.usbProductId.toString(16)}` : '';
+      port_info_el.textContent = `Подключён: ${vendor} ${product} @ ${BAUD} baud`;
+      port_info_el.classList.add('connected');
+      log('system', `Порт открыт. ${vendor} ${product}, baud=${BAUD}.`);
+      setConnected(true);
+
+      // Подождать пока ESP32 перезагрузится (DTR/RTS toggle при открытии порта)
+      log('system', 'Жду пока ESP32 прогреется (~2 с)…');
+      await new Promise(r => setTimeout(r, 2000));
+
+      // Запустить непрерывное чтение
+      _startReader();
+    } catch (err) {
+      if (err.name === 'NotFoundError') {
+        log('warn', 'Порт не выбран (диалог закрыт).');
+      } else {
+        log('error', `Не открыть порт: ${err.message}`);
+      }
+    }
+  }
+
+  async function disconnect() {
+    try {
+      if (reader) {
+        try { await reader.cancel(); } catch (_) {}
+        reader = null;
+      }
+      if (writer) {
+        try { writer.releaseLock(); } catch (_) {}
+        writer = null;
+      }
+      if (port) {
+        await port.close();
+        port = null;
+      }
+      port_info_el.textContent = 'Порт не выбран. Жми «Подключиться к ESP32».';
+      port_info_el.classList.remove('connected');
+      log('system', 'Порт закрыт.');
+      setConnected(false);
+    } catch (err) {
+      log('error', `Ошибка при закрытии: ${err.message}`);
+    }
+  }
+
+  // ── Чтение из порта (фоном) ─────────────────────────────────────
+  async function _startReader() {
+    const decoder = new TextDecoderStream();
+    const ready = port.readable.pipeTo(decoder.writable).catch(() => {});
+    reader = decoder.readable.getReader();
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (value) {
+          read_buf += value;
+        }
+      }
+    } catch (err) {
+      // Закрытие порта вызывает reader.cancel() → exception, нормально
+    } finally {
+      try { reader.releaseLock(); } catch (_) {}
+    }
+  }
+
+  // ── Отправка команды + ожидание ответа (одна строка) ────────────
+  async function sendCommand(cmd, waitResponse, timeoutMs = 2000) {
+    if (!port || !port.writable) {
+      log('error', 'Порт не открыт.');
+      return null;
+    }
+    try {
+      writer = port.writable.getWriter();
+      const data = new TextEncoder().encode(cmd + '\n');
+      await writer.write(data);
+      writer.releaseLock();
+      writer = null;
+      log('send', `→ ${cmd}`);
+    } catch (err) {
+      log('error', `Ошибка отправки: ${err.message}`);
+      return null;
+    }
+
+    if (!waitResponse) return null;
+
+    // Ждать пока в read_buf появится \n или таймаут
+    const t0 = Date.now();
+    while (Date.now() - t0 < timeoutMs) {
+      const nl = read_buf.indexOf('\n');
+      if (nl >= 0) {
+        const line = read_buf.slice(0, nl).trim();
+        read_buf = read_buf.slice(nl + 1);
+        log('recv', `← ${line || '(пусто)'}`);
+        return line;
+      }
+      await new Promise(r => setTimeout(r, 50));
+    }
+    log('warn', '← (тайм-аут, нет ответа)');
+    return null;
+  }
+
+  // ── Действия ────────────────────────────────────────────────────
+  async function doRead() {
+    for (const [cmd, $field] of [['GW', $ssid], ['GP', $pwd], ['GN', $name]]) {
+      const resp = await sendCommand(cmd, true);
+      if (resp && resp.includes(':')) {
+        const [, ...rest] = resp.split(':');
+        $field.value = rest.join(':').trim();
+      } else if (resp !== null) {
+        $field.value = resp;
+      }
+    }
+    log('system', 'Чтение завершено.');
+  }
+
+  async function doWrite() {
+    const cmds = [
+      `SW:${$ssid.value}`,
+      `SP:${$pwd.value}`,
+      `SN:${$name.value}`,
+      `SIP:${$ip.value}`,
+      `SPORT:${$port.value}`,
+      'SAVE',
+    ];
+    for (const cmd of cmds) {
+      await sendCommand(cmd, true);
+    }
+    log('system', 'Запись завершена. Настройки сохранены в EEPROM.');
+  }
+
+  async function doClear() {
+    if (!confirm('Полностью стереть EEPROM ESP32?\n\nРобот забудет SSID/пароль/IP — после этого его нужно настроить заново.')) {
+      return;
+    }
+    await sendCommand('SZEROS', true);
+    log('system', 'EEPROM стёрт.');
+  }
+
+  btn_connect.addEventListener('click', connect);
+  btn_disconnect.addEventListener('click', disconnect);
+  btn_read.addEventListener('click', () => { doRead().catch(e => log('error', e.message)); });
+  btn_write.addEventListener('click', () => { doWrite().catch(e => log('error', e.message)); });
+  btn_clear.addEventListener('click', () => { doClear().catch(e => log('error', e.message)); });
+
+  // Закрыть порт при уходе со страницы
+  window.addEventListener('beforeunload', () => {
+    if (port) { try { port.close(); } catch (_) {} }
+  });
+
+  log('system', 'Готов. Подключите ESP32 по USB и жмите «🔌 Подключиться к ESP32».');
+})();
+</script>
+{% endblock %}
