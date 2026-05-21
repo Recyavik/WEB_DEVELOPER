@@ -1869,6 +1869,39 @@ body { padding-bottom: 22px; }
 
 .settings-actions { display: flex; gap: 0.75rem; align-items: center; padding-top: 0.25rem; }
 
+/* ── Соединение с роботом: радио-карточки режима ──────────────────────────── */
+.conn-modes { display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 0.3rem; }
+.conn-mode {
+  display: flex; align-items: flex-start; gap: 0.6rem;
+  padding: 0.55rem 0.7rem;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.conn-mode:hover { border-color: var(--accent); }
+.conn-mode input[type="radio"] { margin-top: 2px; flex-shrink: 0; cursor: pointer; }
+.conn-mode:has(input:checked) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.conn-mode__body { display: flex; flex-direction: column; gap: 0.15rem; font-size: 0.85rem; }
+.conn-mode__hint { color: var(--text-dim); font-size: 0.78rem; line-height: 1.35; }
+
+.conn-advanced {
+  margin-top: 0.6rem;
+  padding: 0.4rem 0.6rem;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+.conn-advanced > summary {
+  cursor: pointer; font-size: 0.82rem; color: var(--text-dim);
+  user-select: none;
+}
+.conn-advanced[open] > summary { color: var(--text); margin-bottom: 0.3rem; }
+
 /* ── Scrollbar ───────────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar       { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }

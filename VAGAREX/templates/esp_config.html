@@ -56,37 +56,37 @@
 <div class="esp-page">
 
 <section class="card">
-  <h2 class="card__title">🛠 Настройка ESP32 (1Т REX) — Web Serial</h2>
-  <p>
-    Эта страница прошивает в EEPROM ESP32 параметры WiFi и адрес моста.
-    Использует <strong>Web Serial API</strong> прямо в браузере — не
-    нужны ни <code>esp_config.py</code>, ни Python на хосте, ни
-    отдельная программа. Работает в <strong>Chrome / Edge</strong>
-    (другие браузеры пока не поддерживают Web Serial — для них есть
-    запасной <code>python esp_config.py</code>).
-  </p>
+  <h2 class="card__title">🛠 Настройка ESP32 (1Т REX)</h2>
+  <p>Прошивка WiFi и адреса моста в EEPROM ESP32.</p>
   <p class="hint" id="esp-browser-check"></p>
 </section>
 
 <section class="card" id="esp-form-card">
   <h3 class="card__title">Параметры</h3>
 
+  <form autocomplete="off" onsubmit="return false;">
   <div class="esp-grid">
     <label for="esp-ssid">Имя WiFi (SSID):</label>
-    <input id="esp-ssid" type="text" placeholder="например, MyHomeWiFi">
+    <input id="esp-ssid" type="text" placeholder="например, MyHomeWiFi"
+           autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
 
     <label for="esp-pwd">Пароль WiFi:</label>
-    <input id="esp-pwd" type="password" placeholder="••••••••">
+    <input id="esp-pwd" type="text" placeholder="пароль WiFi"
+           autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
 
     <label for="esp-name">Имя устройства:</label>
-    <input id="esp-name" type="text" placeholder="rex01">
+    <input id="esp-name" type="text" placeholder="rex01"
+           autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
 
     <label for="esp-ip">IP сервера (bridge.py):</label>
-    <input id="esp-ip" type="text" placeholder="192.168.x.y">
+    <input id="esp-ip" type="text" placeholder="192.168.x.y"
+           autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
 
     <label for="esp-port">Порт сервера:</label>
-    <input id="esp-port" type="text" value="8080">
+    <input id="esp-port" type="text" value="8080"
+           autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
   </div>
+  </form>
 
   <p class="hint" style="margin-top:0.3rem; font-size:0.85rem;">
     <strong>IP сервера</strong> — это IP компьютера с запущенным
@@ -267,6 +267,10 @@
       log('error', 'Порт не открыт.');
       return null;
     }
+    // Сбрасываем буфер: ESP32 могла прислать асинхронный boot/telemetry,
+    // и без сброса этот мусор воспримется как ответ на наш cmd → SAVE
+    // тогда уйдёт раньше, чем долетит реальный SW/SP/SN.
+    read_buf = '';
     try {
       writer = port.writable.getWriter();
       const data = new TextEncoder().encode(cmd + '\n');
@@ -312,17 +316,21 @@
   }
 
   async function doWrite() {
-    const cmds = [
+    const setters = [
       `SW:${$ssid.value}`,
       `SP:${$pwd.value}`,
       `SN:${$name.value}`,
       `SIP:${$ip.value}`,
       `SPORT:${$port.value}`,
-      'SAVE',
     ];
-    for (const cmd of cmds) {
+    for (const cmd of setters) {
       await sendCommand(cmd, true);
+      // Дать прошивке записать поле в RAM-структуру перед следующим SET.
+      await new Promise(r => setTimeout(r, 150));
     }
+    await sendCommand('SAVE', true);
+    // EEPROM.commit() в прошивке может занять ~50-200 мс — ждём ещё.
+    await new Promise(r => setTimeout(r, 500));
     log('system', 'Запись завершена. Настройки сохранены в EEPROM.');
   }
 

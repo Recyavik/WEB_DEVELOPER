@@ -57,7 +57,8 @@
       <a href="#a-bridge">через bridge.py (рекомендуется)</a> ·
       <a href="#a-tcp">прямой TCP к REX Board</a> ·
       <a href="#a-sim">симулятор</a> ·
-      <a href="#a-esp32-setup">первый запуск ESP32</a>
+      <a href="#a-esp32-setup">первый запуск ESP32</a> ·
+      <a href="#a-prod-tunnel">продакшн через туннель</a>
     <br><strong>3. Использование</strong> —
       <a href="#a-voice">голосовые команды на железе</a> ·
       <a href="#a-exported">запуск экспортированного .py</a> ·
@@ -207,9 +208,11 @@ python bridge.py --com COM3     # WiFi + USB-Serial</pre>
     <li>Снимите галочку <strong>«Включить симулятор»</strong></li>
     <li>В поле <strong>«Адрес»</strong> впишите один из:
       <ul>
+        <li><code>ws://bridge:41235</code> — VEGAREX и мост в одном docker-compose (рекомендуется)</li>
         <li><code>ws://host.docker.internal:41235</code> — VEGAREX в Docker, мост на хосте</li>
         <li><code>ws://127.0.0.1:41235</code> — VEGAREX и bridge.py на одном ПК (без Docker)</li>
         <li><code>ws://192.168.x.y:41235</code> — мост на другом ПК в той же сети</li>
+        <li><code>wss://&lt;name&gt;.trycloudflare.com</code> — VEGAREX в продакшне, мост дома через туннель (см. <a href="#a-prod-tunnel">§2.5</a>)</li>
       </ul>
     </li>
     <li>Поле <strong>«Порт»</strong> для WS-режима не используется (порт уже в URL)</li>
@@ -297,6 +300,129 @@ python esp_config.py</pre>
     Откроется маленькое tkinter-окно с теми же полями. Логика идентичная
     браузерной версии.
   </p>
+
+  <h3 id="a-prod-tunnel">2.5. Продакшн (vegarex.dev.appswire.ru) через cloudflared-туннель</h3>
+  <p>
+    Сценарий: VEGAREX крутится на удалённом сервере (Coolify, домен
+    <code>vegarex.dev.appswire.ru</code>), а робот стоит дома — в WiFi
+    рядом с твоим ноутбуком. Чтобы серверный <code>BridgeDriver</code>
+    в облаке дотянулся до локального <code>bridge.py</code> через
+    NAT — поднимаем cloudflared-туннель.
+  </p>
+
+  <h4>Архитектура</h4>
+  <div class="arch-diagram"><span class="hl">браузер</span> <span class="ar">──https──→</span> <span class="hl">VEGAREX</span> (<span class="net">vegarex.dev.appswire.ru</span>, Coolify)
+                                          <span class="ar">↓</span> <span class="c">BridgeDriver</span>
+                              <span class="net">wss://&lt;имя&gt;.trycloudflare.com</span>
+                                          <span class="ar">↓</span> <span class="lbl">(cloudflared edge)</span>
+                                <span class="hl">cloudflared</span> на ноуте (исходящий)
+                                          <span class="ar">↓</span>
+                              <span class="net">ws://localhost:41235</span>
+                                          <span class="ar">↓</span>
+                              <span class="hl">bridge.py</span> на ноуте
+                                          <span class="ar">↓</span> <span class="lbl">(WiFi LAN)</span>
+                                <span class="hl">ESP32 / 1Т REX</span></div>
+  <p>
+    Туннель идёт изнутри-наружу, поэтому домашний NAT/файрвол открывать не нужно.
+    ESP32 продолжает стучать в локальный IP ноута:8080 как и в локальном сценарии —
+    про облако робот не знает.
+  </p>
+
+  <h4>Шаг 1. Установить cloudflared на ноутбук (один раз)</h4>
+  <p>
+    Скачать <a href="https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/" target="_blank" rel="noopener">cloudflared</a> с сайта Cloudflare
+    (Windows: <code>.msi</code> или <code>.exe</code>). После установки:
+  </p>
+  <pre>cloudflared --version</pre>
+
+  <h4>Шаг 2. Запустить локально bridge.py</h4>
+  <p>
+    Либо через docker-compose в репозитории VEGAREX:
+  </p>
+  <pre>cd m:\WEB_DEVELOPER\VAGAREX
+docker compose up -d bridge</pre>
+  <p>Либо без Docker:</p>
+  <pre>python bridge.py</pre>
+  <p>В обоих вариантах bridge слушает <code>ws://localhost:41235</code>.</p>
+
+  <h4>Шаг 3. Поднять туннель</h4>
+  <p>В отдельном окне терминала:</p>
+  <pre>cloudflared tunnel --url http://localhost:41235</pre>
+  <p>
+    В первые секунды в выводе появится строка вида:
+  </p>
+  <pre>+--------------------------------------------------------------+
+|  https://random-name-1234.trycloudflare.com                  |
++--------------------------------------------------------------+</pre>
+  <p>
+    <strong>Это публичный URL твоего bridge.</strong> Скопируй его.
+    Окно cloudflared должно оставаться открытым всё время работы с роботом.
+  </p>
+  <p class="note">
+    Free-режим (<code>--url</code>) даёт случайный URL, который сменится
+    после перезапуска cloudflared. Для стабильного URL —
+    <a href="https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/get-started/create-remote-tunnel/" target="_blank" rel="noopener">именованный туннель через Cloudflare-аккаунт</a>
+    (бесплатно, но нужен свой домен).
+  </p>
+
+  <h4>Шаг 4. Прописать URL туннеля в VEGAREX</h4>
+  <p>
+    Откройте <code>https://vegarex.dev.appswire.ru/settings</code>.
+    В блоке «Соединение с роботом»:
+  </p>
+  <ul>
+    <li>Снимите «Включить симулятор».</li>
+    <li>В поле «Адрес» вставьте URL туннеля, заменив <code>https://</code> на <code>wss://</code>:
+        <code>wss://random-name-1234.trycloudflare.com</code></li>
+    <li>Нажмите «Сохранить».</li>
+  </ul>
+  <p>
+    VEGAREX-сервер откроет WSS-соединение к Cloudflare edge → туннель →
+    <code>ws://localhost:41235</code> → ваш bridge.
+  </p>
+
+  <h4>Шаг 5. ESP32 — без изменений</h4>
+  <p>
+    В <code>/esp-config</code> по-прежнему пишем <strong>локальный</strong>
+    IP вашего ПК в той WiFi-сети (например <code>192.168.x.y</code>) и порт
+    <code>8080</code>. ESP32 ходит к bridge на ноуте по LAN, не через интернет.
+    Это и есть выгода Сценария 2: минимальный пинг до робота, командный канал
+    в облако — отдельная история.
+  </p>
+
+  <h4>Проверка цепочки</h4>
+  <ol>
+    <li>В логах <code>bridge.py</code>: <code>[BROWSER] подключён: (172.x.x.x, …)</code>
+        — это сервер VEGAREX из облака пришёл через туннель.</li>
+    <li>Включите ESP32 → через ~5 сек в тех же логах: <code>[ESP32] подключён: (192.168.x.y, …)</code>.</li>
+    <li>В шапке VEGAREX в браузере индикатор → <code>● Онлайн</code>.</li>
+    <li>Команда RGB / forward — поток в трёх местах: браузер DevTools, лог bridge, светодиоды/мотор робота.</li>
+  </ol>
+
+  <h4>Подводные камни</h4>
+  <ul>
+    <li><strong>Free-URL живёт пока открыто окно cloudflared.</strong>
+        Закрыл окно → URL умер → нужно поставить новый в Настройки.</li>
+    <li><strong>Cold-start задержка ~30-100 мс</strong> на каждой команде:
+        браузер → Coolify → Cloudflare edge → твой ноут. Для команд робота
+        нормально, для real-time телеметрии (LASER? на каждый тик) —
+        возможны рывки.</li>
+    <li><strong>Cloudflare режет неактивные WSS через 100 секунд idle.</strong>
+        BridgeDriver должен переподключаться сам — следи за индикатором.</li>
+    <li><strong>Ноут должен бодрствовать.</strong> Уход в сон = разрыв.
+        Полезно в настройках Windows отключить «Сон» на время сессии.</li>
+    <li><strong>Не публикуй URL туннеля.</strong> Любой, кто его знает,
+        может слать команды моторам. Free-URL длинный и рандомный
+        (как невзламываемый токен), но не должен попадать в публичные репо/чаты.</li>
+  </ul>
+
+  <h4>Альтернатива — ngrok</h4>
+  <p>
+    Если cloudflared не идёт — <code>ngrok tcp 41235</code> работает аналогично.
+    Минусы free-плана ngrok: рекламная страница для HTTP, для TCP — отдельный
+    регион, URL вида <code>tcp://0.tcp.eu.ngrok.io:NNNNN</code>
+    (в Настройках вписываем как <code>ws://0.tcp.eu.ngrok.io:NNNNN</code>).
+  </p>
 </section>
 
 
@@ -339,7 +465,7 @@ python esp_config.py</pre>
     Кнопка <code>&lt;/&gt;</code> в редакторе собирает self-contained Python
     с шаблонами манёвров и классом <code>Robot</code>. Этот файл можно
     запустить ОТДЕЛЬНО от VEGAREX — он сам общается с роботом через
-    <code>server.py</code>.
+    <code>bridge.py</code>.
   </p>
 
   <ol>
@@ -349,11 +475,12 @@ python esp_config.py</pre>
         <code>vegarex_program_YYYY-MM-DD.py</code>.</li>
     <li>В скачанном файле найдите внизу две строки:
         <pre>robot = _LiveRobot()              <span class="c"># тест на ПК без железа</span>
-<span class="c"># robot = _NetworkRobot()         # боевой режим через server.py</span></pre>
+<span class="c"># robot = _NetworkRobot()         # боевой режим через bridge.py</span></pre>
         Закомментируйте первую, раскомментируйте вторую.</li>
     <li>Установите зависимость:
         <pre>pip install websocket-client</pre></li>
-    <li>Запустите <code>server.py</code>, подключите робота (см. <a href="#a-bridge">§2.1</a>).</li>
+    <li>Запустите <code>bridge.py</code> (или поднимите Docker-сервис
+        <code>bridge</code>), подключите робота (см. <a href="#a-bridge">§2.1</a>).</li>
     <li>Запустите программу:
         <pre>python vegarex_program_YYYY-MM-DD.py</pre>
     </li>
@@ -584,28 +711,49 @@ robot.remove_zone(51, 61)         <span class="c"># снять конкретн�
     <tbody>
       <tr>
         <td>Робот не двигается, в журнале «Bridge connect failed»</td>
-        <td>1) <code>server.py</code> запущен и «Соединить» нажато?
-            2) В Настройках адрес <code>ws://127.0.0.1:41235</code>?
-            3) Индикатор «Браузер» в GUI <code>server.py</code> зелёный?
+        <td>1) <code>bridge.py</code> запущен (или Docker-сервис <code>bridge</code>)?
+            2) В Настройках корректный адрес — <code>ws://bridge:41235</code>
+               (Docker), <code>ws://127.0.0.1:41235</code> (нативно) или
+               <code>wss://&lt;name&gt;.trycloudflare.com</code> (туннель)?
+            3) Индикатор в шапке VEGAREX зелёный (<code>● Онлайн</code>)?
             <br>Перезапустите соединение в Настройках (Сохранить).</td>
       </tr>
       <tr>
-        <td>«Машинка» в GUI <code>server.py</code> красная</td>
-        <td>ESP32 не подключился. Проверь:
+        <td>В логе <code>bridge.py</code> только <code>[DROP] нет канала к ESP32: …</code></td>
+        <td>ESP32 не подключилась к мосту. Проверь:
             <ul>
-              <li>WiFi-режим: ESP32 знает SSID и пароль сети
-                  (проверьте через GUI <code>server.py</code> → «Получить»);
-                  IP-адрес ПК в настройках ESP32 совпадает с выбранным в GUI.</li>
-              <li>USB-режим: правильный COM-порт; ESP32 виден в системе.</li>
+              <li>ESP32 видна в WiFi-сети (роутер/телефон показывает её
+                  в списке клиентов)?</li>
+              <li>В <code>/esp-config</code> → <strong>📥 Прочитать</strong> —
+                  <code>SIP</code> и <code>SPORT</code> совпадают с тем,
+                  где сейчас крутится bridge?</li>
+              <li>Windows Firewall не блокирует входящий TCP 8080?
+                  <br><code>New-NetFirewallRule -DisplayName "VEGAREX bridge ESP32" -Direction Inbound -Protocol TCP -LocalPort 8080 -Action Allow</code></li>
+              <li>После SAVE в <code>/esp-config</code> ESP32 действительно
+                  перезагружена (reset на плате или передёрнут USB)?</li>
+            </ul>
+        </td>
+      </tr>
+      <tr>
+        <td>Туннель cloudflared работал, потом VEGAREX «Офлайн»</td>
+        <td>Возможные причины:
+            <ul>
+              <li>Окно <code>cloudflared</code> закрылось → URL умер.
+                  Запусти заново — URL <strong>сменится</strong>, обнови его
+                  в Настройках.</li>
+              <li>Ноут ушёл в сон — отключи сон на время сессии.</li>
+              <li>Cloudflare разорвал idle-WSS &gt;100 сек. Должно
+                  переподключиться автоматически; если нет — Сохранить
+                  в Настройках.</li>
             </ul>
         </td>
       </tr>
       <tr>
         <td>Робот двигается, но дальномер всегда показывает 999</td>
         <td>Прошивка ESP32 не отвечает на <code>LASER?</code>.
-            Проверьте в <code>server.py</code> в режиме «Отладка Serial»:
-            пошлите вручную <code>LASER?</code>. Должен прийти ответ
-            типа «LASER:42.5» или «42.5».</td>
+            Проверь в логе <code>bridge.py</code>: после <code>[→WiFi] LASER?</code>
+            должна прилететь <code>[WiFi→] LASER:42.5</code>. Если ответа нет —
+            проблема в прошивке робота, а не в мосте.</td>
       </tr>
       <tr>
         <td>Дуги в симуляторе и на роботе разной формы</td>
