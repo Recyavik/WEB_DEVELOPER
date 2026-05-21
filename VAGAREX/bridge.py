@@ -156,7 +156,31 @@ async def serial_reader_loop():
 
 
 # ── Запуск ──────────────────────────────────────────────────────────
+def _suppress_handshake_noise(loop, context):
+    """Кастомный asyncio exception handler. Глотает невалидные TCP-пробы
+    (когда что-то открыло TCP-соединение, но не сделало WS-handshake —
+    например /api/launch_bridge port-probe). Реальные исключения
+    форвардит в стандартный обработчик."""
+    exc = context.get("exception")
+    if exc is not None:
+        msg = f"{type(exc).__name__}: {exc}"
+        noise = (
+            "InvalidMessage",
+            "did not receive a valid HTTP request",
+            "connection closed while reading HTTP request line",
+            "opening handshake failed",
+        )
+        if any(s in msg for s in noise):
+            return  # тихо проглатываем
+    loop.default_exception_handler(context)
+
+
 async def main(args):
+    # Установить кастомный обработчик исключений на event loop —
+    # это перехватывает в т.ч. exceptions из спавненых таскав
+    # (handshake failures из websockets-сервера).
+    asyncio.get_running_loop().set_exception_handler(_suppress_handshake_noise)
+
     log("INFO", "VEGAREX Bridge стартует:")
     log("INFO", f"  Browser WS:  ws://0.0.0.0:{args.browser_port}")
     log("INFO", f"  ESP32 WS:    ws://0.0.0.0:{args.esp_port}")
