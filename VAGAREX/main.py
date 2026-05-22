@@ -1445,8 +1445,8 @@ async def settings_page(request: Request,
 
 @app.post("/api/settings")
 async def api_settings_save(
-    host:            str   = Form(...),
-    port:            int   = Form(...),
+    host:            str   = Form(""),
+    port:            Optional[int] = Form(None),
     simulation:      str   = Form("0"),
     conn_mode:       str   = Form("sim"),
     move_speed:      int   = Form(...),
@@ -1478,10 +1478,14 @@ async def api_settings_save(
     row = _ensure_user_settings(db, current_user.id)
 
     new_sim     = (simulation == "1")
-    reconnect   = (host != row.rex_host or port != row.rex_port or new_sim != row.simulation_mode)
+    # host/port необязательны: в режиме «Продакшн» host пуст до ввода URL
+    # туннеля, а отсутствие поля (старый кэш фронта) не должно ронять
+    # сохранение 422. Порт при отсутствии — оставляем прежний.
+    eff_port    = port if port is not None else row.rex_port
+    reconnect   = (host != row.rex_host or eff_port != row.rex_port or new_sim != row.simulation_mode)
 
     row.rex_host          = host
-    row.rex_port          = port
+    row.rex_port          = eff_port
     row.simulation_mode   = new_sim
     row.conn_mode         = (conn_mode if conn_mode in ("sim", "local", "prod", "custom")
                              else ("sim" if new_sim else "custom"))
