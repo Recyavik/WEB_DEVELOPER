@@ -1900,7 +1900,13 @@ body { padding-bottom: 22px; }
   display: flex; align-items: center; justify-content: center;
   z-index: 10000;
   opacity: 1;
-  transition: opacity 0.2s ease;
+  transition: opacity 0.22s ease-out;
+  /* Отдельный слой композитора: при затухании страница под оверлеем
+     не перерисовывается покадрово — анимируется только альфа слоя.
+     Убирает «подмаргивание» на интегрированной графике. */
+  will-change: opacity;
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 .page-loader.is-hidden {
   opacity: 0;

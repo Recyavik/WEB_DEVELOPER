@@ -99,7 +99,11 @@
   var shownAt = Date.now();   // лоадер виден с первого рендера страницы
   var MIN_MS = 300;           // мин. время показа — видно даже на мгновенных загрузках
 
-  function doHide() { loader.classList.add('is-hidden'); }
+  // rAF: запускаем затухание на следующем кадре, когда страница под
+  // оверлеем уже отрисована — без покадровой перерисовки и мигания.
+  function doHide() {
+    requestAnimationFrame(function () { loader.classList.add('is-hidden'); });
+  }
   function hide() {
     // Держим минимум MIN_MS, иначе на быстром localhost лоадер мелькнул бы 0мс.
     clearTimeout(hideTimer);
