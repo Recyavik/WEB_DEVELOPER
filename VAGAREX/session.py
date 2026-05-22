@@ -322,7 +322,8 @@ class UserSession:
         db = SessionLocal()
         try:
             sess = RobotSession(user_id=self.user_id,
-                                simulated=self.cfg.simulation_mode)
+                                simulated=self.cfg.simulation_mode,
+                                conn_mode=getattr(self.cfg, "conn_mode", "sim"))
             db.add(sess)
             db.commit()
             self._db_session_id = sess.id

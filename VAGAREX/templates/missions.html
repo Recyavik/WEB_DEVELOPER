@@ -26,7 +26,14 @@
     <div class="session-card__header">
       <span class="session-card__id">#{{ s.id }}</span>
       <span class="session-card__date">{{ s.started_at.strftime('%d.%m.%Y %H:%M') }}</span>
-      {% if s.simulated %}<span class="badge badge--sim">SIM</span>{% endif %}
+      {# Режим подключения сессии: simulated → SIM, иначе по conn_mode (prod → NET, прочее → LOC). #}
+      {% if s.simulated %}
+        <span class="badge badge--mode-sim" title="Симулятор">SIM</span>
+      {% elif s.conn_mode == 'prod' %}
+        <span class="badge badge--mode-net" title="Продакшн через туннель">NET</span>
+      {% else %}
+        <span class="badge badge--mode-loc" title="Локально / прямое подключение">LOC</span>
+      {% endif %}
     </div>
     <div class="session-card__body">
       <div class="session-stat">

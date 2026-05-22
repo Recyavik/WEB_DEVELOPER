@@ -1891,23 +1891,21 @@ body { padding-bottom: 22px; }
 
 /* ── Лоадер переходов: робот едет по пунктирной окружности ──────────────────────
    Перекрывает «тёмный экран» во время навигации. Фон совпадает с --bg, поэтому
-   визуально это не вспышка, а просто индикатор на том же фоне. Появляется через
-   ~180мс (animation-delay), чтобы быстрые переходы не моргали оверлеем. */
+   визуально это не вспышка, а индикатор на том же фоне. Виден сразу; JS держит
+   его минимум 300мс (см. base.html), чтобы было заметно даже на мгновенных
+   localhost-загрузках, и плавно прячет по window.load. */
 .page-loader {
   position: fixed; inset: 0;
   background: var(--bg);
   display: flex; align-items: center; justify-content: center;
   z-index: 10000;
-  opacity: 0;
-  animation: page-loader-in 0.2s ease 0.18s forwards;
-}
-.page-loader.is-hidden {
-  opacity: 0 !important;
-  animation: none;
-  pointer-events: none;
+  opacity: 1;
   transition: opacity 0.2s ease;
 }
-@keyframes page-loader-in { to { opacity: 1; } }
+.page-loader.is-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
 
 /* Пунктирная окружность радиусом 20 (⌀40), серая, статична. */
 .page-loader__orbit {
@@ -1933,7 +1931,6 @@ body { padding-bottom: 22px; }
 /* Уважаем prefers-reduced-motion: без вращения, просто статичный индикатор. */
 @media (prefers-reduced-motion: reduce) {
   .page-loader__arm { animation: none; }
-  .page-loader { animation-delay: 0s; }
 }
 
 

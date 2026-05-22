@@ -96,18 +96,28 @@
   var loader = document.getElementById('page-loader');
   if (!loader) return;
   var hideTimer = null;
+  var shownAt = Date.now();   // лоадер виден с первого рендера страницы
+  var MIN_MS = 300;           // мин. время показа — видно даже на мгновенных загрузках
 
-  function hide() { loader.classList.add('is-hidden'); }
+  function doHide() { loader.classList.add('is-hidden'); }
+  function hide() {
+    // Держим минимум MIN_MS, иначе на быстром localhost лоадер мелькнул бы 0мс.
+    clearTimeout(hideTimer);
+    var elapsed = Date.now() - shownAt;
+    if (elapsed < MIN_MS) hideTimer = setTimeout(doHide, MIN_MS - elapsed);
+    else doHide();
+  }
   function show() {
     clearTimeout(hideTimer);
+    shownAt = Date.now();
     loader.classList.remove('is-hidden');
     // Страховка: не зависать оверлеем дольше 12с (на случай сорванной навигации).
-    hideTimer = setTimeout(hide, 12000);
+    hideTimer = setTimeout(doHide, 12000);
   }
   window.showPageLoader = show;
-  window.hidePageLoader = hide;
+  window.hidePageLoader = doHide;
 
-  // Прячем как только страница готова.
+  // Прячем как только страница готова (но не раньше MIN_MS от старта рендера).
   if (document.readyState === 'complete') {
     hide();
   } else {
@@ -135,8 +145,8 @@
     show();
   });
 
-  // Возврат из bfcache (кнопка «назад») — страница уже готова, прячем.
-  window.addEventListener('pageshow', function (e) { if (e.persisted) hide(); });
+  // Возврат из bfcache (кнопка «назад») — страница уже готова, прячем сразу.
+  window.addEventListener('pageshow', function (e) { if (e.persisted) doHide(); });
 })();
 </script>
 

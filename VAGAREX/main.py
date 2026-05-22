@@ -118,7 +118,8 @@ def _ensure_schema_migrations():
             "display_no": "INTEGER NOT NULL DEFAULT 0",
         },
         "robot_sessions": {
-            "user_id": "INTEGER",
+            "user_id":   "INTEGER",
+            "conn_mode": "VARCHAR(10) NOT NULL DEFAULT 'sim'",
         },
         "user_settings": {
             "conn_mode":               "VARCHAR(10) NOT NULL DEFAULT 'sim'",

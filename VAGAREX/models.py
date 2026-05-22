@@ -163,6 +163,9 @@ class RobotSession(Base):
     robot_name = Column(String(100), default="1T REX")
     notes      = Column(Text, nullable=True)
     simulated  = Column(Boolean, default=True)
+    # Режим подключения на момент старта сессии: sim/local/prod/custom.
+    # Для бейджа SIM/LOC/NET в Истории сессий.
+    conn_mode  = Column(String(10), default="sim", nullable=False)
 
     commands    = relationship("CommandLog",  back_populates="session", cascade="all, delete-orphan")
     path_points = relationship("PathPoint",   back_populates="session", cascade="all, delete-orphan")
