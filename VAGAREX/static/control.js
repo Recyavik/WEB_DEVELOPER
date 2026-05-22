@@ -152,11 +152,6 @@
               _clearCodeDraft();
             }
           }
-          // Если модалка открыта — синхронизируем и CodeMirror.
-          const modal = document.getElementById('python-code-modal');
-          if (modal && !modal.hidden && window.cmEditor && window.cmEditor.isReady()) {
-            window.cmEditor.setValue(finalText);
-          }
         }
         break;
 
@@ -184,7 +179,7 @@
       case 'obstacle_block':
         // Сервер прислал обновлённый блок «Опасные зоны обстановки»
         // (выход из ⛯ Режим зон). Surgical replace между сентинелями
-        // в обеих textarea (боковая + fallback модалки) + CodeMirror.
+        // в обеих textarea (боковая + развёрнутый редактор).
         if (typeof msg.block === 'string') {
           updateObstacleBlockInTextareas(msg.block);
         }
@@ -633,9 +628,6 @@
             ta.dispatchEvent(new Event('input', { bubbles: true }));
           }
         });
-        if (window.cmEditor && window.cmEditor.isReady()) {
-          window.cmEditor.setValue(data.code);
-        }
       }
       const m = document.getElementById('load-route-modal');
       if (m) m.hidden = true;
@@ -818,7 +810,6 @@
 
   function updateObstacleBlockInTextareas(newBlock) {
     const ids = ['python-code', 'python-code-modal-area'];
-    let sideText = null;
     for (const id of ids) {
       const ta = document.getElementById(id);
       if (!ta) continue;
@@ -828,12 +819,6 @@
         // input → overlay/гуттер/draft-backup пересчитываются автоматом.
         ta.dispatchEvent(new Event('input', { bubbles: true }));
       }
-      if (id === 'python-code') sideText = ta.value;
-    }
-    // CodeMirror (когда модуль esm.sh загружен): синхронизируем тем же
-    // итоговым текстом из боковой textarea.
-    if (sideText !== null && window.cmEditor && window.cmEditor.isReady()) {
-      window.cmEditor.setValue(sideText);
     }
     logMsg('🗺 Блок «Опасные зоны обстановки» обновлён.', 'info');
   }
@@ -866,7 +851,6 @@
 
   function updateObstaclesLineInTextareas(obs) {
     const ids = ['python-code', 'python-code-modal-area'];
-    let sideText = null;
     for (const id of ids) {
       const ta = document.getElementById(id);
       if (!ta) continue;
@@ -875,10 +859,6 @@
         ta.value = updated;
         ta.dispatchEvent(new Event('input', { bubbles: true }));
       }
-      if (id === 'python-code') sideText = ta.value;
-    }
-    if (sideText !== null && window.cmEditor && window.cmEditor.isReady()) {
-      window.cmEditor.setValue(sideText);
     }
   }
 
@@ -1034,9 +1014,7 @@
 
   // ── Popup-автодополнение для textarea ────────────────────────────────
   // Показывает список robot.X методов/свойств когда юзер печатает «robot.»
-  // в любой textarea. Работает без CodeMirror — нужно когда esm.sh
-  // недоступен и развёрнутый редактор скатился в fallback-textarea, а
-  // также в боковом маленьком поле кода.
+  // в любой textarea — и в боковом поле кода, и в развёрнутом редакторе.
   //
   // Один общий popup-элемент на странице (`#robot-autocomplete-popup`),
   // переиспользуется между textarea. Текущая «привязка» хранится в
@@ -1637,10 +1615,6 @@
     // Программное value= не триггерит input → draft в localStorage
     // не сохраняется. Диспатчим вручную, чтобы при F5 команды остались.
     textarea.dispatchEvent(new Event('input', {bubbles: true}));
-    const modal = document.getElementById('python-code-modal');
-    if (modal && !modal.hidden && window.cmEditor && window.cmEditor.isReady()) {
-      window.cmEditor.setValue(merged);
-    }
   }
 
   // Сохранение кастомной миссии. Если на поле нет траектории — сервер
@@ -1891,11 +1865,6 @@
     if (!main) return;
     const tidied = tidyPythonCode(main.value);
     main.value = tidied;
-    // Зеркалим в модалку (CodeMirror), если она открыта.
-    const modal = document.getElementById('python-code-modal');
-    if (modal && !modal.hidden && window.cmEditor && window.cmEditor.isReady()) {
-      window.cmEditor.setValue(tidied);
-    }
     // Триггерим input-событие для overlay боковой панели.
     main.dispatchEvent(new Event('input', {bubbles: true}));
     logMsg('🧹 Код упорядочен: функции собраны вверху, вызовы внизу.', 'info');
@@ -1908,12 +1877,11 @@
   // править прямо в превью).
 
   function _getCurrentEditorText() {
-    // Источник правды — боковой textarea. Если открыта модалка с CM,
-    // забираем оттуда (там может быть свежее).
-    const modal = document.getElementById('python-code-modal');
-    if (modal && !modal.hidden && window.cmEditor && window.cmEditor.isReady()) {
-      return window.cmEditor.getValue();
-    }
+    // Источник правды — боковой textarea. Если открыт развёрнутый редактор —
+    // берём его (там могут быть несохранённые правки модального окна).
+    const modal   = document.getElementById('python-code-modal');
+    const modalTa = document.getElementById('python-code-modal-area');
+    if (modal && !modal.hidden && modalTa) return modalTa.value;
     const main = document.getElementById('python-code');
     return main ? main.value : '';
   }
@@ -2277,45 +2245,23 @@
       }
     });
 
-    // Подсветка комментариев в обоих редакторах кода
+    // Подсветка комментариев в боковом редакторе. Подсветка модального
+    // редактора навешивается в activateModalEditor() при открытии.
     attachCodeHighlight('python-code',            'python-code-overlay');
-    // attachCodeHighlight('python-code-modal-area', ...) — больше не нужен:
-    // развёрнутый редактор работает на CodeMirror (см. cm-editor.js),
-    // подсветка/гуттер/Tab/zoom — встроены в CM.
 
-    // Popup-автодополнение robot.X в боковом поле кода.
-    // Для fallback-textarea модалки автодополнение прикрутится в
-    // activateFallbackEditor() (когда CM не загрузился). В CodeMirror
-    // автодополнение встроено через robotCompletion в cm-editor.js.
+    // Popup-автодополнение robot.X в боковом поле кода. Для модального
+    // редактора автодополнение прикрутится в activateModalEditor().
     attachRobotAutocomplete('python-code');
-
-    // ── Shift+колесо мыши над CodeMirror — масштаб шрифта кода ────────
-    const cmWrap = document.getElementById('code-wrap-modal');
-    if (cmWrap) {
-      const FONT_KEY = 'cm:font:python-code-modal-area';
-      cmWrap.addEventListener('wheel', (e) => {
-        if (!e.shiftKey) return;
-        if (!window.cmEditor || !window.cmEditor.isReady()) return;
-        e.preventDefault();
-        const cur = window.cmEditor.getFontSize();
-        const delta = e.deltaY > 0 ? -1 : +1;
-        const next = Math.max(9, Math.min(32, cur + delta));
-        window.cmEditor.setFontSize(next);
-        localStorage.setItem(FONT_KEY, String(next));
-      }, {passive: false});
-    }
 
     // ── Модальное окно «Python код во весь экран» ─────────────────────
     const modal      = document.getElementById('python-code-modal');
     const modalArea  = document.getElementById('python-code-modal-area');
     const sideArea   = document.getElementById('python-code');
 
-    function activateFallbackEditor() {
-      // Включает резервный textarea вместо CodeMirror (если CM не загрузился).
-      const host = document.getElementById('cm-modal-host');
-      const fb   = document.getElementById('cm-modal-fallback');
-      if (host) host.hidden = true;
-      if (fb)   fb.hidden   = false;
+    function activateModalEditor() {
+      // Модальный редактор — textarea с overlay-подсветкой и автодополнением.
+      const fb = document.getElementById('cm-modal-fallback');
+      if (fb) fb.hidden = false;
       const fbArea = document.getElementById('python-code-modal-area');
       if (fbArea && sideArea) {
         fbArea.value = sideArea.value || '';
@@ -2332,46 +2278,7 @@
     function openCodeModal() {
       if (!modal || !sideArea) return;
       modal.hidden = false;
-      // Маунтим CodeMirror при первом открытии. На последующих —
-      // просто заливаем актуальный текст из боковой textarea.
-      const host = document.getElementById('cm-modal-host');
-      const tryMountCM = () => {
-        if (!host || !window.cmEditor) return false;
-        const savedFontStr = localStorage.getItem('cm:font:python-code-modal-area');
-        const fontSize = parseInt(savedFontStr || '15', 10) || 15;
-        try {
-          if (!window.cmEditor.isReady()) {
-            window.cmEditor.mount(host, sideArea.value || '', {
-              fontSize,
-              onChange: (text) => {
-                sideArea.value = text;
-                _saveCodeDraft(text);
-              },
-            });
-          } else {
-            window.cmEditor.setValue(sideArea.value || '');
-          }
-          return window.cmEditor.isReady();
-        } catch (e) {
-          console.error('[control] CM mount failed, fallback:', e);
-          return false;
-        }
-      };
-      // Если CodeMirror уже загружен — монтируем сразу.
-      // Иначе ждём до 800мс (esm.sh может тянуть пачку модулей).
-      if (!tryMountCM()) {
-        let attempts = 0;
-        const poll = setInterval(() => {
-          attempts++;
-          if (tryMountCM() || attempts >= 16) {
-            clearInterval(poll);
-            if (!(window.cmEditor && window.cmEditor.isReady())) {
-              console.warn('[control] CodeMirror не загрузился, fallback на textarea');
-              activateFallbackEditor();
-            }
-          }
-        }, 50);
-      }
+      activateModalEditor();
       // Журнал в модалке: на открытии заливаем все существующие записи.
       const mainLog = document.getElementById('cmd-log');
       const modalJournal = document.getElementById('code-modal-journal');
@@ -2379,21 +2286,9 @@
         modalJournal.innerHTML = mainLog.innerHTML;
         modalJournal.scrollTop = modalJournal.scrollHeight;
       }
-      if (window.cmEditor && window.cmEditor.isReady()) window.cmEditor.focus();
     }
     function closeCodeModal() {
       if (!modal || !sideArea) return;
-      // Правки из CM возвращаем в боковую textarea + overlay.
-      if (window.cmEditor && window.cmEditor.isReady()) {
-        sideArea.value = window.cmEditor.getValue();
-        const sideOverlay = document.getElementById('python-code-overlay');
-        if (sideOverlay) {
-          sideOverlay.innerHTML = highlightPython(sideArea.value || '');
-          sideOverlay.style.transform = 'translate(0px, 0px)';
-        }
-        // Триггерим input для backup'а draft'а.
-        sideArea.dispatchEvent(new Event('input', {bubbles: true}));
-      }
       modal.hidden = true;
     }
     document.getElementById('btn-expand-python-code')?.addEventListener('click', openCodeModal);
@@ -2542,12 +2437,12 @@
     modal?.addEventListener('mousedown', (e) => {
       if (e.target === modal) closeCodeModal();
     });
-    // Кнопки в модалке: читают/пишут через CodeMirror, зеркало в боковую textarea.
-    function cmReady() { return window.cmEditor && window.cmEditor.isReady(); }
-    function modalText() { return cmReady() ? window.cmEditor.getValue() : (modalArea ? modalArea.value : ''); }
+    // Кнопки в модалке читают/пишут модальную textarea, зеркало — в боковую.
+    function modalText() { return modalArea ? modalArea.value : ''; }
     function setModalText(t) {
-      if (cmReady()) window.cmEditor.setValue(t);
-      else if (modalArea) modalArea.value = t;
+      if (!modalArea) return;
+      modalArea.value = t;
+      modalArea.dispatchEvent(new Event('input', { bubbles: true }));  // overlay/draft refresh
     }
     document.getElementById('btn-modal-copy')?.addEventListener('click', () => {
       navigator.clipboard.writeText(modalText()).catch(() => {});
@@ -2563,13 +2458,13 @@
       }
     });
     document.getElementById('btn-modal-tidy')?.addEventListener('click', () => {
-      // Открываем модалку «Сборка кода для робота». При запуске синкаем
-      // CM-редактор → боковой textarea (источник правды для экспорта).
+      // Открываем модалку «Сборка кода для робота». Сначала синкаем
+      // модальный редактор → боковой textarea (источник правды для экспорта).
       if (sideArea) sideArea.value = modalText();
       openExportModal();
     });
     document.getElementById('btn-modal-run')?.addEventListener('click', () => {
-      // Sync CM → side, потом запускаем (runPythonCode читает sideArea).
+      // Sync модал → side, потом запускаем (runPythonCode читает sideArea).
       if (sideArea) sideArea.value = modalText();
       runPythonCode();
     });

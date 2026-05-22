@@ -358,10 +358,8 @@
                   title="Свернуть редактор обратно в боковую панель" aria-label="Свернуть">↙ Свернуть</button>
         </div>
       </div>
-      <!-- Код-зона. CodeMirror 6 был удалён в v3.7.7 (npm-пакет codemirror@6
-           на esm.sh — это legacy CM5 с несовместимым API; полный CM6 — 20+
-           отдельных пакетов, слишком сложно хостить). Используется textarea
-           с самописной подсветкой, гуттером строк и popup-автодополнением. -->
+      <!-- Код-зона: textarea с самописной подсветкой, гуттером строк
+           и popup-автодополнением (id'шники cm-* — историческое имя). -->
       <div class="code-wrap code-wrap--modal" id="code-wrap-modal">
         <div class="code-wrap__editor" id="cm-modal-fallback">
           <pre id="python-code-modal-gutter" class="code-gutter code-gutter--modal" aria-hidden="true"></pre>
@@ -421,17 +419,8 @@
 {% endblock %}
 
 {% block scripts %}
-<!-- Каталог robot.X (методы/свойства фасада). Обычный <script>, поэтому
-     грузится даже если esm.sh заблокирован — control.js всё равно сможет
-     показать popup-автодополнение в textarea. -->
+<!-- Каталог robot.X (методы/свойства фасада) для popup-автодополнения в control.js. -->
 <script src="/static/robot-catalog.js?v={{ robot_version }}"></script>
-<!-- CodeMirror 6 раньше грузился отсюда — удалён в v3.7.7.
-     Оригинальный импорт из codemirror@6 на esm.sh резолвился в legacy
-     CodeMirror 5 (npm-пакет с тем же именем) с разными API. Полноценный
-     CM6 разложен по @codemirror/state, /view и т.д. — слишком большая
-     dependency tree чтобы хостить локально. Фолбэк-textarea с
-     самописной подсветкой делает всё что нужно: подсветка комментов,
-     номера строк, popup-автодополнение, Tab=4 пробела. -->
 <script src="/static/canvas.js?v={{ robot_version }}"></script>
 <script src="/static/control.js?v={{ robot_version }}"></script>
 {% endblock %}

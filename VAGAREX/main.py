@@ -28,8 +28,8 @@ import config
 from auth import (hash_password, login_user, logout_user, require_admin,
                   require_user, verify_password)
 from database import Base, SessionLocal, engine, get_db
-from models import (AppSettings, CommandLog, DangerZone, Mission, MissionRun,
-                    PathPoint, ProgramCommand, PublishedRoute, RobotSession,
+from models import (AppSettings, DangerZone, Mission, MissionRun,
+                    PathPoint, PublishedRoute, RobotSession,
                     SavedRoute, User, UserSettings)
 from session import (UserCfg, _ensure_user_settings, get_or_create_session,
                      get_session, stop_all_sessions)
