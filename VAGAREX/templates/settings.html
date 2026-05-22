@@ -418,12 +418,24 @@
     applyMode(radioVal);
   }
 
-  $modes.forEach(r => r.addEventListener('change', () => applyMode(r.value)));
+  // applyMode меняет host/simulation/conn_mode ПРОГРАММНО — такие правки не
+  // порождают change, поэтому автосейв (слушает change инпутов формы) их не
+  // ловит. Явно дёргаем его, диспатча change на скрытом #conn-mode-value.
+  function notifyAutosave() {
+    $connMode.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  $modes.forEach(r => r.addEventListener('change', () => {
+    applyMode(r.value);
+    notifyAutosave();
+  }));
   if ($tunnel) {
     $tunnel.addEventListener('input', () => {
       const checked = document.querySelector('input[name="conn_mode_radio"]:checked');
       if (checked && checked.value === 'prod') $host.value = $tunnel.value;
     });
+    // Сохранить новый адрес туннеля при потере фокуса (а не на каждый символ).
+    $tunnel.addEventListener('change', notifyAutosave);
   }
   // Ручная правка host в «Дополнительно» → режим custom, радио снимаем.
   $host.addEventListener('input', () => {
