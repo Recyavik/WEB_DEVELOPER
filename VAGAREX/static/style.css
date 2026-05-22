@@ -53,25 +53,6 @@ html:has(body.page-docs) { font-size: 18px; }
    читаемые таблицы, акцентные подзаголовки h3 голубым.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/* Статусное сообщение под кнопкой «Запустить bridge.py» в Настройках.
-   Многострочный текст с сохранением \n и моноширинными кодовыми
-   фрагментами. Цвет управляется inline через JS. */
-.launch-bridge-status {
-  margin-top: 0.55rem;
-  padding: 0.6rem 0.8rem;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  font-family: ui-monospace, "SF Mono", Consolas, monospace;
-  font-size: 0.85rem;
-  line-height: 1.45;
-  white-space: pre-line;     /* \n как переносы строк */
-  color: var(--text-dim);
-  min-height: 0;
-}
-.launch-bridge-status:empty {
-  display: none;
-}
 
 /* Базовый размер текста и цвет — обычный текст серый, акценты ярче. */
 body.page-docs .card,

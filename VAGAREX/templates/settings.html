@@ -13,27 +13,32 @@
 
       <div class="conn-modes">
         <label class="conn-mode">
-          <input type="radio" name="conn_mode" value="sim">
+          <input type="radio" name="conn_mode_radio" value="sim"
+                 {% if cfg.conn_mode == 'sim' %}checked{% endif %}>
           <div class="conn-mode__body">
             <strong>🖥 Симулятор</strong>
             <span class="conn-mode__hint">Без физического робота — вся физика в браузере</span>
           </div>
         </label>
         <label class="conn-mode">
-          <input type="radio" name="conn_mode" value="docker">
+          <input type="radio" name="conn_mode_radio" value="docker"
+                 {% if cfg.conn_mode == 'local' %}checked{% endif %}>
           <div class="conn-mode__body">
             <strong>🐳 Локально (Docker)</strong>
             <span class="conn-mode__hint">Мост в docker-compose рядом с VEGAREX, адрес <code>ws://bridge:41235</code> подставится автоматически</span>
           </div>
         </label>
         <label class="conn-mode">
-          <input type="radio" name="conn_mode" value="prod">
+          <input type="radio" name="conn_mode_radio" value="prod"
+                 {% if cfg.conn_mode == 'prod' %}checked{% endif %}>
           <div class="conn-mode__body">
             <strong>☁ Продакшн через cloudflared-туннель</strong>
             <span class="conn-mode__hint">VEGAREX в облаке, <code>bridge.py</code> дома. Подробно — <a href="/hardware#a-prod-tunnel">§2.5 справки</a></span>
           </div>
         </label>
       </div>
+      {# Источник правды для сервера — явный режим (включая custom из «Дополнительно»). #}
+      <input type="hidden" name="conn_mode" id="conn-mode-value" value="{{ cfg.conn_mode }}">
 
       <div id="conn-tunnel-row" hidden style="margin-top:.7rem">
         <div class="settings-grid">
@@ -60,10 +65,10 @@
         <div class="settings-grid" style="margin-top:.5rem">
           <label class="settings-label">Адрес (IP / hostname / WS-URL)</label>
           <input class="settings-input" type="text" name="host" value="{{ cfg.host }}"
-                 placeholder="192.168.1.100 или ws://127.0.0.1:41235" required>
+                 placeholder="192.168.1.100 или ws://127.0.0.1:41235">
           <label class="settings-label">Порт (для прямого TCP)</label>
           <input class="settings-input" type="number" name="port" value="{{ cfg.port }}"
-                 min="1" max="65535" required>
+                 min="1" max="65535">
         </div>
         <p class="hint" style="margin-top:.4rem">
           Используется при выборе «Кастомный»: прямой TCP без <code>ws://</code> к
@@ -76,11 +81,6 @@
              {% if cfg.simulation %}checked{% endif %}>
 
       <div style="margin-top:0.7rem; display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
-        <button id="btn-launch-bridge" type="button" class="btn"
-                style="font-size:0.85rem;"
-                title="Запустить bridge.py (мост к 1Т REX) на этом компьютере. Только WiFi-режим, для USB запускайте вручную с --com">
-          🚀 Запустить bridge.py
-        </button>
         <a href="/esp-config" class="btn" style="font-size:0.85rem;"
            title="Настроить ESP32 (1Т REX) через USB — записать SSID/пароль/IP в EEPROM. Делается один раз при первом запуске нового робота.">
           🛠 Настроить ESP32
@@ -90,7 +90,11 @@
           📖 Справка: Реальный 1Т REX
         </a>
       </div>
-      <div id="launch-bridge-status" class="launch-bridge-status"></div>
+      <p class="hint" style="margin-top:.5rem; margin-bottom:0;">
+        Мост <code>bridge.py</code> в Docker автостартует вместе с приложением
+        (<code>docker compose up -d</code>). Управление вручную и нативный
+        запуск — в <a href="/hardware#a-bridge">§2.1 справки</a>.
+      </p>
     </section>
 
     <!-- Движение -->
@@ -368,115 +372,64 @@
 </div>
 
 <script>
-// Радио «Режим подключения» — определяет, что подставить в скрытое поле host
-// и галку simulation. Бэкенд ничего не знает про conn_mode, читает host/port/simulation
-// как раньше.
+// Радио «Режим подключения» → подставляет host/simulation и пишет явный
+// режим в скрытое #conn-mode-value (источник правды для сервера и бейджа
+// SIM/LOC/NET). Инициализация — по сохранённому conn_mode, а не парсингом
+// host (prod с пустым URL не отличить от local по адресу).
 (function() {
   const $host = document.querySelector('input[name="host"]');
   const $sim  = document.querySelector('input[name="simulation"]');
-  const $modes = document.querySelectorAll('input[name="conn_mode"]');
+  const $modes = document.querySelectorAll('input[name="conn_mode_radio"]');
+  const $connMode = document.getElementById('conn-mode-value');
   const $tunnel = document.getElementById('conn-tunnel-url');
   const $tunnelRow = document.getElementById('conn-tunnel-row');
   const $advanced = document.getElementById('conn-advanced');
-  if (!$host || !$sim || !$modes.length) return;
+  if (!$host || !$sim || !$modes.length || !$connMode) return;
 
   const DOCKER_URL = 'ws://bridge:41235';
+  const RADIO_TO_MODE = { sim: 'sim', docker: 'local', prod: 'prod' };
+  const MODE_TO_RADIO = { sim: 'sim', local: 'docker', prod: 'prod' };
 
-  function detectMode() {
-    if ($sim.checked) return 'sim';
-    const h = ($host.value || '').trim();
-    if (h === DOCKER_URL || h.startsWith('ws://bridge')) return 'docker';
-    if (h.startsWith('wss://')) return 'prod';
-    return 'custom';
-  }
-
-  function applyMode(mode) {
-    $tunnelRow.hidden = (mode !== 'prod');
-    if (mode === 'sim') {
+  function applyMode(radioVal) {
+    $tunnelRow.hidden = (radioVal !== 'prod');
+    if (radioVal === 'sim') {
       $sim.checked = true;
-    } else if (mode === 'docker') {
+    } else if (radioVal === 'docker') {
       $sim.checked = false;
       $host.value = DOCKER_URL;
-    } else if (mode === 'prod') {
+    } else if (radioVal === 'prod') {
       $sim.checked = false;
-      // Если в host уже лежит wss:// — подтянуть в tunnel-поле
+      // Если в host уже лежит сохранённый wss:// — подтянуть в tunnel-поле.
       const h = ($host.value || '').trim();
       if (h.startsWith('wss://') && !$tunnel.value) $tunnel.value = h;
       $host.value = $tunnel.value || '';
     }
+    $connMode.value = RADIO_TO_MODE[radioVal] || 'custom';
   }
 
-  // Init from server-side cfg
-  const initial = detectMode();
-  if (initial === 'custom') {
-    // Никакой из 3 пресетов не подошёл → разворачиваем «Дополнительно»
-    if ($advanced) $advanced.open = true;
+  // Init по сохранённому режиму.
+  const stored = ($connMode.value || 'sim');
+  if (stored === 'custom') {
+    if ($advanced) $advanced.open = true;   // радио не выбрано — это кастом
   } else {
-    const r = document.querySelector(`input[name="conn_mode"][value="${initial}"]`);
+    const radioVal = MODE_TO_RADIO[stored] || 'sim';
+    const r = document.querySelector(`input[name="conn_mode_radio"][value="${radioVal}"]`);
     if (r) r.checked = true;
-    applyMode(initial);
+    applyMode(radioVal);
   }
 
   $modes.forEach(r => r.addEventListener('change', () => applyMode(r.value)));
   if ($tunnel) {
     $tunnel.addEventListener('input', () => {
-      // Синхронизируем туннель-URL в скрытое поле host
-      const checked = document.querySelector('input[name="conn_mode"]:checked');
+      const checked = document.querySelector('input[name="conn_mode_radio"]:checked');
       if (checked && checked.value === 'prod') $host.value = $tunnel.value;
     });
   }
-  // Если пользователь редактирует host вручную (в «Дополнительно») —
-  // снимаем радио, чтобы было видно «сейчас кастом».
+  // Ручная правка host в «Дополнительно» → режим custom, радио снимаем.
   $host.addEventListener('input', () => {
-    const m = detectMode();
-    if (m === 'custom') {
-      $modes.forEach(r => { r.checked = false; });
-    }
-  });
-})();
-
-// Кнопка «Запустить bridge.py» — POST /api/launch_bridge.
-// На удалённом деплое блокируется (мост должен крутиться рядом с роботом).
-(function() {
-  const btn = document.getElementById('btn-launch-bridge');
-  const status = document.getElementById('launch-bridge-status');
-  if (!btn || !status) return;
-
-  const h = window.location.hostname;
-  const isLocal = h === 'localhost' || h === '127.0.0.1' || h === '::1' ||
-                  /^192\.168\./.test(h) || /^10\./.test(h) ||
-                  /^172\.(1[6-9]|2[0-9]|3[01])\./.test(h);
-
-  if (!isLocal) {
-    btn.disabled = true;
-    btn.style.opacity = '0.5';
-    btn.style.cursor = 'not-allowed';
-    btn.title = 'Удалённый деплой: мост запускается только локально, рядом с роботом';
-    status.textContent = '⚠ Удалённый деплой: для боевого режима VEGAREX и bridge.py должны быть на одном ПК рядом с роботом.';
-    status.style.color = '#f0883e';
-    return;
-  }
-
-  btn.addEventListener('click', async () => {
-    btn.disabled = true;
-    const prev = btn.textContent;
-    btn.textContent = '⏳ Запускаю…';
-    status.textContent = '';
-    status.style.color = '';
-    try {
-      const r = await fetch('/api/launch_bridge', {method: 'POST'});
-      const j = await r.json();
-      status.textContent = j.message || '';
-      status.style.color = j.ok
-        ? (j.status === 'already_running' ? '#58a6ff' : '#3fb950')
-        : '#f85149';
-    } catch (e) {
-      status.textContent = 'Ошибка запроса: ' + e.message;
-      status.style.color = '#f85149';
-    } finally {
-      btn.textContent = prev;
-      btn.disabled = false;
-    }
+    $modes.forEach(r => { r.checked = false; });
+    $connMode.value = 'custom';
+    $tunnelRow.hidden = true;
   });
 })();
 </script>

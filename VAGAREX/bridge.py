@@ -35,12 +35,12 @@ from typing import Optional
 import websockets
 
 # Глушим шумные traceback'и websockets-библиотеки про невалидные
-# TCP-пробы. /api/launch_bridge в VEGAREX делает plain-TCP коннект на
-# порт 41235 чтобы проверить «жив ли мост», а это не WS-handshake.
-# Библиотека websockets логирует это через logger.error("opening
-# handshake failed", exc_info=True) — обычное подавление уровнем не
-# помогает (ERROR-сообщения и так пропускаются). Поэтому ставим
-# именованный фильтр, который дропает конкретно эти строки.
+# TCP-пробы: что-то открыло TCP-соединение на порт 41235, но не сделало
+# WS-handshake (healthcheck, telnet, сканер портов). Библиотека websockets
+# логирует это через logger.error("opening handshake failed", exc_info=True)
+# — обычное подавление уровнем не помогает (ERROR-сообщения и так
+# пропускаются). Поэтому ставим именованный фильтр, который дропает
+# конкретно эти строки.
 class _SilenceProbeNoise(logging.Filter):
     NOISY_FRAGMENTS = (
         "opening handshake failed",
@@ -159,7 +159,7 @@ async def serial_reader_loop():
 def _suppress_handshake_noise(loop, context):
     """Кастомный asyncio exception handler. Глотает невалидные TCP-пробы
     (когда что-то открыло TCP-соединение, но не сделало WS-handshake —
-    например /api/launch_bridge port-probe). Реальные исключения
+    healthcheck, telnet, сканер портов). Реальные исключения
     форвардит в стандартный обработчик."""
     exc = context.get("exception")
     if exc is not None:

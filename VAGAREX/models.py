@@ -78,6 +78,10 @@ class UserSettings(Base):
     rex_host           = Column(String(120), default="192.168.1.100")
     rex_port           = Column(Integer,     default=8765)
     simulation_mode    = Column(Boolean,     default=True)
+    # Явно выбранный режим подключения (радио в Настройках): sim / local /
+    # prod / custom. Источник правды для бейджа SIM/LOC/NET — иначе режим
+    # пришлось бы угадывать по rex_host (prod с пустым URL не отличить от local).
+    conn_mode          = Column(String(10),  default="sim", nullable=False)
 
     # Движение
     move_speed         = Column(Integer,     default=40)

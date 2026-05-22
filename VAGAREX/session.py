@@ -106,6 +106,9 @@ class UserCfg:
     sensor_type:        str
     sonar_interval_ms:  int
     danger_zone_radius: float
+    # Явно выбранный режим подключения (радио в Настройках): sim/local/prod/custom.
+    # Источник правды для бейджа SIM/LOC/NET в шапке.
+    conn_mode:          str  = "sim"
     battery_minutes:    int  = 60
     path_cell_size_cm:  int  = 10
     # Алгоритм автопилота: "polyline" (ломаная) | "smooth" (сглаженная).
@@ -153,6 +156,7 @@ class UserCfg:
             sensor_type        = row.sensor_type,
             sonar_interval_ms  = row.sonar_interval_ms,
             danger_zone_radius = row.danger_zone_radius,
+            conn_mode          = (row.conn_mode or "sim"),
             battery_minutes    = max(1, int(row.battery_minutes or 60)),
             path_cell_size_cm  = max(2, int(row.path_cell_size_cm or 10)),
             autopilot_algo     = (row.autopilot_algo or "polyline"),

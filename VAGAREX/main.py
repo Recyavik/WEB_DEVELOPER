@@ -121,6 +121,7 @@ def _ensure_schema_migrations():
             "user_id": "INTEGER",
         },
         "user_settings": {
+            "conn_mode":               "VARCHAR(10) NOT NULL DEFAULT 'sim'",
             "battery_minutes":         "INTEGER NOT NULL DEFAULT 60",
             "battery_pct":             "REAL NOT NULL DEFAULT 100.0",
             "path_cell_size_cm":       "INTEGER NOT NULL DEFAULT 10",
@@ -1413,6 +1414,7 @@ async def settings_page(request: Request,
             "host":               row.rex_host,
             "port":               row.rex_port,
             "simulation":         row.simulation_mode,
+            "conn_mode":          row.conn_mode,
             "move_speed":         row.move_speed,
             "turn_angle":         row.turn_angle,
             "wheel_circ":         row.wheel_circ_cm,
@@ -1445,6 +1447,7 @@ async def api_settings_save(
     host:            str   = Form(...),
     port:            int   = Form(...),
     simulation:      str   = Form("0"),
+    conn_mode:       str   = Form("sim"),
     move_speed:      int   = Form(...),
     turn_angle:      int   = Form(...),
     wheel_circ:      float = Form(...),
@@ -1479,6 +1482,8 @@ async def api_settings_save(
     row.rex_host          = host
     row.rex_port          = port
     row.simulation_mode   = new_sim
+    row.conn_mode         = (conn_mode if conn_mode in ("sim", "local", "prod", "custom")
+                             else ("sim" if new_sim else "custom"))
     row.move_speed        = max(config.MIN_SPEED_PCT, min(100, move_speed))
     row.turn_angle        = max(5, min(45, turn_angle))
     row.wheel_circ_cm     = max(1.0, wheel_circ)
@@ -1539,10 +1544,19 @@ async def api_command(text: str = Form(...),
 
 
 def _conn_mode(cfg) -> str:
-    """Режим подключения для бейджа в шапке: sim / local / prod.
-    Совпадает с радио-переключателем в Настройках:
-    симулятор → sim, wss://-туннель → prod, всё прочее (ws://bridge,
-    ws://LAN, прямой TCP) → local."""
+    """Режим подключения для бейджа в шапке: sim / local / prod / custom.
+    Источник правды — явно сохранённый cfg.conn_mode (радио в Настройках).
+    Для бейджа custom приравниваем к local (LOC)."""
+    stored = getattr(cfg, "conn_mode", None)
+    if stored in ("local", "prod"):
+        return stored
+    if stored == "custom":
+        return "local"
+    # stored == "sim" доверяем только если симулятор реально включён.
+    # Иначе (старые записи: миграция проставила default 'sim', но
+    # simulation_mode=False) — определяем режим эвристикой по rex_host.
+    if stored == "sim" and cfg.simulation_mode:
+        return "sim"
     if cfg.simulation_mode:
         return "sim"
     host = (cfg.rex_host or "").strip().lower()
@@ -1939,229 +1953,6 @@ async def library_load_submit(kind: str, route_id: int,
     await sess.load_published_code(route.code, source_label=label)
 
     return RedirectResponse("/", status_code=303)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Запуск bridge.py (моста к 1Т REX) прямо из VEGAREX
-# ═══════════════════════════════════════════════════════════════════════════════
-
-@app.post("/api/launch_bridge")
-async def launch_bridge(request: Request):
-    """Запустить bridge.py (мост браузер⇄ESP32) как отдельный процесс.
-
-    bridge.py — headless-релей WebSocket'ов (без tkinter). Лежит в
-    VAGAREX/bridge.py. Запускаем через текущий Python-интерпретатор,
-    отсоединённым процессом, чтобы он выжил перезапуск VEGAREX и не
-    сидел чайлдом FastAPI.
-
-    Перед запуском пингуем ws://127.0.0.1:41235 — если уже отвечает,
-    повторно не запускаем. USB-режим (--com) при автозапуске не
-    подключается; для USB нужно запустить bridge.py вручную:
-        python bridge.py --com COM3
-    """
-    import sys
-    import subprocess
-    import socket
-    from pathlib import Path
-
-    # 1) Проверка: bridge уже запущен? Пингуем порт 41235 на нескольких
-    #    возможных адресах. Если VEGAREX в Docker, а bridge.py на хосте —
-    #    нужно достукиваться через host.docker.internal (Windows/Mac Docker
-    #    Desktop) или адрес шлюза.
-    def _port_open(host: str, port: int, timeout: float = 0.4) -> bool:
-        try:
-            with socket.create_connection((host, port), timeout=timeout):
-                return True
-        except Exception:
-            return False
-
-    # Проверяем порт 41235 по трём адресам:
-    #   bridge — Docker-сервис из compose (рекомендуемая v3.7.0+ конфигурация)
-    #   127.0.0.1 — нативный запуск VEGAREX на хосте
-    #   host.docker.internal — VEGAREX в Docker + bridge на хосте (старая схема)
-    for probe_host in ("bridge", "127.0.0.1", "host.docker.internal"):
-        if _port_open(probe_host, 41235):
-            return JSONResponse({
-                "ok": True,
-                "status": "already_running",
-                "message": (
-                    f"bridge.py уже запущен и слушает порт 41235 "
-                    f"(достижим по {probe_host}). "
-                    "VEGAREX подключится автоматически после Сохранить настроек."
-                ),
-            })
-
-    # 2) Найти bridge.py. Ищем внутри папки VAGAREX/ (там, где main.py).
-    base = Path(__file__).parent
-    bridge_path = base / "bridge.py"
-    if not bridge_path.is_file():
-        return JSONResponse({
-            "ok": False,
-            "status": "not_found",
-            "message": (
-                f"bridge.py не найден по пути {bridge_path}. "
-                "Возможно файл не закоммичен или потерялся."
-            ),
-        }, status_code=404)
-
-    # 3) Запустить отдельным процессом.
-    #    Если VEGAREX крутится в Docker под Linux — GUI-окно tkinter не
-    #    сможет появиться (нет DISPLAY / доступа к рабочему столу хоста).
-    #    На Windows / macOS этот файл может оказаться валидным путём
-    #    (например, корень диска C:\.dockerenv) — поэтому проверяем
-    #    только на Linux + наличие cgroup-сигнатуры Docker.
-    in_docker = False
-    if sys.platform.startswith("linux"):
-        try:
-            if Path("/.dockerenv").is_file():
-                in_docker = True
-            else:
-                cg = Path("/proc/1/cgroup")
-                if cg.exists():
-                    txt = cg.read_text(errors="ignore")
-                    in_docker = ("docker" in txt) or ("containerd" in txt)
-        except Exception:
-            in_docker = False
-    if in_docker:
-        # Различаем два сценария Docker:
-        # • Локальный Docker (пользователь сам поднял compose у себя) —
-        #   доступ к роботу есть, нужна подсказка про host.docker.internal
-        # • Удалённый прод-деплой (домен в браузере ≠ адрес контейнера) —
-        #   достучаться до робота в домашней сети пользователя НЕЛЬЗЯ
-        host_header = (request.headers.get("host") or "").lower()
-        host_no_port = host_header.split(":")[0]
-        is_remote_deploy = bool(host_no_port) and not (
-            host_no_port == "localhost" or host_no_port == "127.0.0.1"
-            or host_no_port == "::1"
-            or host_no_port.startswith("192.168.")
-            or host_no_port.startswith("10.")
-            or any(host_no_port.startswith(f"172.{n}.") for n in range(16, 32))
-        )
-        if is_remote_deploy:
-            return JSONResponse({
-                "ok": False,
-                "status": "remote_deploy",
-                "message": (
-                    "Это удалённый деплой VEGAREX (домен " + host_no_port + ").\n\n"
-                    "Боевой режим (bridge.py + физический 1Т REX) работает "
-                    "ТОЛЬКО при локальном запуске VEGAREX рядом с роботом — "
-                    "прод-сервер в датацентре не может достучаться до робота "
-                    "в вашей домашней сети.\n\n"
-                    "Что делать:\n"
-                    "  • На проде используйте режим «Симулятор» (галочка в Настройках)\n"
-                    "  • Для боевого режима — клонируйте репо локально, поднимите "
-                    "VEGAREX и bridge.py на своём ПК, подключите 1Т REX к WiFi/USB"
-                ),
-            }, status_code=400)
-        # Локальный Docker — есть смысл подсказывать host.docker.internal.
-        return JSONResponse({
-            "ok": False,
-            "status": "docker_no_can_launch",
-            "message": (
-                "VEGAREX в Docker — кнопка не может запустить мост напрямую.\n"
-                "Есть два рабочих варианта:\n"
-                "\n"
-                "▸ Вариант 1 — bridge как docker-compose сервис "
-                "(рекомендуется, v3.7.0+):\n"
-                "    docker compose up -d --build\n"
-                "  В Настройках адрес:  ws://bridge:41235\n"
-                "  Bridge будет автостартовать вместе с приложением.\n"
-                "\n"
-                "▸ Вариант 2 — запустить bridge на хосте вручную:\n"
-                f"    cd {bridge_path.parent.name}\n"
-                "    pip install websockets pyserial-asyncio\n"
-                "    python bridge.py              # только WiFi\n"
-                "    python bridge.py --com COM3   # WiFi + USB-Serial\n"
-                "  В Настройках адрес:  ws://host.docker.internal:41235\n"
-                "  (Linux-Docker: добавьте в compose `extra_hosts: "
-                "[host.docker.internal:host-gateway]`)"
-            ),
-        }, status_code=400)
-
-    # На Windows — предпочитаем pythonw.exe (без черного консольного окна).
-    # На остальных — обычный sys.executable.
-    py_exe = sys.executable
-    if sys.platform == "win32":
-        pythonw = Path(sys.executable).with_name("pythonw.exe")
-        if pythonw.is_file():
-            py_exe = str(pythonw)
-
-    # Не глушим stderr полностью — пишем в лог-файл во временной папке,
-    # чтобы при неудаче можно было диагностировать (тkinter не запустился,
-    # netifaces не установлен и т.п.).
-    import tempfile, os
-    log_path = Path(tempfile.gettempdir()) / "vegarex_bridge_py.log"
-    try:
-        log_f = open(log_path, "w", encoding="utf-8")
-    except Exception:
-        log_f = subprocess.DEVNULL
-
-    try:
-        kwargs = {
-            "cwd": str(bridge_path.parent),
-            "stdout": log_f,
-            "stderr": log_f,
-            "stdin": subprocess.DEVNULL,
-            "close_fds": True,
-        }
-        if sys.platform == "win32":
-            # CREATE_NEW_PROCESS_GROUP — чтобы Ctrl+C VEGAREX не убил мост.
-            # DETACHED_PROCESS — нет console-окна (bridge.py headless).
-            DETACHED_PROCESS = 0x00000008
-            CREATE_NEW_PROCESS_GROUP = 0x00000200
-            kwargs["creationflags"] = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
-        else:
-            kwargs["start_new_session"] = True
-
-        proc = subprocess.Popen([py_exe, str(bridge_path)], **kwargs)
-    except Exception as exc:
-        return JSONResponse({
-            "ok": False,
-            "status": "spawn_failed",
-            "message": f"Не удалось запустить: {exc}",
-        }, status_code=500)
-
-    # 4) Подождём пару секунд, проверим что порт поднялся.
-    import asyncio as _aio
-    await _aio.sleep(2.0)
-
-    # Проверка: процесс не упал?
-    rc = proc.poll()
-    if rc is not None and rc != 0:
-        # Процесс умер — читаем лог
-        tail = ""
-        try:
-            tail = log_path.read_text(encoding="utf-8", errors="ignore")[-2000:]
-        except Exception:
-            pass
-        return JSONResponse({
-            "ok": False,
-            "status": "crashed",
-            "message": (
-                f"bridge.py упал сразу после запуска (exit code {rc}). "
-                f"Лог: {log_path}\n\n{tail}"
-            ),
-        }, status_code=500)
-
-    if _port_open("127.0.0.1", 41235):
-        return JSONResponse({
-            "ok": True,
-            "status": "started",
-            "message": f"bridge.py запущен (PID {proc.pid}), слушает порт 41235. "
-                       "VEGAREX подключится автоматически после Сохранить.",
-        })
-
-    return JSONResponse({
-        "ok": True,
-        "status": "started_no_port",
-        "message": (
-            f"Процесс запущен (PID {proc.pid}), но порт 41235 пока не отвечает. "
-            "Возможные причины:\n"
-            "  • не установлены зависимости (pip install websockets pyserial-asyncio);\n"
-            f"  • смотрите лог: {log_path};\n"
-            f"  • если ничего не помогло — запустите вручную: python {bridge_path}"
-        ),
-    })
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
