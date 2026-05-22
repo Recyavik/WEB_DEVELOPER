@@ -60,10 +60,13 @@
   <div class="topbar__status">
     {% if simulated is defined and simulated %}
     <span id="robot-badge" class="badge badge--online">● Симулятор</span>
-    <span class="badge badge--sim">SIM</span>
     {% else %}
     <span id="robot-badge" class="badge badge--offline">● Офлайн</span>
     {% endif %}
+    {# Чип режима подключения (SIM / LOC / NET) — badge.js обновляет из /api/status
+       на всех страницах. Начальное значение скорректируется на первом опросе. #}
+    <span id="robot-mode-badge" class="badge badge--mode-{% if simulated is defined and simulated %}sim{% else %}loc{% endif %}"
+          title="Режим подключения: Симулятор / Локально / Продакшн">{% if simulated is defined and simulated %}SIM{% else %}LOC{% endif %}</span>
     {% if current_user %}
     <div class="topbar__user">
       <span>👤 {{ current_user.username }}</span>

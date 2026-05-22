@@ -669,6 +669,10 @@ body { padding-bottom: 22px; }
 .badge--offline { background: #3d1a1a; color: var(--danger); }
 .badge--sim     { background: #2c1f52; color: var(--sim); }
 .badge--caution { background: #4d2f00; color: var(--warning); }
+/* Чип режима подключения: SIM (симулятор) / LOC (локальный мост) / NET (туннель) */
+.badge--mode-sim { background: #2c1f52; color: var(--sim); }
+.badge--mode-loc { background: #15303f; color: #58a6ff; }
+.badge--mode-net { background: #3d2a00; color: #f0883e; }
 
 /* ── Main content ────────────────────────────────────────────────────────────── */
 .main-content { flex: 1; padding: 1rem; overflow: hidden; }

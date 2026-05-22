@@ -1538,6 +1538,19 @@ async def api_command(text: str = Form(...),
     return {"ok": True}
 
 
+def _conn_mode(cfg) -> str:
+    """Режим подключения для бейджа в шапке: sim / local / prod.
+    Совпадает с радио-переключателем в Настройках:
+    симулятор → sim, wss://-туннель → prod, всё прочее (ws://bridge,
+    ws://LAN, прямой TCP) → local."""
+    if cfg.simulation_mode:
+        return "sim"
+    host = (cfg.rex_host or "").strip().lower()
+    if host.startswith("wss://"):
+        return "prod"
+    return "local"
+
+
 @app.get("/api/status")
 async def api_status(current_user: User = Depends(require_user),
                      db: Session = Depends(get_db)):
@@ -1546,6 +1559,7 @@ async def api_status(current_user: User = Depends(require_user),
     return {
         "robot_online": sess.robot.connected,
         "simulated":    sess.cfg.simulation_mode,
+        "mode":         _conn_mode(sess.cfg),
         "robot":        state_to_dict(sess.robot_state),
     }
 

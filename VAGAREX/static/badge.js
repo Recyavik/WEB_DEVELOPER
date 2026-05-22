@@ -13,7 +13,14 @@
   const el = document.getElementById('robot-badge');
   if (!el) return;
 
-  let sim_badge = null;  // отдельный «SIM» бейдж (только на /)
+  const mode_el = document.getElementById('robot-mode-badge');
+
+  // Режим подключения → текст и класс чипа SIM / LOC / NET.
+  const MODE = {
+    sim:   { text: 'SIM', cls: 'badge badge--mode-sim' },
+    local: { text: 'LOC', cls: 'badge badge--mode-loc' },
+    prod:  { text: 'NET', cls: 'badge badge--mode-net' },
+  };
 
   function apply(status) {
     if (!status) return;
@@ -26,6 +33,11 @@
     } else {
       el.textContent = '● Офлайн';
       el.className = 'badge badge--offline';
+    }
+    if (mode_el && status.mode && MODE[status.mode]) {
+      const m = MODE[status.mode];
+      mode_el.textContent = m.text;
+      mode_el.className = m.cls;
     }
   }
 
