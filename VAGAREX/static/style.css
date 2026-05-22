@@ -1887,50 +1887,6 @@ body { padding-bottom: 22px; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
 
-/* ── Лоадер переходов: робот едет по пунктирной окружности ──────────────────────
-   Перекрывает «тёмный экран» во время навигации. Фон совпадает с --bg, поэтому
-   визуально это не вспышка, а индикатор на том же фоне. Виден сразу; JS держит
-   его минимум 300мс (см. base.html), чтобы было заметно даже на мгновенных
-   localhost-загрузках, и плавно прячет по window.load. */
-.page-loader {
-  position: fixed; inset: 0;
-  background: var(--bg);
-  display: flex; align-items: center; justify-content: center;
-  z-index: 10000;
-}
-/* Мгновенное скрытие (display:none) вместо плавного затухания: нет
-   промежуточных полупрозрачных кадров → нет блендинга и подмаргивания.
-   JS снимает оверлей через requestAnimationFrame, когда страница под ним
-   уже отрисована, поэтому резкости перехода не видно. */
-.page-loader.is-hidden {
-  display: none;
-}
-
-/* Пунктирная окружность радиусом 20 (⌀40), серая, статична. */
-.page-loader__orbit {
-  position: relative;
-  width: 40px; height: 40px;
-  border: 1px dashed var(--text-dim);
-  border-radius: 50%;
-}
-/* «Рука», на которой висит робот, — она и вращается. Окружность стоит на месте. */
-.page-loader__arm {
-  position: absolute; inset: 0;
-  animation: page-loader-orbit 1.1s linear infinite;
-}
-/* Робот — светло-серый квадрат 5×5, посажен на верхнюю точку окружности. */
-.page-loader__robot {
-  position: absolute;
-  top: -2.5px; left: 50%; margin-left: -2.5px;
-  width: 5px; height: 5px;
-  background: var(--text);
-}
-@keyframes page-loader-orbit { to { transform: rotate(360deg); } }
-
-/* Уважаем prefers-reduced-motion: без вращения, просто статичный индикатор. */
-@media (prefers-reduced-motion: reduce) {
-  .page-loader__arm { animation: none; }
-}
 
 
 /* ── Аутентификация ──────────────────────────────────────────────────────── */

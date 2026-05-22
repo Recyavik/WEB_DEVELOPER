@@ -9,15 +9,6 @@
 </head>
 <body class="{% if request.url.path in ['/help', '/training', '/system', '/maneuvers', '/hardware', '/about'] %}page-docs{% endif %}">
 
-{# Глобальный лоадер переходов: робот (квадрат) едет по пунктирной окружности.
-   Виден по умолчанию во время загрузки страницы, прячется на window.load.
-   Появляется с задержкой ~180мс, чтобы быстрые переходы не моргали. #}
-<div class="page-loader" id="page-loader" role="status" aria-label="Загрузка">
-  <div class="page-loader__orbit">
-    <div class="page-loader__arm"><span class="page-loader__robot"></span></div>
-  </div>
-</div>
-
 <header class="topbar">
   <div class="topbar__brand">
     <span class="brand-vega">VEGA</span><span class="brand-rex">REX</span>
@@ -87,72 +78,6 @@
 </footer>
 
 {% block scripts %}{% endblock %}
-
-{# Глобальный лоадер переходов: показать на навигации/submit, спрятать на load.
-   Лёгкий, без зависимостей. Глобальные window.showPageLoader/hidePageLoader —
-   для ручного использования вокруг долгих fetch-операций. #}
-<script>
-(function () {
-  var loader = document.getElementById('page-loader');
-  if (!loader) return;
-  var hideTimer = null;
-  var shownAt = Date.now();   // лоадер виден с первого рендера страницы
-  var MIN_MS = 300;           // мин. время показа — видно даже на мгновенных загрузках
-
-  // rAF: запускаем затухание на следующем кадре, когда страница под
-  // оверлеем уже отрисована — без покадровой перерисовки и мигания.
-  function doHide() {
-    requestAnimationFrame(function () { loader.classList.add('is-hidden'); });
-  }
-  function hide() {
-    // Держим минимум MIN_MS, иначе на быстром localhost лоадер мелькнул бы 0мс.
-    clearTimeout(hideTimer);
-    var elapsed = Date.now() - shownAt;
-    if (elapsed < MIN_MS) hideTimer = setTimeout(doHide, MIN_MS - elapsed);
-    else doHide();
-  }
-  function show() {
-    clearTimeout(hideTimer);
-    shownAt = Date.now();
-    loader.classList.remove('is-hidden');
-    // Страховка: не зависать оверлеем дольше 12с (на случай сорванной навигации).
-    hideTimer = setTimeout(doHide, 12000);
-  }
-  window.showPageLoader = show;
-  window.hidePageLoader = doHide;
-
-  // Прячем как только страница готова (но не раньше MIN_MS от старта рендера).
-  if (document.readyState === 'complete') {
-    hide();
-  } else {
-    window.addEventListener('load', hide);
-  }
-
-  // Показываем на уходе со страницы (покрывает ожидание ответа сервера).
-  // e.defaultPrevented — инлайновый onsubmit/onclick (confirm-отмена,
-  // return false, SPA-обработчики) уже отменил навигацию → не показываем,
-  // иначе оверлей завис бы до таймаута.
-  document.addEventListener('click', function (e) {
-    if (e.defaultPrevented) return;
-    var a = e.target.closest && e.target.closest('a');
-    if (!a) return;
-    var href = a.getAttribute('href');
-    if (!href || href.charAt(0) === '#' ||
-        href.indexOf('javascript:') === 0 ||
-        a.target === '_blank' || a.hasAttribute('download') ||
-        a.hasAttribute('data-no-loader')) return;
-    show();
-  });
-  document.addEventListener('submit', function (e) {
-    if (e.defaultPrevented) return;
-    if (e.target && e.target.hasAttribute('data-no-loader')) return;
-    show();
-  });
-
-  // Возврат из bfcache (кнопка «назад») — страница уже готова, прячем сразу.
-  window.addEventListener('pageshow', function (e) { if (e.persisted) doHide(); });
-})();
-</script>
 
 {# Глобальное обновление индикатора в шапке («● Симулятор/Онлайн/Офлайн»).
    Работает на ВСЕХ страницах: опрашивает /api/status раз в 3 сек.
