@@ -9,6 +9,15 @@
 </head>
 <body class="{% if request.url.path in ['/help', '/training', '/system', '/maneuvers', '/hardware', '/about'] %}page-docs{% endif %}">
 
+{# Глобальный лоадер переходов: робот (квадрат) едет по пунктирной окружности.
+   Виден по умолчанию во время загрузки страницы, прячется на window.load.
+   Появляется с задержкой ~180мс, чтобы быстрые переходы не моргали. #}
+<div class="page-loader" id="page-loader" role="status" aria-label="Загрузка">
+  <div class="page-loader__orbit">
+    <div class="page-loader__arm"><span class="page-loader__robot"></span></div>
+  </div>
+</div>
+
 <header class="topbar">
   <div class="topbar__brand">
     <span class="brand-vega">VEGA</span><span class="brand-rex">REX</span>
@@ -75,6 +84,58 @@
 </footer>
 
 {% block scripts %}{% endblock %}
+
+{# Глобальный лоадер переходов: показать на навигации/submit, спрятать на load.
+   Лёгкий, без зависимостей. Глобальные window.showPageLoader/hidePageLoader —
+   для ручного использования вокруг долгих fetch-операций. #}
+<script>
+(function () {
+  var loader = document.getElementById('page-loader');
+  if (!loader) return;
+  var hideTimer = null;
+
+  function hide() { loader.classList.add('is-hidden'); }
+  function show() {
+    clearTimeout(hideTimer);
+    loader.classList.remove('is-hidden');
+    // Страховка: не зависать оверлеем дольше 12с (на случай сорванной навигации).
+    hideTimer = setTimeout(hide, 12000);
+  }
+  window.showPageLoader = show;
+  window.hidePageLoader = hide;
+
+  // Прячем как только страница готова.
+  if (document.readyState === 'complete') {
+    hide();
+  } else {
+    window.addEventListener('load', hide);
+  }
+
+  // Показываем на уходе со страницы (покрывает ожидание ответа сервера).
+  // e.defaultPrevented — инлайновый onsubmit/onclick (confirm-отмена,
+  // return false, SPA-обработчики) уже отменил навигацию → не показываем,
+  // иначе оверлей завис бы до таймаута.
+  document.addEventListener('click', function (e) {
+    if (e.defaultPrevented) return;
+    var a = e.target.closest && e.target.closest('a');
+    if (!a) return;
+    var href = a.getAttribute('href');
+    if (!href || href.charAt(0) === '#' ||
+        href.indexOf('javascript:') === 0 ||
+        a.target === '_blank' || a.hasAttribute('download') ||
+        a.hasAttribute('data-no-loader')) return;
+    show();
+  });
+  document.addEventListener('submit', function (e) {
+    if (e.defaultPrevented) return;
+    if (e.target && e.target.hasAttribute('data-no-loader')) return;
+    show();
+  });
+
+  // Возврат из bfcache (кнопка «назад») — страница уже готова, прячем.
+  window.addEventListener('pageshow', function (e) { if (e.persisted) hide(); });
+})();
+</script>
 
 {# Глобальное обновление индикатора в шапке («● Симулятор/Онлайн/Офлайн»).
    Работает на ВСЕХ страницах: опрашивает /api/status раз в 3 сек.
